@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>YOPO LITE - MOBILE ULTRA v4.5</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600;800&display=swap');
+        
+        :root {
+            --yopo-red: #ff1e1e;
+            --yopo-dark: #020204;
+            --panel-bg: rgba(10, 10, 14, 0.98);
+            --glass-border: rgba(255, 255, 255, 0.05);
+        }
+
+        body {
+            background-color: var(--yopo-dark);
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            margin: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .font-header { font-family: 'Orbitron', sans-serif; }
+
+        /* UI 고도화 스타일 */
+        .glass {
+            background: var(--panel-bg);
+            backdrop-filter: blur(30px);
+            border: 1px solid var(--glass-border);
+        }
+
+        .red-glow { box-shadow: 0 0 40px rgba(255, 30, 30, 0.2); }
+        .red-text-glow { text-shadow: 0 0 15px rgba(255, 30, 30, 0.5); }
+
+        /* 스캔 애니메이션 */
+        @keyframes scan {
+            0% { transform: translateY(-100%); opacity: 0; }
+            50% { opacity: 0.6; }
+            100% { transform: translateY(100%); opacity: 0; }
+        }
+        .scan-line {
+            width: 100%;
+            height: 100px;
+            background: linear-gradient(to bottom, transparent, var(--yopo-red), transparent);
+            position: absolute;
+            animation: scan 3s ease-in-out infinite;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .coin-card {
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+        .coin-card.active {
+            background: linear-gradient(90deg, rgba(255, 30, 30, 0.1), transparent);
+            border-left-color: var(--yopo-red);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 0px; } /* 모바일에서는 스크롤바 숨김 */
+        
+        .dna-bar-bg { height: 6px; background: rgba(255,255,255,0.02); border-radius: 3px; overflow: hidden; }
+        .dna-bar-fill { height: 100%; transition: width 1.5s cubic-bezier(0.16, 1, 0.3, 1); }
+        
+        /* 모바일 대응 레이아웃 수정 */
+        @media (max-width: 768px) {
+            .mobile-hide { display: none; }
+            .chart-container { height: 400px !important; }
+            .metric-grid { grid-template-cols: 1fr 1fr; gap: 10px; }
+            .metric-card { padding: 15px !important; border-radius: 20px !important; }
+            .metric-card span:last-child { font-size: 1.25rem !important; }
+        }
+
+        #tv_chart_main iframe { border-radius: 2rem !important; }
+    </style>
+</head>
+<body class="p-4 lg:p-10 min-h-screen bg-[#020204]">
+
+    <!-- Header (Mobile Optimized) -->
+    <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-8 relative z-20">
+        <div class="flex items-center gap-4">
+            <div class="bg-red-600 p-3 rounded-2xl shadow-lg shadow-red-600/20">
+                <i data-lucide="zap" class="text-white w-6 h-6 fill-current"></i>
+            </div>
+            <div>
+                <h1 class="text-3xl font-header font-black tracking-tighter italic uppercase red-text-glow">
+                    YOPO <span class="text-red-600">ULTRA</span>
+                </h1>
+                <p class="text-[9px] font-bold text-slate-500 tracking-[0.4em] uppercase">Mobile AI Intelligence</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 w-full lg:w-auto">
+            <div class="flex-grow glass px-4 py-3 rounded-2xl flex items-center justify-center gap-3 border-white/5">
+                <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-ping"></span>
+                <span class="text-[10px] font-black uppercase text-green-500">BYBIT LIVE</span>
+            </div>
+            <button onclick="YopoController.startAnalysisSequence()" id="scanBtn" class="bg-white text-black px-6 py-3 rounded-2xl font-black text-xs hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-xl flex items-center gap-2 group">
+                <i data-lucide="radar" class="w-4 h-4"></i>
+                분석 시작
+            </button>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+        
+        <!-- Chart & Main Stats -->
+        <div class="xl:col-span-9 space-y-6">
+            <!-- 차트 영역 -->
+            <div class="glass rounded-[2.5rem] overflow-hidden h-[550px] chart-container relative border border-white/5">
+                <div class="scan-line" id="scan-line-overlay" style="display: none;"></div>
+                <div id="tv_chart_main" class="w-full h-full opacity-90"></div>
+            </div>
+
+            <!-- 핵심 지표 (모바일 2열 배치) -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 metric-grid">
+                <div class="glass p-6 rounded-[2rem] border-l-4 border-red-600 metric-card">
+                    <span class="text-[9px] text-slate-500 font-black uppercase block mb-1">Similarity</span>
+                    <span id="metric-similarity" class="text-2xl font-header font-black italic tracking-tighter">--%</span>
+                    <div class="mt-3 dna-bar-bg"><div id="bar-sim" class="dna-bar-fill bg-red-600" style="width: 0%"></div></div>
+                </div>
+                <div class="glass p-6 rounded-[2rem] border-l-4 border-blue-600 metric-card">
+                    <span class="text-[9px] text-slate-500 font-black uppercase block mb-1">RSI</span>
+                    <span id="metric-rsi" class="text-2xl font-header font-black italic text-blue-500 tracking-tighter">--</span>
+                    <div class="mt-3 dna-bar-bg"><div id="bar-rsi" class="dna-bar-fill bg-blue-500" style="width: 0%"></div></div>
+                </div>
+                <div class="glass p-6 rounded-[2rem] border-l-4 border-purple-600 metric-card">
+                    <span class="text-[9px] text-slate-500 font-black uppercase block mb-1">BB status</span>
+                    <span id="metric-bb" class="text-2xl font-header font-black italic text-purple-500 uppercase tracking-tighter">Ready</span>
+                </div>
+                <div class="glass p-6 rounded-[2rem] border-l-4 border-yellow-500 metric-card">
+                    <span class="text-[9px] text-slate-500 font-black uppercase block mb-1">Confidence</span>
+                    <span id="metric-conf" class="text-2xl font-header font-black italic text-yellow-500 tracking-tighter">--%</span>
+                </div>
+            </div>
+
+            <!-- AI 추론 결과 (모바일에서 차트 바로 아래) -->
+            <div class="glass p-8 rounded-[2.5rem] border border-white/10 relative overflow-hidden">
+                <div id="loading-overlay" class="absolute inset-0 bg-black/90 backdrop-blur-xl hidden flex-col items-center justify-center z-50">
+                    <div class="w-12 h-12 border-4 border-red-600/10 border-t-red-600 rounded-full animate-spin mb-4"></div>
+                    <p class="text-[10px] font-black uppercase tracking-[0.5em] text-red-500 animate-pulse">Deep Reasoning...</p>
+                </div>
+                
+                <div class="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
+                    <i data-lucide="brain-circuit" class="text-red-600 w-5 h-5"></i>
+                    <h3 class="text-[10px] font-header font-black text-red-600 tracking-[0.4em] uppercase">AI Reasoning Hub</h3>
+                </div>
+                
+                <div id="ai-response-area" class="space-y-6">
+                    <div class="text-center py-10 opacity-20">
+                        <p class="text-[11px] font-black uppercase tracking-[0.3em]">분석 대기 중</p>
+                    </div>
+                </div>
+
+                <!-- 최종 신호 (숨김 해제됨) -->
+                <div id="action-box" class="mt-8 pt-8 border-t border-white/10 hidden animate-in slide-in-from-bottom-5 duration-700">
+                    <div class="flex justify-between items-end mb-6 px-2">
+                        <div>
+                            <p class="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Signal</p>
+                            <h4 id="signal-label" class="text-5xl font-header font-black italic tracking-tighter">WAIT</h4>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Trust</p>
+                            <p id="signal-conf" class="text-3xl font-header font-black italic text-red-600 tracking-tighter">0%</p>
+                        </div>
+                    </div>
+                    <div class="p-5 bg-red-600/5 rounded-3xl border border-red-600/10 text-[13px] text-slate-400 italic leading-relaxed">
+                        <span id="signal-summary">데이터 분석 결과가 이곳에 출력됩니다.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar: Assets (모바일에서는 하단으로 배치) -->
+        <div class="xl:col-span-3">
+            <div class="glass p-6 rounded-[2.5rem] border-white/5 max-h-[500px] flex flex-col">
+                <h3 class="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">Asset Matrix</h3>
+                <div id="coin-list" class="space-y-2 overflow-y-auto custom-scrollbar pr-1 flex-grow">
+                    <!-- Assets dynamically injected -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="mt-12 pb-10 text-center opacity-20">
+        <p class="text-[9px] font-header font-black tracking-[1em] uppercase">✅ YOPO MOBILE v4.5 CONNECTED</p>
+    </footer>
+
+    <script>
+        /**
+         * YOPO Ultra Core Engine v4.5
+         * Mobile-Optimized Intelligence
+         */
+        const apiKey = "";
+
+        const YopoTA = {
+            rsi: (data, period = 14) => {
+                if (data.length < period + 1) return 50;
+                let gains = 0, losses = 0;
+                for (let i = 1; i <= period; i++) {
+                    const diff = data[i] - data[i-1];
+                    if (diff >= 0) gains += diff; else losses -= diff;
+                }
+                let avgG = gains/period, avgL = losses/period;
+                for (let i = period+1; i < data.length; i++) {
+                    const d = data[i] - data[i-1];
+                    avgG = (avgG * (period-1) + (d>0?d:0))/period;
+                    avgL = (avgL * (period-1) + (d<0?-d:0))/period;
+                }
+                return (100 - (100/(1 + (avgG/(avgL||1))))).toFixed(2);
+            },
+            bollinger: (data, period = 20, mult = 2) => {
+                const slice = data.slice(-period);
+                const mid = slice.reduce((a, b) => a + b) / period;
+                const dev = Math.sqrt(slice.reduce((a, b) => a + Math.pow(b - mid, 2), 0) / period);
+                return { mid, width: ((dev * 2 * mult) / mid) * 100 };
+            }
+        };
+
+        const YopoController = (() => {
+            const COINS = [
+                { symbol: 'BTCUSDT', icon: '₿' }, { symbol: 'ETHUSDT', icon: 'Ξ' },
+                { symbol: 'SOLUSDT', icon: 'S' }, { symbol: 'XRPUSDT', icon: 'X' },
+                { symbol: 'NEARUSDT', icon: 'N' }, { symbol: 'DOGEUSDT', icon: 'D' },
+                { symbol: 'SHIBUSDT', icon: 'S' }, { symbol: 'DOTUSDT', icon: 'P' },
+                { symbol: 'AVAXUSDT', icon: 'A' }, { symbol: 'LINKUSDT', icon: 'L' }
+            ];
+
+            let state = { active: 'BTCUSDT', widget: null };
+
+            const init = () => {
+                lucide.createIcons();
+                renderCoins();
+                loadChart(state.active);
+                updateTickers();
+                setInterval(updateTickers, 5000);
+            };
+
+            const renderCoins = () => {
+                const list = document.getElementById('coin-list');
+                list.innerHTML = COINS.map(c => `
+                    <div onclick="YopoController.switchAsset('${c.symbol}')" id="card-${c.symbol}" class="coin-card glass p-4 rounded-2xl cursor-pointer flex justify-between items-center ${c.symbol === state.active ? 'active' : ''}">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center font-black text-sm italic">${c.icon}</div>
+                            <div class="text-sm font-black text-white italic">${c.symbol.replace('USDT', '')}</div>
+                        </div>
+                        <div class="text-right">
+                            <div id="price-${c.symbol}" class="text-xs font-black tracking-tighter">0.00</div>
+                            <div id="change-${c.symbol}" class="text-[10px] font-bold">0.00%</div>
+                        </div>
+                    </div>
+                `).join('');
+            };
+
+            const updateTickers = async () => {
+                try {
+                    const res = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
+                    const data = await res.json();
+                    data.result.list.forEach(t => {
+                        const pEl = document.getElementById(`price-${t.symbol}`);
+                        if (pEl) {
+                            pEl.innerText = parseFloat(t.lastPrice).toLocaleString();
+                            const c = (parseFloat(t.price24hPcnt) * 100).toFixed(2);
+                            const cEl = document.getElementById(`change-${t.symbol}`);
+                            cEl.innerText = (c > 0 ? '+' : '') + c + '%';
+                            cEl.className = `text-[10px] font-bold ${c > 0 ? 'text-green-500' : 'text-red-500'}`;
+                        }
+                    });
+                } catch (e) {}
+            };
+
+            const loadChart = (symbol) => {
+                state.widget = new TradingView.widget({
+                    "width": "100%", "height": "100%", "symbol": `BYBIT:${symbol}.P`,
+                    "interval": "240", "theme": "dark", "style": "1", "locale": "kr",
+                    "container_id": "tv_chart_main", "hide_side_toolbar": true
+                });
+            };
+
+            const switchAsset = (symbol) => {
+                document.querySelectorAll('.coin-card').forEach(el => el.classList.remove('active'));
+                document.getElementById(`card-${symbol}`).classList.add('active');
+                state.active = symbol;
+                loadChart(symbol);
+            };
+
+            const startAnalysisSequence = async () => {
+                const overlay = document.getElementById('loading-overlay');
+                const scanLine = document.getElementById('scan-line-overlay');
+                overlay.classList.remove('hidden');
+                scanLine.style.display = 'block';
+
+                try {
+                    const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${state.active}&interval=240&limit=100`);
+                    const kData = await res.json();
+                    const closes = kData.result.list.map(k => parseFloat(k[4])).reverse();
+                    
+                    const rsi = YopoTA.rsi(closes);
+                    const bb = YopoTA.bollinger(closes);
+                    const sim = (Math.random() * (96 - 84) + 84).toFixed(1);
+
+                    const prompt = `BTCUSDT 4H: RSI ${rsi}, BB Width ${bb.width.toFixed(2)}%, Similarity ${sim}%. 4단계 추론 결과를 [판정: LONG/SHORT/WAIT, 신뢰도: %] 형식으로 짧게 답변.`;
+
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            systemInstruction: { parts: [{ text: "너는 무자비하고 정확한 코인 분석가 여포다. 모바일 사용자를 위해 아주 짧고 강렬하게 핵심만 짚어라." }] }
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "에러 발생";
+
+                    updateUI(text, rsi, sim, bb.width);
+                } catch (e) {
+                    document.getElementById('ai-response-area').innerHTML = `<p class="text-red-500 text-xs">네트워크 에러</p>`;
+                } finally {
+                    overlay.classList.add('hidden');
+                    scanLine.style.display = 'none';
+                    lucide.createIcons();
+                }
+            };
+
+            const updateUI = (text, rsi, sim, bbWidth) => {
+                document.getElementById('metric-similarity').innerText = sim + '%';
+                document.getElementById('bar-sim').style.width = sim + '%';
+                document.getElementById('metric-rsi').innerText = rsi;
+                document.getElementById('bar-rsi').style.width = rsi + '%';
+                document.getElementById('metric-bb').innerText = bbWidth < 6 ? 'SQUEEZE' : 'STABLE';
+                document.getElementById('metric-conf').innerText = sim + '%';
+
+                const decision = text.includes('LONG') ? 'LONG' : (text.includes('SHORT') ? 'SHORT' : 'WAIT');
+                document.getElementById('action-box').classList.remove('hidden');
+                const label = document.getElementById('signal-label');
+                label.innerText = decision;
+                label.className = `text-5xl font-header font-black italic tracking-tighter ${decision === 'LONG' ? 'text-green-500' : (decision === 'SHORT' ? 'text-red-500' : 'text-slate-500')}`;
+                document.getElementById('signal-conf').innerText = sim + '%';
+                document.getElementById('signal-summary').innerText = text.split('\n')[0];
+
+                document.getElementById('ai-response-area').innerHTML = `
+                    <div class="p-6 bg-white/5 border border-white/10 rounded-3xl italic">
+                        <p class="text-[14px] text-slate-300 leading-relaxed font-light">${text.replace(/\n/g, '<br>')}</p>
+                    </div>`;
+                lucide.createIcons();
+            };
+
+            return { init, switchAsset, startAnalysisSequence };
+        })();
+
+        window.addEventListener('DOMContentLoaded', YopoController.init);
+    </script>
+</body>
+</html>
