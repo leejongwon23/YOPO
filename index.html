@@ -2,357 +2,53 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>YOPO QUANT PRO v7.0 - Institutional Suite</title>
+    <title>YOPO QUANT PRO v7.0 - Algorithmic Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600;800&display=swap');
-        :root { --yopo-red: #ff1e1e; --yopo-gold: #fbbf24; --yopo-dark: #050508; --panel-bg: rgba(10, 10, 16, 0.98); }
-        body { background-color: var(--yopo-dark); color: #f1f5f9; font-family: 'Inter', sans-serif; overflow-x: hidden; margin: 0; }
-        .font-header { font-family: 'Orbitron', sans-serif; }
-        .glass { background: var(--panel-bg); backdrop-filter: blur(50px); border: 1px solid rgba(255, 255, 255, 0.05); }
-        .gold-glow { box-shadow: 0 0 40px rgba(251, 191, 36, 0.1); }
-        .red-glow { box-shadow: 0 0 60px rgba(255, 30, 30, 0.2); }
-        .red-text-glow { text-shadow: 0 0 20px rgba(255, 30, 30, 0.5); }
-        @keyframes scan { 0% { transform: translateY(-100%); opacity: 0; } 50% { opacity: 0.6; } 100% { transform: translateY(100%); opacity: 0; } }
-        .scan-line { width: 100%; height: 120px; background: linear-gradient(to bottom, transparent, var(--yopo-red), transparent); position: absolute; animation: scan 3s ease-in-out infinite; z-index: 10; pointer-events: none; }
-        .coin-card { transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1); border-left: 4px solid transparent; }
-        .coin-card.active { background: linear-gradient(90deg, rgba(255, 30, 30, 0.15), transparent); border-left-color: var(--yopo-red); border-right: 1px solid rgba(255,255,255,0.05); }
-        .dna-bar-bg { height: 6px; background: rgba(255,255,255,0.02); border-radius: 3px; overflow: hidden; }
-        .dna-bar-fill { height: 100%; transition: width 2s cubic-bezier(0.16, 1, 0.3, 1); }
-        .terminal-box { font-family: 'Courier New', monospace; font-size: 0.75rem; color: #10b981; line-height: 1.5; }
-        #tv_chart_main iframe { border-radius: 2.5rem !important; }
-    </style>
+    <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="p-3 lg:p-8 min-h-screen bg-[#050508]">
-
-    <!-- Header: Institutional Brand -->
-    <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10 relative z-20">
-        <div class="flex items-center gap-6">
-            <div class="relative group">
-                <div class="bg-red-600 p-5 rounded-[2rem] red-glow transform group-hover:rotate-12 transition-transform">
-                    <i data-lucide="award" class="text-white w-10 h-10"></i>
+<body class="bg-[#f8fafc] text-[#1e293b]"> <main class="p-6 grid grid-cols-12 gap-6">
+        <div class="col-span-9 space-y-6">
+            <div id="tv_chart_main" class="h-[500px] bg-white rounded-3xl shadow-xl border border-blue-100"></div>
+            
+            <div class="grid grid-cols-3 gap-6">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-blue-500">
+                    <h4 class="text-xs font-bold text-blue-400 tracking-widest uppercase">Short-Term (1H)</h4>
+                    <p id="pred-short" class="text-2xl font-black mt-2">ANALYZING...</p>
                 </div>
-                <div class="absolute -inset-2 bg-red-600/20 blur-2xl rounded-full"></div>
-            </div>
-            <div>
-                <h1 class="text-4xl font-header font-black tracking-tighter italic uppercase red-text-glow">
-                    YOPO <span class="text-red-600">QUANT PRO</span>
-                </h1>
-                <p class="text-[9px] font-bold text-slate-500 tracking-[0.6em] uppercase mt-2">Institutional Intelligence Terminal v7.0</p>
-            </div>
-        </div>
-
-        <div class="flex items-center gap-4 w-full lg:w-auto">
-            <div class="flex-grow glass px-8 py-4 rounded-[2rem] flex items-center justify-center gap-8 border-white/5">
-                <div class="flex flex-col">
-                    <span class="text-[8px] font-black text-slate-500 uppercase tracking-widest">Global Flow</span>
-                    <span class="text-[12px] font-black text-blue-400 italic">MFI-VOLUME SYNC</span>
+                <div class="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-indigo-500">
+                    <h4 class="text-xs font-bold text-indigo-400 tracking-widest uppercase">Mid-Term (4H)</h4>
+                    <p id="pred-mid" class="text-2xl font-black mt-2">ANALYZING...</p>
                 </div>
-                <div class="w-px h-8 bg-white/10"></div>
-                <div class="flex flex-col">
-                    <span class="text-[8px] font-black text-slate-500 uppercase tracking-widest text-right">Server Status</span>
-                    <span class="text-[12px] font-black text-green-500 uppercase">Pro Mainnet</span>
-                </div>
-            </div>
-            <button onclick="YopoController.startProAnalysis()" id="scanBtn" class="bg-white text-black px-12 py-5 rounded-[2.5rem] font-black text-sm hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-2xl flex items-center gap-3">
-                <i data-lucide="terminal" class="w-5 h-5"></i>
-                PRO 연산 가동
-            </button>
-        </div>
-    </header>
-
-    <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        
-        <!-- Main Panel -->
-        <div class="xl:col-span-9 space-y-8">
-            <div class="glass rounded-[3.5rem] overflow-hidden h-[550px] relative border border-white/5 shadow-2xl">
-                <div class="scan-line" id="scan-line-overlay" style="display: none;"></div>
-                <div id="tv_chart_main" class="w-full h-full opacity-80"></div>
-            </div>
-
-            <!-- Quantitative Matrix Board -->
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-6">
-                <div class="glass p-8 rounded-[3rem] border-l-4 border-red-600">
-                    <span class="text-[10px] text-slate-500 font-black uppercase block mb-2 tracking-widest">Pro Alpha Score</span>
-                    <span id="metric-alpha" class="text-4xl font-header font-black italic tracking-tighter red-text-glow">--%</span>
-                    <div class="mt-4 dna-bar-bg"><div id="bar-alpha" class="dna-bar-fill bg-red-600" style="width: 0%"></div></div>
-                </div>
-                <div class="glass p-8 rounded-[3rem] border-l-4 border-blue-500">
-                    <span class="text-[10px] text-slate-500 font-black uppercase block mb-2 tracking-widest">Money Flow (MFI)</span>
-                    <span id="metric-mfi" class="text-3xl font-header font-black italic text-blue-400">--</span>
-                    <div class="mt-4 dna-bar-bg"><div id="bar-mfi" class="dna-bar-fill bg-blue-500" style="width: 0%"></div></div>
-                </div>
-                <div class="glass p-8 rounded-[3rem] border-l-4 border-purple-500">
-                    <span class="text-[10px] text-slate-500 font-black uppercase block mb-2 tracking-widest">Pattern DNA</span>
-                    <span id="metric-sim" class="text-3xl font-header font-black italic text-purple-400">--%</span>
-                </div>
-                <div class="glass p-8 rounded-[3rem] border-l-4 border-yellow-500">
-                    <span class="text-[10px] text-slate-500 font-black uppercase block mb-2 tracking-widest">Signal Quality</span>
-                    <span id="metric-quality" class="text-3xl font-header font-black italic text-yellow-500">READY</span>
-                </div>
-            </div>
-
-            <!-- Reasoning & Trace Log -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <!-- Pro Analysis Report -->
-                <div class="glass p-10 rounded-[4rem] border border-white/10 relative overflow-hidden h-[450px] flex flex-col shadow-2xl">
-                    <div id="loading-overlay" class="absolute inset-0 bg-black/95 backdrop-blur-3xl hidden flex-col items-center justify-center z-50">
-                        <div class="relative mb-8 scale-110">
-                            <div class="w-20 h-20 border-4 border-red-600/10 border-t-red-600 rounded-full animate-spin"></div>
-                            <i data-lucide="database" class="absolute inset-0 m-auto w-8 h-8 text-red-600 animate-pulse"></i>
-                        </div>
-                        <p class="text-[10px] font-black uppercase tracking-[0.5em] text-red-500">Synchronizing Institutional Data...</p>
-                    </div>
-                    <div class="flex items-center gap-4 mb-8 border-b border-white/5 pb-6">
-                        <i data-lucide="layout-dashboard" class="text-red-600 w-5 h-5"></i>
-                        <h3 class="text-xs font-header font-black text-red-600 tracking-[0.4em] uppercase italic">Strategic Intel Report</h3>
-                    </div>
-                    <div id="ai-response-area" class="flex-grow overflow-y-auto custom-scrollbar pr-4 text-[16px] text-slate-300 leading-relaxed font-light italic">
-                        <p class="opacity-20 text-center py-20 uppercase tracking-[0.3em]">System Standby</p>
-                    </div>
-                </div>
-
-                <!-- Trace Log -->
-                <div class="glass p-10 rounded-[4rem] border border-white/10 h-[450px] flex flex-col">
-                    <div class="flex items-center gap-4 mb-8 border-b border-white/5 pb-6">
-                        <i data-lucide="cpu" class="text-green-500 w-5 h-5"></i>
-                        <h3 class="text-xs font-header font-black text-green-500 tracking-[0.4em] uppercase italic">Logic Execution Trace</h3>
-                    </div>
-                    <div id="engine-log" class="flex-grow bg-black/50 rounded-3xl p-6 overflow-y-auto custom-scrollbar terminal-box shadow-inner">
-                        > YOPO v7.0 PRO 엔진 초기화 완료...
-                    </div>
-                </div>
-            </div>
-
-            <!-- Signal Action Box -->
-            <div id="action-box" class="glass p-12 rounded-[5rem] border-white/10 hidden animate-in slide-in-from-bottom-10 duration-1000 red-glow">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-12 items-center">
-                    <div class="text-center md:text-left space-y-2">
-                        <p class="text-[11px] text-slate-500 font-black uppercase tracking-[0.4em]">Battle Command</p>
-                        <h4 id="signal-label" class="text-8xl font-header font-black italic tracking-tighter">WAIT</h4>
-                    </div>
-                    <div class="text-center space-y-2">
-                        <p class="text-[11px] text-slate-500 font-black uppercase tracking-[0.4em]">Winning Probability</p>
-                        <p id="signal-conf" class="text-6xl font-header font-black italic text-red-600 tracking-tighter">0%</p>
-                    </div>
-                    <div class="bg-white/5 p-10 rounded-[3.5rem] border border-white/10 space-y-6 shadow-inner">
-                        <div class="flex justify-between items-center"><span class="text-[11px] font-bold text-slate-500 uppercase">Target 1 (익절)</span><span id="tp1" class="text-lg font-black text-green-500 tracking-tighter">--</span></div>
-                        <div class="flex justify-between items-center"><span class="text-[11px] font-bold text-slate-500 uppercase">Stop Loss (손절)</span><span id="sl" class="text-lg font-black text-red-500 tracking-tighter">--</span></div>
-                        <div class="pt-4 border-t border-white/5"><div class="flex justify-between text-[10px] font-black text-yellow-500 uppercase"><span>Reward/Risk Ratio</span><span id="rr-ratio">--</span></div></div>
-                    </div>
+                <div class="bg-white p-6 rounded-2xl shadow-sm border-t-4 border-slate-800">
+                    <h4 class="text-xs font-bold text-slate-400 tracking-widest uppercase">Long-Term (1D)</h4>
+                    <p id="pred-long" class="text-2xl font-black mt-2">ANALYZING...</p>
                 </div>
             </div>
         </div>
 
-        <!-- Sidebar List -->
-        <div class="xl:col-span-3">
-            <div class="glass p-8 rounded-[4rem] border-white/5 max-h-[950px] flex flex-col shadow-2xl relative overflow-hidden">
-                <div class="absolute -top-10 -right-10 w-40 h-40 bg-red-600/5 blur-3xl rounded-full"></div>
-                <h3 class="text-[12px] font-black text-slate-500 uppercase tracking-[0.4em] mb-8 px-2 flex justify-between items-center">
-                    Asset Matrix <span class="bg-red-600/10 text-red-500 text-[10px] px-3 py-1 rounded-full border border-red-600/20 italic">Pro</span>
-                </h3>
-                <div id="coin-list" class="space-y-4 overflow-y-auto custom-scrollbar pr-1 flex-grow"></div>
+        <div class="col-span-3 space-y-6">
+            <div class="bg-slate-900 text-white p-8 rounded-[2.5rem] shadow-2xl">
+                <h3 class="font-bold text-blue-400 mb-4 italic">TOTAL PERFORMANCE</h3>
+                <div class="flex justify-between items-end">
+                    <span class="text-4xl font-black" id="win-rate">0%</span>
+                    <span class="text-xs text-slate-400" id="total-trades">0 trades</span>
+                </div>
+                <div class="mt-4 h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="win-rate-bar" class="h-full bg-blue-500 transition-all duration-1000" style="width: 0%"></div>
+                </div>
             </div>
+            <div id="coin-list" class="space-y-2 max-h-[500px] overflow-y-auto"></div>
         </div>
-    </div>
+    </main>
 
-    <footer class="mt-20 pb-20 text-center opacity-10 border-t border-white/5 pt-20">
-        <p class="text-[10px] font-header font-black tracking-[2.5em] uppercase">✅ YOPO QUANT PRO SYSTEM SECURED</p>
-    </footer>
-
-    <script>
-        const apiKey = ""; 
-
-        // --- [수익 창출 핵심 로직: Quant Library] ---
-        const YopoQuant = {
-            // MFI (Money Flow Index): 가격+거래량 결합 지표 (세력 매집 확인용)
-            calculateMFI: (data) => {
-                let posMF = 0, negMF = 0;
-                const period = 14;
-                const slices = data.slice(-period-1);
-                for(let i=1; i<slices.length; i++) {
-                    const tp = (parseFloat(slices[i][2]) + parseFloat(slices[i][3]) + parseFloat(slices[i][4])) / 3;
-                    const prevTP = (parseFloat(slices[i-1][2]) + parseFloat(slices[i-1][3]) + parseFloat(slices[i-1][4])) / 3;
-                    const mf = tp * parseFloat(slices[i][5]);
-                    if(tp > prevTP) posMF += mf; else negMF += mf;
-                }
-                const mfr = posMF / (negMF || 1);
-                return (100 - (100 / (1 + mfr))).toFixed(2);
-            },
-            // Trend Filter: 장기 추세 정합성 확인
-            getTrendAlignment: (data) => {
-                const close = parseFloat(data[data.length-1][4]);
-                const ema20 = data.slice(-20).reduce((a,b)=>a+parseFloat(b[4]), 0) / 20;
-                return close > ema20 ? 'BULLISH' : 'BEARISH';
-            },
-            // Alpha Decision: 모든 수치를 종합하여 승률 90% 이상의 자리를 계산
-            calculateProScore: (mfi, sim, trend, bbw) => {
-                let score = parseFloat(sim) * 0.4;
-                if(trend === 'BULLISH' && mfi < 40) score += 30; // 눌림목 매수 가점
-                if(trend === 'BEARISH' && mfi > 60) score += 30; // 반등 매도 가점
-                if(bbw < 3.5) score += 25; // 폭발 직전 가점
-                return Math.min(Math.max(score, 48), 98.7).toFixed(1);
-            }
-        };
-
-        const YopoController = (() => {
-            const COINS = [
-                { symbol: 'BTCUSDT', icon: '₿' }, { symbol: 'ETHUSDT', icon: 'Ξ' }, { symbol: 'SOLUSDT', icon: 'S' },
-                { symbol: 'XRPUSDT', icon: 'X' }, { symbol: 'ADAUSDT', icon: 'A' }, { symbol: 'DOGEUSDT', icon: 'D' },
-                { symbol: 'AVAXUSDT', icon: 'A' }, { symbol: 'NEARUSDT', icon: 'N' }, { symbol: 'LINKUSDT', icon: 'L' },
-                { symbol: 'MATICUSDT', icon: 'M' }, { symbol: 'DOTUSDT', icon: 'P' }, { symbol: 'TRXUSDT', icon: 'T' },
-                { symbol: 'SHIBUSDT', icon: 'S' }, { symbol: 'LTCUSDT', icon: 'L' }, { symbol: 'BCHUSDT', icon: 'B' }
-            ];
-            let state = { active: 'BTCUSDT', widget: null };
-
-            const log = (msg, color = '#64748b') => {
-                const el = document.getElementById('engine-log');
-                el.innerHTML += `<div style="color:${color}">> ${msg}</div>`;
-                el.scrollTop = el.scrollHeight;
-            };
-
-            const init = () => {
-                lucide.createIcons();
-                renderCoins();
-                loadChart(state.active);
-                updatePrices();
-                setInterval(updatePrices, 5000);
-            };
-
-            const renderCoins = () => {
-                const el = document.getElementById('coin-list');
-                el.innerHTML = COINS.map(c => `
-                    <div onclick="YopoController.switchAsset('${c.symbol}')" id="card-${c.symbol}" class="coin-card glass p-6 rounded-3xl cursor-pointer flex justify-between items-center ${c.symbol === state.active ? 'active' : ''}">
-                        <div class="flex items-center gap-4">
-                            <div class="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center font-black text-lg italic border border-white/5 shadow-inner text-red-600">${c.icon}</div>
-                            <div class="text-lg font-black text-white italic tracking-tighter">${c.symbol.replace('USDT', '')}</div>
-                        </div>
-                        <div class="text-right">
-                            <div id="price-${c.symbol}" class="text-sm font-black tracking-tighter text-slate-200">0.00</div>
-                            <div id="change-${c.symbol}" class="text-[10px] font-bold">0.00%</div>
-                        </div>
-                    </div>
-                `).join('');
-            };
-
-            const updatePrices = async () => {
-                try {
-                    const res = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
-                    const data = await res.json();
-                    data.result.list.forEach(t => {
-                        const pEl = document.getElementById(`price-${t.symbol}`);
-                        if (pEl) {
-                            pEl.innerText = parseFloat(t.lastPrice).toLocaleString();
-                            const c = (parseFloat(t.price24hPcnt) * 100).toFixed(2);
-                            const cEl = document.getElementById(`change-${t.symbol}`);
-                            cEl.innerText = (c > 0 ? '+' : '') + c + '%';
-                            cEl.className = `text-[10px] font-bold ${c > 0 ? 'text-green-500' : 'text-red-500'}`;
-                        }
-                    });
-                } catch (e) {}
-            };
-
-            const loadChart = (symbol) => {
-                state.widget = new TradingView.widget({
-                    "width": "100%", "height": "100%", "symbol": `BYBIT:${symbol}.P`,
-                    "interval": "240", "theme": "dark", "style": "1", "locale": "kr",
-                    "container_id": "tv_chart_main", "hide_side_toolbar": true
-                });
-            };
-
-            const switchAsset = (symbol) => {
-                document.querySelectorAll('.coin-card').forEach(el => el.classList.remove('active'));
-                document.getElementById(`card-${symbol}`).classList.add('active');
-                state.active = symbol;
-                loadChart(symbol);
-                log(`[SYNC] 대상 자산 교체: ${symbol}`, '#fbbf24');
-            };
-
-            const startProAnalysis = async () => {
-                const overlay = document.getElementById('loading-overlay');
-                const scanLine = document.getElementById('scan-line-overlay');
-                overlay.classList.remove('hidden');
-                scanLine.style.display = 'block';
-
-                log(`[PRO] 기관용 데이터 스트림 분석 시작...`, '#10b981');
-
-                try {
-                    const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${state.active}&interval=240&limit=150`);
-                    const kData = await res.json();
-                    const raw = kData.result.list.reverse();
-                    const closes = raw.map(k => parseFloat(k[4]));
-                    const curPrice = closes[closes.length-1];
-
-                    // 퀀트 엔진 연산
-                    const mfi = YopoQuant.calculateMFI(raw);
-                    const trend = YopoQuant.getTrendAlignment(raw);
-                    const sim = (Math.random() * (96 - 84) + 84).toFixed(1); // 패턴 유사도
-                    const bbw = ((Math.random() * 4) + 2).toFixed(2); // 변동성 너비
-                    const alpha = YopoQuant.calculateProScore(mfi, sim, trend, bbw);
-
-                    log(`[MATH] 연산 완료 - MFI:${mfi} / TREND:${trend}`, '#10b981');
-                    log(`[DETERMINED] 승률 ${alpha}% 기반 전략 수립 중...`, '#fbbf24');
-
-                    const prompt = `[PRO ANALYSIS]
-                    Asset: ${state.active}, Price: ${curPrice}, MFI: ${mfi}, Trend: ${trend}, Sim: ${sim}%, Alpha: ${alpha}%. 
-                    Task: 위 팩트 데이터를 '무자비한 승부사 여포' 스타일로 분석하라. 반드시 수익률 1.5% 목표 타점의 근거를 기술적 합치(Confluence) 관점에서 설명하라. 
-                    마지막엔 [판정: LONG/SHORT/WAIT, 신뢰도: ${alpha}%]를 명시하라.`;
-
-                    const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: "너는 월가 출신의 냉혹한 퀀트 트레이더 여포다. 너의 모든 말은 데이터와 수학에 기반하며, 사용자에게 승리할 수 있는 타점을 명령한다." }] } })
-                    });
-                    
-                    const data = await aiRes.json();
-                    const result = data.candidates?.[0]?.content?.parts?.[0]?.text || "데이터 로드 실패";
-
-                    updateUI(result, alpha, mfi, sim, curPrice);
-                    log(`[SUCCESS] 전략 보고서 수신 완료.`, '#10b981');
-
-                } catch (e) {
-                    log(`[ERROR] 시스템 장애 발생`, '#ef4444');
-                } finally {
-                    overlay.classList.add('hidden');
-                    scanLine.style.display = 'none';
-                    lucide.createIcons();
-                }
-            };
-
-            const updateUI = (text, alpha, mfi, sim, price) => {
-                document.getElementById('metric-alpha').innerText = alpha + '%';
-                document.getElementById('bar-alpha').style.width = alpha + '%';
-                document.getElementById('metric-mfi').innerText = mfi;
-                document.getElementById('bar-mfi').style.width = mfi + '%';
-                document.getElementById('metric-sim').innerText = sim + '%';
-                document.getElementById('metric-quality').innerText = alpha > 85 ? 'HIGH' : (alpha > 70 ? 'NORMAL' : 'AVOID');
-
-                const decision = text.includes('LONG') ? 'LONG' : (text.includes('SHORT') ? 'SHORT' : 'WAIT');
-                document.getElementById('action-box').classList.remove('hidden');
-                const label = document.getElementById('signal-label');
-                label.innerText = decision;
-                label.className = `text-8xl font-header font-black italic tracking-tighter ${decision === 'LONG' ? 'text-green-500' : (decision === 'SHORT' ? 'text-red-500' : 'text-slate-500')}`;
-                
-                document.getElementById('signal-conf').innerText = alpha + '%';
-                document.getElementById('tp1').innerText = (price * (decision === 'LONG' ? 1.015 : 0.985)).toLocaleString(undefined, {maximumFractionDigits:2});
-                document.getElementById('sl').innerText = (price * (decision === 'LONG' ? 0.992 : 1.008)).toLocaleString(undefined, {maximumFractionDigits:2});
-                document.getElementById('rr-ratio').innerText = '1:2.5';
-
-                document.getElementById('ai-response-area').innerHTML = `
-                    <div class="animate-in fade-in duration-1000 space-y-6">
-                        <div class="p-8 bg-white/5 border border-white/10 rounded-[3rem] italic shadow-inner">
-                            <p class="leading-relaxed font-light text-slate-300">${text.replace(/\n/g, '<br>')}</p>
-                        </div>
-                    </div>`;
-            };
-
-            return { init, switchAsset, startProAnalysis };
-        })();
-
-        window.addEventListener('DOMContentLoaded', YopoController.init);
-    </script>
+    <script src="js/config.js"></script>
+    <script src="js/api-manager.js"></script>
+    <script src="js/indicators.js"></script>
+    <script src="js/performance-tracker.js"></script>
+    <script src="js/prediction-core.js"></script>
+    <script src="js/ui-render.js"></script>
+    <script src="js/main.js"></script>
 </body>
 </html>
