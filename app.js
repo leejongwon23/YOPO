@@ -3,6 +3,10 @@
  * - 추가: 비밀번호(2580) 게이트, 추천 클릭→즉시 분석→추적,
  *         코인 리스트 “가격+%” 강화, 종료 기록 패널,
  *         백테스트 필터 강화형
+ *
+ * ✅ PATCH (2026-01-21)
+ * 1) 실시간 포지션 정밀추적: 전략별(1H/4H/1D) 남은시간(카운트다운) 표시
+ * 2) 추적 카드 TP/SL에 +% / -% 표시
  *************************************************************/
 
 // ---------- AUTH ----------
@@ -50,7 +54,7 @@ const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
 
 // ---------- Similarity / Analysis Params ----------
 const SIM_WINDOW = 40;
-const FUTURE_H = 8;
+const FUTURE_H = 8;     // ✅ “평가 기간”에 사용 (남은 카운트 계산용)
 const SIM_STEP = 2;
 const SIM_TOPK = 25;
 
@@ -120,6 +124,69 @@ let state = loadState() || {
 
 let tempPos = null;
 
+/* ==========================================================
+   ✅ PATCH HELPERS (전략별 남은 카운트 / 남은 시간)
+   ========================================================== */
+function tfToMs(tfRaw){
+  // Bybit interval: "60", "240", "D"
+  if(tfRaw === "60") return 60 * 60 * 1000;
+  if(tfRaw === "240") return 4 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000; // "D"
+}
+function formatRemain(ms){
+  ms = Math.max(0, ms|0);
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const d = Math.floor(h / 24);
+  const hh = h % 24;
+  const mm = m % 60;
+
+  if(d > 0) return `${d}일 ${hh}시간`;
+  if(h > 0) return `${h}시간 ${mm}분`;
+  return `${m}분`;
+}
+function ensureStrategyCountUI(){
+  const header = document.querySelector(".tracking-header");
+  if(!header) return;
+  if(document.getElementById("tf-counts")) return;
+
+  const box = document.createElement("div");
+  box.id = "tf-counts";
+  box.style.display = "flex";
+  box.style.gap = "8px";
+  box.style.alignItems = "center";
+  box.style.fontWeight = "950";
+  box.style.fontSize = "11px";
+  box.style.color = "var(--text-sub)";
+  header.appendChild(box);
+}
+function updateStrategyCountUI(){
+  const el = document.getElementById("tf-counts");
+  if(!el) return;
+
+  let c60 = 0, c240 = 0, cD = 0;
+  for(const p of (state.activePositions || [])){
+    if(p.tfRaw === "60") c60++;
+    else if(p.tfRaw === "240") c240++;
+    else cD++;
+  }
+
+  el.innerHTML = `
+    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1H ${c60}</span>
+    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">4H ${c240}</span>
+    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1D ${cD}</span>
+  `;
+}
+function getPosExpiryAt(pos){
+  // ✅ “전략별 카운트 남은 것” = FUTURE_H개 캔들(평가기간) 기준 타이머
+  //    예: 1H 전략이면 FUTURE_H(8) = 8시간이 하나의 평가 구간
+  const tfMs = tfToMs(pos.tfRaw);
+  const horizonMs = tfMs * FUTURE_H;
+  const start = pos.createdAt || Date.now();
+  return start + horizonMs;
+}
+
 // ---------- Boot ----------
 document.addEventListener("DOMContentLoaded", async () => {
   // auth gate
@@ -139,11 +206,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateStatsUI();
   renderScanResults();
 
+  // ✅ PATCH UI
+  ensureStrategyCountUI();
+  updateStrategyCountUI();
+
   await refreshUniverseAndGlobals();
   await marketTick();
 
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
+
+  // ✅ 남은시간(카운트다운) UI 갱신용(가벼운 텍스트만 갱신)
+  setInterval(() => {
+    if(!state.activePositions?.length) return;
+    renderTrackingList(); // 단일파일이라 가장 안전하게 전체 렌더로 처리
+  }, 15000);
 });
 
 // ---------- UI ----------
@@ -625,11 +702,17 @@ function confirmTrack(){
     return;
   }
 
+  // ✅ PATCH: createdAt/expiryAt (전략별 남은 카운트 표시용)
+  const createdAt = Date.now();
+  const expiryAt = createdAt + (tfToMs(tempPos.tfRaw) * FUTURE_H);
+
   state.activePositions.unshift({
     ...tempPos,
     status: "ACTIVE",
     lastPrice: tempPos.entry,
-    pnl: 0
+    pnl: 0,
+    createdAt,
+    expiryAt
   });
   saveState();
   closeModal();
@@ -693,7 +776,6 @@ function trackPositions(symbol, currentPrice){
       saveState();
       changed = true;
 
-      // alert는 너무 잦을 수 있어 유지하되, 보기 쉽게
       alert(`[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnl.toFixed(2)}%`);
     }else{
       changed = true;
@@ -710,6 +792,10 @@ function trackPositions(symbol, currentPrice){
 
 function renderTrackingList(){
   const container = document.getElementById("tracking-container");
+
+  // ✅ PATCH: header TF counts update
+  ensureStrategyCountUI();
+  updateStrategyCountUI();
 
   if(!state.activePositions.length){
     container.innerHTML = `
@@ -735,8 +821,26 @@ function renderTrackingList(){
     progress = clamp(progress, 0, 100);
 
     const ex = pos.explain || {};
+
+    // ✅ PATCH: TP/SL percent (표시)
+    const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
+    const slPct = Number.isFinite(pos.slPct) ? pos.slPct : null;
+
+    // ✅ PATCH: remaining countdown
+    const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
+    const remainMs = expiryAt - Date.now();
+    const remainText = formatRemain(remainMs);
+
     const explainLine =
-      `유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
+      `남은시간 ${remainText} · 유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
+
+    const tpLine = tpPct !== null
+      ? `$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${tpPct.toFixed(2)}%)`
+      : `$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})}`;
+
+    const slLine = slPct !== null
+      ? `$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${slPct.toFixed(2)}%)`
+      : `$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})}`;
 
     return `
       <div class="position-card">
@@ -765,9 +869,9 @@ function renderTrackingList(){
 
           <div class="price-info">
             <span class="price-label">TP / SL</span>
-            <span class="price-val" style="color:var(--success);">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+            <span class="price-val" style="color:var(--success);">${tpLine}</span>
             <div style="height:4px;"></div>
-            <span class="price-val" style="color:var(--danger);">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+            <span class="price-val" style="color:var(--danger);">${slLine}</span>
           </div>
         </div>
 
@@ -818,6 +922,10 @@ function updateStatsUI(){
   const rate = state.history.total > 0 ? (state.history.win / state.history.total) * 100 : 0;
   document.getElementById("win-stat").innerText = `${rate.toFixed(1)}%`;
   document.getElementById("active-stat").innerText = state.activePositions.length;
+
+  // ✅ PATCH
+  ensureStrategyCountUI();
+  updateStrategyCountUI();
 }
 
 // ---------- Auto Scan ----------
