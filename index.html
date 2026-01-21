@@ -1,17 +1,9 @@
-<!-- =========================
-  YOPO AI PRO (Single-File) v7
-  PART 1 / 2 ✅ (UI + 상태/인증 + 코인유니버스 + 실시간가격 + 차트)
-  - PART 2에서: "예측/MTF합의/보수확률(윌슨)/유사도엔진/자동스캔/추적/종료기록/백테스트"까지 전부 활성화
-  ✅ 사용법:
-   1) 이 파일을 그대로 저장 (예: yopo_v7_part1.html)
-   2) 실행 확인 후, 내가 주는 PART 2 코드를 이 파일의 안내 위치에 붙이면 완성
-========================= -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>YOPO AI PRO | Premium Crypto Analytics (v7)</title>
+  <title>YOPO AI PRO | Premium Crypto Analytics</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
@@ -233,6 +225,7 @@
     .coin-info h4{ margin:0; font-size:16px; font-weight:950; }
     .coin-info span{ font-size:11px; color:var(--text-sub); font-weight:800; }
 
+    /* 가격 표시 강화 */
     .coin-price{ text-align:right; }
     .coin-price .p{
       margin:0;
@@ -325,6 +318,7 @@
       font-weight:800;
     }
 
+    /* 추천 TOP */
     .recommend-box{
       margin:10px 6px 14px;
       background:#fff;
@@ -370,6 +364,7 @@
     .pill.short{ color:var(--danger); }
     .pill.hold{ color:var(--text-sub); }
 
+    /* 종료 기록 */
     .history-box{
       margin:0 18px 12px;
       background:#fff;
@@ -468,6 +463,65 @@
     }
     .tracking-list{ flex:1; overflow-y:auto; padding:18px; }
 
+    .position-card{
+      background:#fff;
+      border-radius:16px;
+      padding:18px;
+      margin-bottom:14px;
+      border:1px solid var(--border);
+      box-shadow:0 2px 10px rgba(0,0,0,.02);
+      transition:.2s;
+    }
+    .position-card:hover{ transform:translateY(-1px); box-shadow:0 10px 18px rgba(0,0,0,.05); }
+    .card-header{ display:flex; justify-content:space-between; margin-bottom:12px; align-items:center; }
+    .card-symbol{ font-size:18px; font-weight:950; }
+    .card-type{
+      font-size:12px;
+      font-weight:950;
+      padding:4px 10px;
+      border-radius:999px;
+    }
+    .type-LONG{ background:#e6fffa; color:var(--success); }
+    .type-SHORT{ background:#fff5f5; color:var(--danger); }
+    .type-HOLD{ background:#f1f5f9; color:var(--text-sub); }
+
+    .card-grid{
+      display:grid;
+      grid-template-columns:1fr 1.7fr 1fr;
+      gap:14px;
+      align-items:center;
+    }
+    .price-info{ text-align:center; }
+    .price-label{ font-size:11px; color:var(--text-sub); display:block; font-weight:900; margin-bottom:2px; }
+    .price-val{ font-size:14px; font-weight:950; }
+
+    .progress-text{
+      font-size:12px;
+      font-weight:950;
+      display:flex;
+      justify-content:space-between;
+      margin-bottom:6px;
+    }
+    .progress-track{
+      height:10px;
+      background:#edf2f7;
+      border-radius:6px;
+      overflow:hidden;
+    }
+    .progress-fill{ height:100%; transition:width .35s ease; }
+
+    .card-foot{
+      margin-top:10px;
+      font-size:11px;
+      color:var(--text-sub);
+      font-weight:900;
+      line-height:1.35;
+      background:var(--secondary);
+      border:1px dashed var(--border);
+      border-radius:12px;
+      padding:10px 12px;
+    }
+
     .modal-overlay{
       position:absolute;
       inset:0;
@@ -494,6 +548,7 @@
       border-bottom:1px solid var(--border);
       padding-bottom:14px;
     }
+    .modal-signal{ font-size:40px; margin-bottom:8px; }
     .analysis-text{
       background:var(--secondary);
       padding:16px;
@@ -538,6 +593,19 @@
       border:1px solid var(--border);
     }
 
+    .bt-box{
+      margin-top:10px;
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px;
+      display:none;
+    }
+    .bt-box.show{ display:block; }
+    .bt-title{ font-size:12px; font-weight:950; color:var(--text-sub); margin-bottom:8px; display:flex; justify-content:space-between; }
+    .bt-metrics{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+    .bt-metrics .mini-box{ background:var(--secondary); }
+
     @keyframes pulse{0%{opacity:1}50%{opacity:.5}100%{opacity:1}}
     @keyframes popUp{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
   </style>
@@ -558,7 +626,7 @@
       </div>
       <div class="auth-err" id="auth-err">비밀번호가 틀렸습니다.</div>
       <p class="auth-sub" style="margin-top:10px;">
-        참고: 이 잠금은 “가벼운 잠금”입니다. (HTML을 열면 내용이 보일 수 있습니다)
+        참고: 이 잠금은 “가벼운 잠금”입니다. (HTML은 열면 내용이 보일 수 있습니다)
       </p>
     </div>
   </div>
@@ -619,8 +687,8 @@
           </div>
           <div id="rec-container">
             <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
-              PART 2 적용 후 활성화됩니다.<br/>
-              (자동 스캔 → 추천 클릭 → 즉시 분석 → 추적 등록)
+              “자동 스캔”을 누르면 15개 코인을 분석해서 HOLD 아닌 것만 골라줍니다.<br/>
+              추천을 <b>클릭하면 즉시 분석</b> 후, 결과창에서 <b>추적 등록</b>할 수 있습니다.
             </div>
           </div>
         </div>
@@ -648,9 +716,28 @@
           </button>
         </div>
 
+        <!-- 백테스트 결과 -->
+        <div class="bt-box" id="bt-box">
+          <div class="bt-title">
+            <span>백테스트 결과(필터 강화형)</span>
+            <span id="bt-range" style="font-weight:950;">--</span>
+          </div>
+          <div class="bt-metrics">
+            <div class="mini-box"><small>표본</small><div id="bt-n">--</div></div>
+            <div class="mini-box"><small>승률</small><div id="bt-win">--</div></div>
+            <div class="mini-box"><small>평균수익(%)</small><div id="bt-avg">--</div></div>
+          </div>
+          <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
+            - 백테스트는 “과거로 시험해보는 점수표”입니다.<br/>
+            - 이번 버전은 잡신호를 빼려고 <b>필터(확률/엣지/유사도)</b> 통과한 신호만 테스트합니다.<br/>
+            - 표본이 적으면 승률이 높아 보여도 믿기 어려우니, 표본도 같이 보세요.
+          </div>
+        </div>
+
         <div class="tiny-note">
           - 서버 없이(HTML 1파일) 동작하는 “안정화 버전”입니다.<br/>
-          - PART 2에서 “멀티 타임프레임 합의 + 보수확률(윌슨) + HOLD 강화 + 추적/백테스트”가 들어갑니다.
+          - 애매하면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
+          - “중복 신호/과한 빈도”를 막기 위해 <b>중복/쿨다운</b> 보호를 넣었습니다.
         </div>
       </div>
     </div>
@@ -663,24 +750,20 @@
           <h3><i class="fa-solid fa-radar"></i> 실시간 포지션 정밀 추적</h3>
           <span class="live-badge">LIVE</span>
         </div>
-        <div class="tracking-list" id="tracking-container">
-          <div style="text-align:center; padding:50px; color:var(--text-sub); font-weight:950;">
-            PART 2 적용 후 추적 카드가 활성화됩니다.
-          </div>
-        </div>
+        <div class="tracking-list" id="tracking-container"></div>
       </div>
     </div>
 
     <div class="modal-overlay" id="result-modal">
       <div class="analysis-modal">
         <div class="modal-header">
-          <div id="modal-icon" style="font-size:40px; margin-bottom:8px;">🧠</div>
-          <h2 id="modal-title" style="margin:0; color:var(--primary);">분석 결과</h2>
-          <p id="modal-subtitle" style="margin:6px 0 0; color:var(--text-sub); font-weight:900;">--</p>
+          <div id="modal-icon" class="modal-signal">📈</div>
+          <h2 id="modal-title" style="margin:0; color:var(--primary);">LONG SIGNAL</h2>
+          <p id="modal-subtitle" style="margin:6px 0 0; color:var(--text-sub); font-weight:900;">BTCUSDT | 1H</p>
         </div>
 
         <div class="modal-grid" id="modal-grid"></div>
-        <div id="modal-content" class="analysis-text">PART 2 적용 후 결과 설명이 표시됩니다.</div>
+        <div id="modal-content" class="analysis-text"></div>
 
         <button class="modal-btn" id="modal-confirm" onclick="confirmTrack()">추적 시스템에 등록</button>
         <button class="modal-btn secondary" onclick="closeModal()">닫기</button>
@@ -691,13 +774,15 @@
   <script src="https://s3.tradingview.com/tv.js"></script>
   <script>
     /*************************************************************
-     * YOPO AI PRO (Single-File, v7)
-     * PART 1: UI/상태/인증/유니버스/실시간가격/차트
+     * YOPO AI PRO (Single-File, v6)
+     * - 추가: 비밀번호(2580) 게이트, 추천 클릭→즉시 분석→추적,
+     *         코인 리스트 “가격+%” 강화, 종료 기록 패널,
+     *         백테스트 필터 강화형
      *************************************************************/
 
     // ---------- AUTH ----------
     const AUTH_PASSWORD = "2580";
-    const AUTH_KEY = "yopo_auth_ok_v1";
+    const AUTH_KEY = "yopo_auth_ok_v1"; // localStorage key
 
     function isAuthed(){
       try{ return localStorage.getItem(AUTH_KEY) === "1"; }catch(e){ return false; }
@@ -728,12 +813,48 @@
     }
 
     // ---------- Storage ----------
-    const STORAGE_KEY = "yopo_single_v7_state";
+    const STORAGE_KEY = "yopo_single_v6_state";
 
     // ---------- API ----------
     const BYBIT_TICKERS = "https://api.bybit.com/v5/market/tickers?category=linear";
+    const BYBIT_KLINE = (symbol, interval, limit) =>
+      `https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+
     const CG_MARKETS = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h";
     const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
+
+    // ---------- Similarity / Analysis Params ----------
+    const SIM_WINDOW = 40;
+    const FUTURE_H = 8;
+    const SIM_STEP = 2;
+    const SIM_TOPK = 25;
+
+    // HOLD rules
+    const HOLD_MIN_TOPK = 12;
+    const HOLD_MIN_SIM_AVG = 55;
+    const HOLD_MIN_EDGE = 0.08;
+    const HOLD_MIN_TP_PCT = 0.8;
+
+    // TP/SL
+    const RR = 2.0;
+    const TF_MULT = { "60": 1.2, "240": 2.0, "D": 3.5 };
+    const ATR_MIN_PCT = 0.15;
+    const TP_MAX_PCT = 20.0;
+
+    // cooldown
+    const COOLDOWN_MS = { "60": 10 * 60 * 1000, "240": 30 * 60 * 1000, "D": 2 * 60 * 60 * 1000 };
+
+    // scan delay
+    const SCAN_DELAY_MS = 650;
+
+    // backtest
+    const BACKTEST_TRADES = 80;
+    const EXTENDED_LIMIT = 900;
+
+    // 백테스트 필터(잡신호 제거용)
+    const BT_MIN_PROB = 0.58;     // 58% 이상만
+    const BT_MIN_EDGE = 0.10;     // 엣지 10% 이상만
+    const BT_MIN_SIM  = 60;       // 유사도 평균 60% 이상만
 
     // ---------- Candidate List (15) ----------
     const DEFAULT_CANDIDATES = [
@@ -759,18 +880,20 @@
       symbol: "BTCUSDT",
       tf: "60",
       universe: DEFAULT_CANDIDATES.map(x => ({...x})),
-      activePositions: [],            // PART 2에서 사용
-      history: { total: 0, win: 0 },  // PART 2에서 사용
-      closedTrades: [],               // PART 2에서 사용
+      activePositions: [],
+      history: { total: 0, win: 0 },
+      closedTrades: [],          // ✅ 종료 기록
       lastUniverseAt: 0,
       btcDom: null,
       btcDomPrev: null,
       lastApiHealth: "warn",
-      lastSignalAt: {},               // PART 2에서 사용
-      lastScanAt: 0,                  // PART 2에서 사용
-      lastScanResults: [],            // PART 2에서 사용
-      lastPrices: {}                  // {symbol:{price,chg,ts}}
+      lastSignalAt: {},
+      lastScanAt: 0,
+      lastScanResults: [],
+      lastPrices: {}             // ✅ 가격 캐시 {symbol:{price,chg,ts}}
     };
+
+    let tempPos = null;
 
     // ---------- Boot ----------
     document.addEventListener("DOMContentLoaded", async () => {
@@ -786,7 +909,10 @@
 
       initChart();
       renderUniverseList();
+      renderTrackingList();
+      renderClosedTrades();
       updateStatsUI();
+      renderScanResults();
 
       await refreshUniverseAndGlobals();
       await marketTick();
@@ -815,41 +941,28 @@
 
     // ---------- Chart ----------
     function initChart(){
-      const wrap = document.getElementById("chart-wrap");
-      if(!wrap) return;
-
-      wrap.innerHTML = "";
-      try{
-        new TradingView.widget({
-          autosize:true,
-          symbol:"BYBIT:" + state.symbol,
-          interval:state.tf,
-          timezone:"Asia/Seoul",
-          theme:"light",
-          style:"1",
-          locale:"ko",
-          toolbar_bg:"#f1f3f6",
-          enable_publishing:false,
-          hide_top_toolbar:false,
-          container_id:"chart-wrap"
-        });
-      }catch(e){
-        wrap.innerHTML = `
-          <div style="padding:20px; color:var(--text-sub); font-weight:900;">
-            차트 로딩 실패(네트워크/차단 가능). 새로고침 해주세요.
-          </div>
-        `;
-      }
+      document.getElementById("chart-wrap").innerHTML = "";
+      new TradingView.widget({
+        autosize:true,
+        symbol:"BYBIT:" + state.symbol,
+        interval:state.tf,
+        timezone:"Asia/Seoul",
+        theme:"light",
+        style:"1",
+        locale:"ko",
+        toolbar_bg:"#f1f3f6",
+        enable_publishing:false,
+        hide_top_toolbar:false,
+        container_id:"chart-wrap"
+      });
     }
 
     // ---------- Universe + Dominance ----------
     async function refreshUniverseAndGlobals(){
       const apiDot = document.getElementById("api-dot");
-
       try{
         const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 1 });
         const dom = g?.data?.market_cap_percentage?.btc;
-
         if(typeof dom === "number"){
           state.btcDomPrev = (typeof state.btcDom === "number") ? state.btcDom : null;
           state.btcDom = dom;
@@ -863,12 +976,10 @@
           const mc = m?.market_cap ?? 0;
           const vol = m?.total_volume ?? 0;
           const chg = m?.price_change_percentage_24h ?? 0;
-
           const score =
             safeLog10(mc) * 0.45 +
             safeLog10(vol) * 0.45 +
             Math.min(Math.abs(chg), 20) * 0.10;
-
           return { ...c, mc, vol, chg, score };
         }).sort((a,b)=> b.score - a.score);
 
@@ -877,9 +988,7 @@
         state.lastApiHealth = "ok";
         saveState();
 
-        document.getElementById("universe-ts").innerText =
-          `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
-
+        document.getElementById("universe-ts").innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
         apiDot.className = "status-dot ok";
         renderUniverseList();
       }catch(e){
@@ -933,9 +1042,7 @@
         state.lastUniverseAt = Date.now();
         saveState();
 
-        document.getElementById("universe-ts").innerText =
-          `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
-
+        document.getElementById("universe-ts").innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
         renderUniverseList();
       }catch(e){
         console.error("Bybit fallback universe failed:", e);
@@ -944,8 +1051,6 @@
 
     function renderUniverseList(){
       const container = document.getElementById("market-list-container");
-      if(!container) return;
-
       container.innerHTML = "";
       state.universe.forEach(coin => {
         const div = document.createElement("div");
@@ -958,7 +1063,7 @@
             <h4>${coin.s.replace("USDT","")}</h4>
             <span>${coin.n || "-"}</span>
           </div>
-          <div class="coin-price">
+          <div class="coin-price" id="price-${coin.s}">
             <div class="p" id="p-${coin.s}">---</div>
             <div class="chg" id="c-${coin.s}">---</div>
             <div class="small-metrics" id="meta-${coin.s}"></div>
@@ -966,7 +1071,7 @@
         `;
         container.appendChild(div);
 
-        const meta = document.getElementById(\`meta-\${coin.s}\`);
+        const meta = document.getElementById(`meta-${coin.s}`);
         if(meta){
           const mcTxt = coin.mc ? `시총 ${formatMoney(coin.mc)}` : "";
           const volTxt = coin.vol ? `거래량 ${formatMoney(coin.vol)}` : "";
@@ -975,7 +1080,7 @@
           meta.innerText = [mcTxt, volTxt, turnTxt, chgTxt].filter(Boolean).join(" · ");
         }
 
-        // 캐시된 가격이 있으면 즉시 표시
+        // ✅ 캐시된 가격이 있으면 즉시 표시
         const cached = state.lastPrices?.[coin.s];
         if(cached?.price){
           updateCoinRow(coin.s, cached.price, cached.chg ?? 0, true);
@@ -983,7 +1088,7 @@
       });
     }
 
-    // ---------- Market tick ----------
+    // ---------- Market tick + tracking ----------
     async function marketTick(){
       try{
         const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
@@ -992,16 +1097,15 @@
 
         for(const t of tickers){
           if(!symbols.has(t.symbol)) continue;
-
           const price = parseFloat(t.lastPrice || "0");
           const chg = parseFloat(t.price24hPcnt || "0") * 100;
-
           if(price > 0){
             updateCoinRow(t.symbol, price, chg);
+            // ✅ 캐시 저장
             state.lastPrices[t.symbol] = { price, chg, ts: Date.now() };
           }
+          if(price > 0) trackPositions(t.symbol, price);
         }
-
         saveState();
 
         if(!symbols.has(state.symbol) && state.universe[0]){
@@ -1009,8 +1113,7 @@
         }
       }catch(e){
         console.error("Market tick error:", e);
-        const dot = document.getElementById("api-dot");
-        if(dot) dot.className = "status-dot bad";
+        document.getElementById("api-dot").className = "status-dot bad";
       }
     }
 
@@ -1028,48 +1131,808 @@
       cEl.style.color = color;
       cEl.textContent = `${sign}${changePct.toFixed(2)}%`;
 
-      // PART 1에서는 UI 갱신만 수행
       if(!silent){
-        // (PART 2에서 여기서 추적 업데이트로 연결됩니다)
+        // UI 갱신은 위만으로 충분
       }
     }
 
-    // ---------- Stats ----------
-    function updateStatsUI(){
-      const totalEl = document.getElementById("total-stat");
-      const winEl = document.getElementById("win-stat");
-      const activeEl = document.getElementById("active-stat");
-      if(!totalEl || !winEl || !activeEl) return;
+    // ---------- Core Analysis ----------
+    async function executeAnalysis(){
+      const btn = document.getElementById("predict-btn");
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 분석 중...';
 
-      totalEl.innerText = state.history.total || 0;
-      const total = state.history.total || 0;
-      const win = state.history.win || 0;
-      const rate = total > 0 ? (win / total) * 100 : 0;
-      winEl.innerText = `${rate.toFixed(1)}%`;
-      activeEl.innerText = (state.activePositions || []).length;
+      try{
+        const dupKey = `${state.symbol}|${state.tf}`;
+        if(hasActivePosition(state.symbol, state.tf)){
+          alert("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)");
+          return;
+        }
+        if(isInCooldown(dupKey)){
+          alert("너무 자주 신호를 내면 승률이 내려갈 수 있어요. 지금은 쿨다운입니다.");
+          return;
+        }
+
+        const candles = await fetchCandles(state.symbol, state.tf, EXTENDED_LIMIT);
+        if(candles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
+
+        const pos = buildSignalFromCandles(state.symbol, state.tf, candles);
+        state.lastSignalAt[dupKey] = Date.now();
+        saveState();
+
+        showResultModal(pos);
+      }catch(e){
+        console.error(e);
+        alert("분석 중 오류가 발생했습니다. (API 지연/제한 가능)");
+      }finally{
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-microchip"></i> AI 분석 및 예측 실행';
+      }
     }
 
-    // ---------- Modal (PART 1 stub) ----------
+    // ✅ 추천 클릭 시: 코인/TF 적용 + 즉시 분석 실행(모달)
+    async function quickAnalyzeAndShow(symbol, tfRaw){
+      try{
+        // TF 적용
+        const btns = document.querySelectorAll(".tf-btn");
+        btns.forEach(b => b.classList.remove("active"));
+        if(tfRaw === "60") btns[0].classList.add("active");
+        else if(tfRaw === "240") btns[1].classList.add("active");
+        else btns[2].classList.add("active");
+        state.tf = tfRaw;
+
+        // 코인 적용
+        switchCoin(symbol);
+        saveState();
+        initChart();
+
+        // 분석 실행(중복/쿨다운은 추천은 예외적으로 “사용자 선택”이니 경고만)
+        if(hasActivePosition(symbol, tfRaw)){
+          alert("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)");
+          return;
+        }
+
+        const candles = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
+        if(candles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
+
+        const pos = buildSignalFromCandles(symbol, tfRaw, candles);
+        showResultModal(pos);
+      }catch(e){
+        console.error(e);
+        alert("추천 분석 중 오류가 발생했습니다.");
+      }
+    }
+
+    function buildSignalFromCandles(symbol, tf, candles){
+      const closes = candles.map(x => x.c);
+      const highs  = candles.map(x => x.h);
+      const lows   = candles.map(x => x.l);
+      const vols   = candles.map(x => x.v);
+
+      const entry = closes[closes.length - 1];
+
+      const rsi = calcRSI(closes, 14);
+      const macd = calcMACD(closes);
+      const atrRaw = calcATR(highs, lows, closes, 14);
+      const volTrend = calcVolumeTrend(vols, 20);
+      const ema20 = emaLast(closes, 20);
+      const ema50 = emaLast(closes, 50);
+      const trend = (ema20 >= ema50) ? 1 : -1;
+
+      const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
+
+      const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
+      const domPrev = (typeof state.btcDomPrev === "number") ? state.btcDomPrev : null;
+      const domUp = (dom !== null && domPrev !== null) ? (dom - domPrev) : 0;
+
+      const isAlt = (symbol !== "BTCUSDT");
+      let domDamp = 1.0;
+      let domHoldBoost = 0.0;
+      if(dom !== null){
+        if(dom > 50) domDamp *= 0.88;
+        if(domUp > 0.15) { domDamp *= 0.85; domHoldBoost += 1; }
+        if(isAlt && dom > 53) { domDamp *= 0.82; domHoldBoost += 1; }
+      }
+
+      let longP = sim.longProb;
+      let shortP = sim.shortProb;
+
+      const rsiBias = clamp((50 - rsi) / 50, -1, 1);
+      const macdBias = clamp(macd.hist * 6, -1, 1);
+      const volBias = clamp(volTrend, -1, 1);
+      const trendBias = clamp(trend * 0.8, -1, 1);
+
+      longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
+      shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
+
+      longP  = 0.5 + (longP - 0.5) * domDamp;
+      shortP = 0.5 + (shortP - 0.5) * domDamp;
+
+      const sum = Math.max(longP + shortP, 1e-9);
+      longP /= sum; shortP /= sum;
+
+      const type = (longP >= shortP) ? "LONG" : "SHORT";
+      const winProb = Math.max(longP, shortP);
+      const edge = Math.abs(longP - shortP);
+
+      const tfMult = TF_MULT[tf] || 1.2;
+      const atrMin = entry * (ATR_MIN_PCT / 100);
+      const atrUsed = Math.max(atrRaw, atrMin);
+
+      let tpDist = atrUsed * tfMult;
+      let slDist = tpDist / RR;
+
+      let tp = (type === "LONG") ? (entry + tpDist) : (entry - tpDist);
+      let sl = (type === "LONG") ? (entry - slDist) : (entry + slDist);
+
+      let tpPct = Math.abs((tp - entry) / entry) * 100;
+      let slPct = Math.abs((sl - entry) / entry) * 100;
+
+      if(tpPct > TP_MAX_PCT){
+        tpPct = TP_MAX_PCT;
+        const newTpDist = entry * (tpPct/100);
+        tp = (type === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
+        sl = (type === "LONG") ? (entry - (newTpDist/RR)) : (entry + (newTpDist/RR));
+        slPct = Math.abs((sl - entry) / entry) * 100;
+      }
+
+      const holdReasons = [];
+      if(sim.count < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${sim.count}개)`);
+      if(sim.avgSim < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${sim.avgSim.toFixed(1)}%)`);
+      if(edge < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edge*100).toFixed(1)}%)`);
+      if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
+
+      if(domHoldBoost >= 2 && isAlt) holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
+      if(volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
+
+      const isHold = holdReasons.length > 0;
+
+      return {
+        id: Date.now(),
+        symbol,
+        tf: tf === "60" ? "1H" : tf === "240" ? "4H" : "1D",
+        tfRaw: tf,
+        type: isHold ? "HOLD" : type,
+        entry,
+        tp: isHold ? null : tp,
+        sl: isHold ? null : sl,
+        tpPct: isHold ? null : tpPct,
+        slPct: isHold ? null : slPct,
+        createdAt: Date.now(),
+        explain: {
+          winProb,
+          longP, shortP,
+          edge,
+          simAvg: sim.avgSim,
+          simCount: sim.count,
+          simLongPct: sim.longProb * 100,
+          simShortPct: sim.shortProb * 100,
+          rsi,
+          macdHist: macd.hist,
+          atr: atrUsed,
+          volTrend,
+          ema20, ema50,
+          trend,
+          btcDom: dom,
+          btcDomUp: domUp,
+          holdReasons
+        }
+      };
+    }
+
+    // ---------- Modal ----------
+    function showResultModal(pos){
+      tempPos = pos;
+
+      const modal = document.getElementById("result-modal");
+      const icon = document.getElementById("modal-icon");
+      const title = document.getElementById("modal-title");
+      const subtitle = document.getElementById("modal-subtitle");
+      const grid = document.getElementById("modal-grid");
+      const content = document.getElementById("modal-content");
+      const confirmBtn = document.getElementById("modal-confirm");
+
+      const isLong = pos.type === "LONG";
+      const isHold = pos.type === "HOLD";
+
+      icon.textContent = isHold ? "⏸️" : (isLong ? "📈" : "📉");
+      title.textContent = isHold ? "HOLD (보류)" : `${pos.type} SIGNAL`;
+      title.style.color = isHold ? "var(--text-sub)" : (isLong ? "var(--success)" : "var(--danger)");
+      subtitle.textContent = `${pos.symbol} | ${pos.tf}`;
+
+      const ex = pos.explain;
+
+      if(isHold){
+        grid.innerHTML = `
+          <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
+          <div class="mini-box"><small>이유</small><div>확신 부족</div></div>
+          <div class="mini-box"><small>유사도 평균</small><div>${ex.simAvg.toFixed(1)}%</div></div>
+          <div class="mini-box"><small>표본 수</small><div>${ex.simCount}개</div></div>
+        `;
+        const reasons = ex.holdReasons.map(r => `- ${r}`).join("<br/>");
+        content.innerHTML = `
+          <b>이번에는 “보류”가 더 안전해요.</b><br/>
+          ${reasons}<br/><br/>
+          <b>정리:</b> 애매할 때 억지로 진입하면 장기 승률이 내려가서, 이번은 패스합니다.
+        `;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "보류는 등록하지 않음";
+      }else{
+        grid.innerHTML = `
+          <div class="mini-box"><small>진입가</small><div>$${pos.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
+          <div class="mini-box"><small>성공확률(추정)</small><div>${(ex.winProb*100).toFixed(1)}%</div></div>
+          <div class="mini-box"><small>목표가(TP)</small><div style="color:var(--success)">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${pos.tpPct.toFixed(2)}%)</div></div>
+          <div class="mini-box"><small>손절가(SL)</small><div style="color:var(--danger)">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${pos.slPct.toFixed(2)}%)</div></div>
+        `;
+
+        const domMsg = (typeof ex.btcDom === "number")
+          ? `BTC 도미넌스 ${ex.btcDom.toFixed(1)}% (최근 ${ex.btcDomUp>=0?"+":""}${ex.btcDomUp.toFixed(2)}p)`
+          : `BTC 도미넌스: 데이터 없음`;
+
+        content.innerHTML = `
+          <b>근거 요약:</b><br/>
+          - 유사패턴 ${ex.simCount}개 · 평균 유사도 ${ex.simAvg.toFixed(1)}%<br/>
+          - RSI ${ex.rsi.toFixed(1)} · MACD ${ex.macdHist.toFixed(4)}<br/>
+          - 추세(EMA20/EMA50) ${ex.ema20 >= ex.ema50 ? "상승 우위" : "하락 우위"}<br/>
+          - 거래량 흐름 ${ex.volTrend >= 0 ? "증가" : "감소"} · 엣지 ${(ex.edge*100).toFixed(1)}%<br/>
+          - ${domMsg}<br/><br/>
+          <b>정리:</b> 통계+지표가 같은 방향이라 ${pos.type}로 제안합니다.
+        `;
+
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "추적 시스템에 등록";
+      }
+
+      modal.style.display = "flex";
+    }
+
     function closeModal(){
-      const m = document.getElementById("result-modal");
-      if(m) m.style.display = "none";
-    }
-    function confirmTrack(){
-      alert("PART 2를 붙이면 '추적 등록/종료/통계'가 완성됩니다.");
+      document.getElementById("result-modal").style.display = "none";
+      tempPos = null;
     }
 
-    // ---------- Buttons (PART 1 stub) ----------
-    function executeAnalysis(){
-      alert("PART 2를 붙이면 'AI 분석/예측'이 활성화됩니다.");
+    function confirmTrack(){
+      if(!tempPos) return;
+      if(tempPos.type === "HOLD") return;
+
+      if(hasActivePosition(tempPos.symbol, tempPos.tfRaw)){
+        alert("이미 같은 코인/같은 기간의 추적 포지션이 있습니다.");
+        return;
+      }
+
+      state.activePositions.unshift({
+        ...tempPos,
+        status: "ACTIVE",
+        lastPrice: tempPos.entry,
+        pnl: 0
+      });
+      saveState();
+      closeModal();
+      renderTrackingList();
+      updateStatsUI();
     }
-    function autoScanUniverse(){
-      alert("PART 2를 붙이면 '자동 스캔'이 활성화됩니다.");
+
+    // ---------- Tracking ----------
+    function trackPositions(symbol, currentPrice){
+      let changed = false;
+
+      for(let i = state.activePositions.length - 1; i >= 0; i--){
+        const pos = state.activePositions[i];
+        if(pos.symbol !== symbol) continue;
+
+        pos.lastPrice = currentPrice;
+
+        let pnl = 0;
+        if(pos.type === "LONG"){
+          pnl = ((currentPrice - pos.entry) / pos.entry) * 100;
+        }else{
+          pnl = ((pos.entry - currentPrice) / pos.entry) * 100;
+        }
+        pos.pnl = pnl;
+
+        let close = false;
+        let win = false;
+        let exitPrice = null;
+        let exitReason = "";
+
+        if(pos.type === "LONG"){
+          if(currentPrice >= pos.tp){ close = true; win = true; exitPrice = pos.tp; exitReason="TP"; }
+          else if(currentPrice <= pos.sl){ close = true; win = false; exitPrice = pos.sl; exitReason="SL"; }
+        }else{
+          if(currentPrice <= pos.tp){ close = true; win = true; exitPrice = pos.tp; exitReason="TP"; }
+          else if(currentPrice >= pos.sl){ close = true; win = false; exitPrice = pos.sl; exitReason="SL"; }
+        }
+
+        if(close){
+          state.history.total++;
+          if(win) state.history.win++;
+
+          // ✅ 종료 기록 저장
+          const record = {
+            id: Date.now(),
+            symbol: pos.symbol,
+            tf: pos.tf,
+            tfRaw: pos.tfRaw,
+            type: pos.type,
+            entry: pos.entry,
+            exit: exitPrice ?? currentPrice,
+            pnlPct: pnl,
+            win,
+            reason: exitReason,
+            closedAt: Date.now()
+          };
+          state.closedTrades.unshift(record);
+          state.closedTrades = state.closedTrades.slice(0, 30);
+
+          state.activePositions.splice(i, 1);
+          saveState();
+          changed = true;
+
+          // alert는 너무 잦을 수 있어 유지하되, 보기 쉽게
+          alert(`[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnl.toFixed(2)}%`);
+        }else{
+          changed = true;
+        }
+      }
+
+      if(changed){
+        saveState();
+        renderTrackingList();
+        renderClosedTrades();
+        updateStatsUI();
+      }
     }
-    function runBacktest(){
-      alert("PART 2를 붙이면 '백테스트'가 활성화됩니다.");
+
+    function renderTrackingList(){
+      const container = document.getElementById("tracking-container");
+
+      if(!state.activePositions.length){
+        container.innerHTML = `
+          <div style="text-align:center; padding:50px; color:var(--text-sub); font-weight:950;">
+            <i class="fa-solid fa-radar" style="font-size:44px; opacity:.18;"></i><br><br>
+            현재 추적 중인 포지션이 없습니다.<br/>
+            왼쪽에서 코인을 고르고 “AI 분석”을 눌러보세요.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = state.activePositions.map(pos => {
+        const isUp = pos.pnl >= 0;
+        const color = isUp ? "var(--success)" : "var(--danger)";
+
+        const denom = Math.max(Math.abs(pos.tp - pos.entry), 1e-9);
+        const numer = (pos.type === "LONG")
+          ? (pos.lastPrice - pos.entry)
+          : (pos.entry - pos.lastPrice);
+
+        let progress = (numer / denom) * 100;
+        progress = clamp(progress, 0, 100);
+
+        const ex = pos.explain || {};
+        const explainLine =
+          `유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
+
+        return `
+          <div class="position-card">
+            <div class="card-header">
+              <div class="card-symbol">
+                ${pos.symbol} <span style="font-size:12px; color:var(--text-sub); font-weight:950;">${pos.tf}</span>
+              </div>
+              <div class="card-type ${pos.type === "LONG" ? "type-LONG" : "type-SHORT"}">${pos.type}</div>
+            </div>
+
+            <div class="card-grid">
+              <div class="price-info">
+                <span class="price-label">현재가</span>
+                <span class="price-val">$${(pos.lastPrice||pos.entry).toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+              </div>
+
+              <div>
+                <div class="progress-text">
+                  <span style="color:${color}">수익률 ${pos.pnl.toFixed(2)}%</span>
+                  <span>목표까지 ${progress.toFixed(1)}%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" style="width:${progress}%; background:${color};"></div>
+                </div>
+              </div>
+
+              <div class="price-info">
+                <span class="price-label">TP / SL</span>
+                <span class="price-val" style="color:var(--success);">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+                <div style="height:4px;"></div>
+                <span class="price-val" style="color:var(--danger);">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+              </div>
+            </div>
+
+            <div class="card-foot">${explainLine}</div>
+          </div>
+        `;
+      }).join("");
     }
-    function quickAnalyzeAndShow(){
-      alert("PART 2를 붙이면 '추천 클릭 즉시 분석'이 활성화됩니다.");
+
+    function renderClosedTrades(){
+      const container = document.getElementById("history-container");
+      const countEl = document.getElementById("history-count");
+      const list = state.closedTrades || [];
+      countEl.textContent = String(list.length);
+
+      if(!list.length){
+        container.innerHTML = `
+          <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:4px 2px;">
+            아직 종료된 기록이 없습니다.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = list.slice(0, 8).map(x => {
+        const badge = x.win ? `<span class="badge-win">성공</span>` : `<span class="badge-lose">실패</span>`;
+        const pnlColor = x.pnlPct >= 0 ? "var(--success)" : "var(--danger)";
+        return `
+          <div class="history-item">
+            <div class="left">
+              ${badge}
+              <span>${x.symbol.replace("USDT","")} ${x.tf}</span>
+              <span style="color:var(--text-sub); font-weight:950;">(${x.reason})</span>
+            </div>
+            <div style="text-align:right;">
+              <div style="color:${pnlColor}; font-weight:950;">${x.pnlPct.toFixed(2)}%</div>
+              <div style="color:var(--text-sub); font-size:10px; font-weight:900;">
+                ${new Date(x.closedAt).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function updateStatsUI(){
+      document.getElementById("total-stat").innerText = state.history.total;
+      const rate = state.history.total > 0 ? (state.history.win / state.history.total) * 100 : 0;
+      document.getElementById("win-stat").innerText = `${rate.toFixed(1)}%`;
+      document.getElementById("active-stat").innerText = state.activePositions.length;
+    }
+
+    // ---------- Auto Scan ----------
+    async function autoScanUniverse(){
+      const scanBtn = document.getElementById("scan-btn");
+      const status = document.getElementById("scan-status");
+      scanBtn.disabled = true;
+      status.textContent = "스캔 중...";
+
+      try{
+        const results = [];
+        for(let i=0;i<state.universe.length;i++){
+          const coin = state.universe[i];
+          status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
+
+          try{
+            const candles = await fetchCandles(coin.s, state.tf, 380);
+            if(candles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+            const pos = buildSignalFromCandles(coin.s, state.tf, candles);
+            if(pos.type === "HOLD") continue;
+
+            results.push({
+              symbol: pos.symbol,
+              tf: pos.tf,
+              tfRaw: pos.tfRaw,
+              type: pos.type,
+              winProb: pos.explain.winProb,
+              edge: pos.explain.edge
+            });
+          }catch(e){}
+
+          await sleep(SCAN_DELAY_MS);
+        }
+
+        results.sort((a,b)=> (b.winProb - a.winProb) || (b.edge - a.edge));
+        state.lastScanResults = results.slice(0, 6);
+        state.lastScanAt = Date.now();
+        saveState();
+
+        renderScanResults();
+        status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
+      }finally{
+        scanBtn.disabled = false;
+        setTimeout(()=>{ document.getElementById("scan-status").textContent = "대기"; }, 1500);
+      }
+    }
+
+    function renderScanResults(){
+      const container = document.getElementById("rec-container");
+      const list = state.lastScanResults || [];
+      if(!list.length){
+        container.innerHTML = `
+          <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
+            아직 추천 결과가 없습니다. “자동 스캔”을 눌러주세요.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = list.map(item => {
+        const pillClass = item.type === "LONG" ? "long" : "short";
+        const prob = (item.winProb*100).toFixed(1);
+        const edge = (item.edge*100).toFixed(1);
+
+        return `
+          <div class="rec-item" onclick="quickAnalyzeAndShow('${item.symbol}','${item.tfRaw}')">
+            <div class="rec-left">
+              ${item.symbol.replace("USDT","")}
+              <span class="pill ${pillClass}">${item.type}</span>
+            </div>
+            <div class="rec-right">
+              성공확률 ${prob}%<br/>
+              엣지 ${edge}% · ${item.tf}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // ---------- Backtest (필터 강화형) ----------
+    async function runBacktest(){
+      const btBtn = document.getElementById("bt-btn");
+      btBtn.disabled = true;
+      btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트...';
+
+      const box = document.getElementById("bt-box");
+      box.classList.remove("show");
+
+      try{
+        const candles = await fetchCandles(state.symbol, state.tf, EXTENDED_LIMIT);
+        if(candles.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
+
+        let wins=0, total=0;
+        let pnlSum=0;
+
+        const end = candles.length - (FUTURE_H + 20);
+        const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
+
+        for(let idx = start; idx < end; idx += 7){
+          const sliceCandles = candles.slice(0, idx+1);
+          if(sliceCandles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+
+          const pos = buildSignalFromCandles(state.symbol, state.tf, sliceCandles);
+          if(pos.type === "HOLD") continue;
+
+          // ✅ 필터 강화(백테스트만)
+          const ex = pos.explain || {};
+          if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
+          if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
+          if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
+
+          const future = candles.slice(idx+1, Math.min(idx+1+140, candles.length));
+          const outcome = simulateOutcome(pos, future);
+          if(!outcome.resolved) continue;
+
+          total++;
+          if(outcome.win) wins++;
+          pnlSum += outcome.pnlPct;
+
+          if(total >= BACKTEST_TRADES) break;
+        }
+
+        const winRate = total ? (wins/total)*100 : 0;
+        const avgPnl = total ? (pnlSum/total) : 0;
+
+        document.getElementById("bt-n").textContent = `${total}회`;
+        document.getElementById("bt-win").textContent = `${winRate.toFixed(1)}%`;
+        document.getElementById("bt-avg").textContent = `${avgPnl.toFixed(2)}%`;
+
+        const tfName = state.tf === "60" ? "1H" : state.tf === "240" ? "4H" : "1D";
+        document.getElementById("bt-range").textContent =
+          `${state.symbol} · ${tfName} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%)`;
+
+        box.classList.add("show");
+      }catch(e){
+        console.error(e);
+        alert("백테스트 중 오류가 발생했습니다.");
+      }finally{
+        btBtn.disabled = false;
+        btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
+      }
+    }
+
+    function simulateOutcome(pos, futureCandles){
+      for(const c of futureCandles){
+        const hi = c.h, lo = c.l;
+        if(pos.type === "LONG"){
+          if(hi >= pos.tp){
+            const pnl = ((pos.tp - pos.entry)/pos.entry)*100;
+            return { resolved:true, win:true, pnlPct:pnl };
+          }
+          if(lo <= pos.sl){
+            const pnl = ((pos.sl - pos.entry)/pos.entry)*100;
+            return { resolved:true, win:false, pnlPct:pnl };
+          }
+        }else{
+          if(lo <= pos.tp){
+            const pnl = ((pos.entry - pos.tp)/pos.entry)*100;
+            return { resolved:true, win:true, pnlPct:pnl };
+          }
+          if(hi >= pos.sl){
+            const pnl = ((pos.entry - pos.sl)/pos.entry)*100;
+            return { resolved:true, win:false, pnlPct:pnl };
+          }
+        }
+      }
+      return { resolved:false, win:false, pnlPct:0 };
+    }
+
+    // ---------- Candle Fetch ----------
+    async function fetchCandles(symbol, tf, limit){
+      const res = await fetchJSON(BYBIT_KLINE(symbol, tf, limit), { timeoutMs: 9000, retry: 1 });
+      const kline = res?.result?.list || [];
+      const candles = kline.map(row => ({
+        t: Number(row[0]),
+        o: parseFloat(row[1]),
+        h: parseFloat(row[2]),
+        l: parseFloat(row[3]),
+        c: parseFloat(row[4]),
+        v: parseFloat(row[5])
+      })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
+      candles.sort((a,b)=> a.t - b.t);
+      return candles;
+    }
+
+    // ---------- Similarity ----------
+    function calcSimilarityStats(closes, winLen, futureH, step, topK){
+      const n = closes.length;
+      const curStart = n - winLen;
+      const curSeg = closes.slice(curStart, n);
+      const curRet = returns(curSeg);
+
+      const sims = [];
+      const lastStart = n - winLen - futureH - 2;
+      for(let s=0; s<=lastStart; s+=step){
+        const seg = closes.slice(s, s + winLen);
+        const ret = returns(seg);
+        const sim = zncc(curRet, ret);
+        if(!Number.isFinite(sim)) continue;
+
+        const entry = closes[s + winLen - 1];
+        const future = closes[s + winLen - 1 + futureH];
+        const r = (future - entry) / Math.max(entry, 1e-12);
+        sims.push({ sim, r });
+      }
+
+      sims.sort((a,b)=> b.sim - a.sim);
+      const top = sims.slice(0, Math.min(topK, sims.length));
+
+      const count = top.length;
+      if(count === 0){
+        return { longProb: 0.5, shortProb: 0.5, avgSim: 0, count: 0 };
+      }
+
+      const up = top.filter(x => x.r >= 0).length;
+      const down = count - up;
+
+      const longProb = (up + 1) / (count + 2);
+      const shortProb = (down + 1) / (count + 2);
+
+      const avgZ = top.reduce((a,b)=>a+b.sim,0) / count;
+      const avgSim = clamp((avgZ + 1) * 50, 0, 100);
+
+      return { longProb, shortProb, avgSim, count };
+    }
+
+    function returns(seg){
+      const out = [];
+      for(let i=1;i<seg.length;i++){
+        out.push((seg[i] - seg[i-1]) / Math.max(seg[i-1], 1e-12));
+      }
+      return out;
+    }
+
+    function zncc(a,b){
+      const m = Math.min(a.length, b.length);
+      if(m < 5) return 0;
+
+      const a0 = a.slice(0,m);
+      const b0 = b.slice(0,m);
+
+      const ma = mean(a0), mb = mean(b0);
+      let sa = 0, sb = 0;
+      for(let i=0;i<m;i++){
+        sa += (a0[i]-ma)*(a0[i]-ma);
+        sb += (b0[i]-mb)*(b0[i]-mb);
+      }
+      sa = Math.sqrt(sa / m);
+      sb = Math.sqrt(sb / m);
+      if(sa === 0 || sb === 0) return 0;
+
+      let dot = 0;
+      for(let i=0;i<m;i++){
+        dot += ((a0[i]-ma)/sa) * ((b0[i]-mb)/sb);
+      }
+      return dot / m;
+    }
+
+    function mean(arr){
+      return arr.reduce((a,b)=>a+b,0) / Math.max(arr.length,1);
+    }
+
+    // ---------- Indicators ----------
+    function calcRSI(closes, period=14){
+      if(closes.length < period+1) return 50;
+      let gains = 0, losses = 0;
+      for(let i = closes.length - period - 1; i < closes.length - 1; i++){
+        const diff = closes[i+1] - closes[i];
+        if(diff >= 0) gains += diff;
+        else losses -= diff;
+      }
+      if(losses === 0) return 100;
+      const rs = gains / losses;
+      return 100 - (100 / (1 + rs));
+    }
+
+    function ema(values, period){
+      const k = 2 / (period + 1);
+      let prev = values[0];
+      const out = [prev];
+      for(let i=1;i<values.length;i++){
+        prev = values[i]*k + prev*(1-k);
+        out.push(prev);
+      }
+      return out;
+    }
+
+    function emaLast(values, period){
+      if(values.length < period) return values[values.length-1] || 0;
+      const e = ema(values.slice(-Math.max(period*3, period+5)), period);
+      return e[e.length-1];
+    }
+
+    function calcMACD(closes){
+      if(closes.length < 60) return { macd:0, signal:0, hist:0 };
+      const e12 = ema(closes, 12);
+      const e26 = ema(closes, 26);
+      const macdLine = e12.map((v,i)=> v - e26[i]);
+      const signalLine = ema(macdLine, 9);
+      const macd = macdLine[macdLine.length-1];
+      const signal = signalLine[signalLine.length-1];
+      const hist = macd - signal;
+      return { macd, signal, hist };
+    }
+
+    function calcATR(highs, lows, closes, period=14){
+      if(closes.length < period+1) return 0;
+      const trs = [];
+      for(let i=1;i<closes.length;i++){
+        const h = highs[i], l = lows[i], pc = closes[i-1];
+        const tr = Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc));
+        trs.push(tr);
+      }
+      const slice = trs.slice(-period);
+      const sum = slice.reduce((a,b)=>a+b,0);
+      return sum / slice.length;
+    }
+
+    function calcVolumeTrend(vols, lookback=20){
+      if(vols.length < lookback*2) return 0;
+      const a = avg(vols.slice(-lookback));
+      const b = avg(vols.slice(-(lookback*2), -lookback));
+      if(b === 0) return 0;
+      return (a - b) / b;
+    }
+
+    function avg(arr){
+      if(!arr.length) return 0;
+      return arr.reduce((a,b)=>a+b,0) / arr.length;
+    }
+
+    // ---------- Protections ----------
+    function hasActivePosition(symbol, tfRaw){
+      return state.activePositions.some(p => p.symbol === symbol && p.tfRaw === tfRaw);
+    }
+
+    function isInCooldown(key){
+      const last = state.lastSignalAt?.[key] || 0;
+      const cd = COOLDOWN_MS[state.tf] || (10*60*1000);
+      return (Date.now() - last) < cd;
     }
 
     // ---------- Storage + Fetch ----------
@@ -1125,1322 +1988,5 @@
       return String(Math.round(x));
     }
   </script>
-
-  <!-- ======================================================
-       ✅ PART 2 붙이는 위치 (여기에 내가 주는 PART 2 전체 <script>를 붙이면 끝)
-       ====================================================== -->
-  <!-- =========================
-  YOPO AI PRO (Single-File) v7
-  PART 2 / 2 ✅ (예측/MTF합의/보수확률/유사도엔진/자동스캔/추적/종료기록/백테스트)
-  ✅ 붙이는 곳:
-   - PART 1 파일 맨 아래:
-     "<!-- PART 2 붙이는 위치 -->" 바로 아래에 통째로 붙여넣기
-========================= -->
-
-<script>
-/*************************************************************
- * YOPO AI PRO (Single-File, v7)
- * PART 2: Prediction Engine + MTF + Scan + Tracking + History + Backtest
- *
- * ✅ 이 PART 2는 PART 1의 stub 함수들을 "덮어쓰기" 합니다.
- * ✅ 외부 서버 없이 작동(브라우저 fetch + localStorage)
- *************************************************************/
-
-/* ----------------------------------------------------------
-   0) 파라미터 (승률을 올리기 위해 "보수적으로" 세팅)
----------------------------------------------------------- */
-// Similarity / Analysis Params
-const SIM_WINDOW = 44;     // 현재패턴 길이
-const FUTURE_H   = 8;      // 미래평가 구간
-const SIM_STEP   = 2;
-const SIM_TOPK   = 28;
-
-// HOLD rules (보류 강화)
-const HOLD_MIN_TOPK     = 14;
-const HOLD_MIN_SIM_AVG  = 58;     // 유사도 평균
-const HOLD_MIN_EDGE     = 0.10;   // 롱/숏 차이(엣지)
-const HOLD_MIN_TP_PCT   = 0.90;   // 목표수익 최소 0.9%
-
-// TP/SL
-const RR = 2.0;
-const TF_MULT = { "60": 1.15, "240": 1.9, "D": 3.3 };
-const ATR_MIN_PCT = 0.15;
-const TP_MAX_PCT  = 20.0;
-
-// cooldown
-const COOLDOWN_MS = { "60": 10 * 60 * 1000, "240": 30 * 60 * 1000, "D": 2 * 60 * 60 * 1000 };
-
-// scan delay
-const SCAN_DELAY_MS = 650;
-
-// fetch limit
-const EXTENDED_LIMIT = 900;
-
-/* ----------------------------------------------------------
-   1) 멀티 타임프레임(MTF) 합의 설정
----------------------------------------------------------- */
-const MTF_ENABLED = true;
-const MTF_SET = {
-  "60":  ["60","240","D"],
-  "240": ["240","D","60"],
-  "D":   ["D","240","60"]
-};
-const MTF_WEIGHT = {
-  "60":  { "60": 0.50, "240": 0.32, "D": 0.18 },
-  "240": { "240": 0.50, "D": 0.32, "60": 0.18 },
-  "D":   { "D": 0.52, "240": 0.33, "60": 0.15 }
-};
-const MTF_MIN_ALIGN_SCORE = 0.64;
-const MTF_MIN_EDGE        = 0.09;
-const MTF_DISAGREE_HOLD   = true;
-
-/* ----------------------------------------------------------
-   2) 보수 확률(윌슨 하한) 설정
----------------------------------------------------------- */
-const WILSON_Z = 1.64; // 약 90% 신뢰 하한
-const MIN_WINPROB_TO_TRADE = 0.585;
-
-/* ----------------------------------------------------------
-   3) BTC 도미넌스/알트 환경 보수화
----------------------------------------------------------- */
-const DOM_DAMP_BASE = 0.90;
-const DOM_ALT_PENALTY = 0.86;
-const DOM_UP_PENALTY  = 0.88;
-
-/* ----------------------------------------------------------
-   4) Auto Scan (추천)
----------------------------------------------------------- */
-const REC_MAX = 6;
-
-/* ----------------------------------------------------------
-   5) Backtest 설정
----------------------------------------------------------- */
-const BACKTEST_TRADES = 80;
-const BT_MIN_PROB  = 0.60;
-const BT_MIN_EDGE  = 0.11;
-const BT_MIN_SIM   = 60;
-const BT_MIN_ALIGN = 0.66;
-
-/* ==========================================================
-   A) PART 1 API 추가
-========================================================== */
-const BYBIT_KLINE = (symbol, interval, limit) =>
-  `https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
-
-/* ==========================================================
-   B) 분석 실행(메인 버튼) - 실제 구현
-========================================================== */
-async function executeAnalysis(){
-  const btn = document.getElementById("predict-btn");
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 분석 중...';
-
-  try{
-    const dupKey = `${state.symbol}|${state.tf}`;
-
-    if(hasActivePosition(state.symbol, state.tf)){
-      alert("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)");
-      return;
-    }
-    if(isInCooldown(dupKey)){
-      alert("너무 자주 신호를 내면 승률이 내려갈 수 있어요. 지금은 쿨다운입니다.");
-      return;
-    }
-
-    const pos = await buildFinalSignalMTF(state.symbol, state.tf);
-    state.lastSignalAt[dupKey] = Date.now();
-    saveState();
-
-    showResultModal(pos);
-  }catch(e){
-    console.error(e);
-    alert("분석 중 오류가 발생했습니다. (API 지연/제한 가능)");
-  }finally{
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-microchip"></i> AI 분석 및 예측 실행';
-  }
-}
-
-/* ==========================================================
-   C) 추천 클릭 즉시 분석
-========================================================== */
-async function quickAnalyzeAndShow(symbol, tfRaw){
-  try{
-    // TF 버튼 UI 동기화
-    const btns = document.querySelectorAll(".tf-btn");
-    btns.forEach(b => b.classList.remove("active"));
-    if(tfRaw === "60") btns[0].classList.add("active");
-    else if(tfRaw === "240") btns[1].classList.add("active");
-    else btns[2].classList.add("active");
-    state.tf = tfRaw;
-
-    // 코인 적용
-    switchCoin(symbol);
-    saveState();
-    initChart();
-
-    if(hasActivePosition(symbol, tfRaw)){
-      alert("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)");
-      return;
-    }
-
-    const pos = await buildFinalSignalMTF(symbol, tfRaw);
-    showResultModal(pos);
-  }catch(e){
-    console.error(e);
-    alert("추천 분석 중 오류가 발생했습니다.");
-  }
-}
-
-/* ==========================================================
-   D) 자동 스캔(추천 TOP) - 실제 구현
-========================================================== */
-async function autoScanUniverse(){
-  const scanBtn = document.getElementById("scan-btn");
-  const status = document.getElementById("scan-status");
-  scanBtn.disabled = true;
-  status.textContent = "스캔 중...";
-
-  try{
-    const results = [];
-    for(let i=0;i<state.universe.length;i++){
-      const coin = state.universe[i];
-      status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
-
-      try{
-        const pos = await buildFinalSignalMTF(coin.s, state.tf, { scanMode:true });
-        if(pos.type === "HOLD") { await sleep(SCAN_DELAY_MS); continue; }
-
-        results.push({
-          symbol: pos.symbol,
-          tf: pos.tf,
-          tfRaw: pos.tfRaw,
-          type: pos.type,
-          winProb: pos.explain?.winProbConservative ?? pos.explain?.winProb ?? 0,
-          edge: pos.explain?.edge ?? 0,
-          mtfAlign: pos.explain?.mtf?.alignScore ?? 0
-        });
-      }catch(e){}
-
-      await sleep(SCAN_DELAY_MS);
-    }
-
-    results.sort((a,b)=>
-      (b.winProb - a.winProb) ||
-      (b.edge - a.edge) ||
-      (b.mtfAlign - a.mtfAlign)
-    );
-
-    state.lastScanResults = results.slice(0, REC_MAX);
-    state.lastScanAt = Date.now();
-    saveState();
-
-    renderScanResults();
-    status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
-  }finally{
-    scanBtn.disabled = false;
-    setTimeout(()=>{ document.getElementById("scan-status").textContent = "대기"; }, 1500);
-  }
-}
-
-/* ==========================================================
-   E) 추천 UI 렌더
-========================================================== */
-function renderScanResults(){
-  const container = document.getElementById("rec-container");
-  const list = state.lastScanResults || [];
-  if(!list.length){
-    container.innerHTML = `
-      <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
-        아직 추천 결과가 없습니다. “자동 스캔”을 눌러주세요.
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = list.map(item => {
-    const pillClass = item.type === "LONG" ? "long" : "short";
-    const prob = (item.winProb*100).toFixed(1);
-    const edge = (item.edge*100).toFixed(1);
-    const align = (item.mtfAlign*100).toFixed(0);
-
-    return `
-      <div class="rec-item" onclick="quickAnalyzeAndShow('${item.symbol}','${item.tfRaw}')">
-        <div class="rec-left">
-          ${item.symbol.replace("USDT","")}
-          <span class="pill ${pillClass}">${item.type}</span>
-        </div>
-        <div class="rec-right">
-          보수확률 ${prob}%<br/>
-          엣지 ${edge}% · 합의 ${align}% · ${item.tf}
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-/* ==========================================================
-   F) MTF 최종 시그널 생성(핵심)
-========================================================== */
-async function buildFinalSignalMTF(symbol, tfRaw, opt={}){
-  const tfSet = MTF_SET[tfRaw] || [tfRaw];
-  const weights = MTF_WEIGHT[tfRaw] || { [tfRaw]:1.0 };
-
-  const perTF = [];
-  for(const tf of tfSet){
-    const candles = await fetchCandles(symbol, tf, EXTENDED_LIMIT);
-    if(candles.length < (SIM_WINDOW + FUTURE_H + 80)){
-      perTF.push({ tf, ok:false, reason:"캔들 부족" });
-      continue;
-    }
-    const s = buildSignalFromCandlesOneTF(symbol, tf, candles);
-    perTF.push({ tf, ok:true, sig:s });
-  }
-
-  const valid = perTF.filter(x=>x.ok).map(x=>x.sig);
-  if(valid.length === 0){
-    throw new Error("분석 가능한 타임프레임이 없습니다.");
-  }
-
-  if(!MTF_ENABLED || valid.length === 1){
-    const single = valid[0];
-    return finalizeSingleToDisplay(single);
-  }
-
-  let longScore = 0;
-  let shortScore = 0;
-  let holdHits = 0;
-
-  for(const item of perTF){
-    if(!item.ok) continue;
-    const w = weights[item.tf] ?? 0.2;
-    const sig = item.sig;
-
-    if(sig.type === "HOLD"){
-      holdHits += w;
-      continue;
-    }
-    if(sig.type === "LONG") longScore += w;
-    else if(sig.type === "SHORT") shortScore += w;
-  }
-
-  const totalScore = longScore + shortScore + holdHits + 1e-9;
-  const alignLong = longScore / totalScore;
-  const alignShort = shortScore / totalScore;
-  const alignHold = holdHits / totalScore;
-
-  const picked = (alignLong >= alignShort) ? "LONG" : "SHORT";
-  const alignScore = Math.max(alignLong, alignShort);
-  const mtfEdge = Math.abs(alignLong - alignShort);
-
-  const mtfHoldReasons = [];
-  if(alignHold >= 0.34) mtfHoldReasons.push(`여러 TF가 보류(합의 어려움)`);
-  if(alignScore < MTF_MIN_ALIGN_SCORE) mtfHoldReasons.push(`타임프레임 합의 부족(${(alignScore*100).toFixed(0)}%)`);
-  if(mtfEdge < MTF_MIN_EDGE) mtfHoldReasons.push(`합의 엣지 부족(${(mtfEdge*100).toFixed(1)}%)`);
-
-  const base = valid.find(x=>x.tfRaw===tfRaw) || valid[0];
-
-  let finalType = base.type;
-  if(finalType !== "HOLD"){
-    const oppositeStrong = (picked !== finalType) && (alignScore >= 0.72);
-    if(MTF_DISAGREE_HOLD && oppositeStrong){
-      finalType = "HOLD";
-      mtfHoldReasons.push(`MTF가 강하게 반대(승률 보호)`);
-    }
-  }
-
-  if(finalType !== "HOLD" && mtfHoldReasons.length){
-    finalType = "HOLD";
-  }
-
-  const mtfInfo = {
-    enabled: true,
-    set: tfSet.slice(),
-    alignLong, alignShort, alignHold,
-    picked,
-    alignScore,
-    mtfEdge,
-    perTF: perTF.map(x => ({
-      tf: x.tf,
-      ok: x.ok,
-      type: x.ok ? x.sig.type : "NA",
-      winProb: x.ok ? x.sig.explain?.winProbConservative : null
-    })),
-    holdReasons: mtfHoldReasons
-  };
-
-  const final = {
-    ...base,
-    type: finalType,
-    explain: {
-      ...(base.explain || {}),
-      mtf: mtfInfo
-    }
-  };
-
-  if(final.type === "HOLD"){
-    const hr = (final.explain?.holdReasons || []).slice();
-    for(const r of mtfHoldReasons) hr.push(r);
-    final.explain.holdReasons = uniq(hr);
-  }
-
-  return finalizeSingleToDisplay(final);
-}
-
-/* ==========================================================
-   G) 단일 TF 분석 (유사도 강화 + 윌슨 하한)
-========================================================== */
-function buildSignalFromCandlesOneTF(symbol, tf, candles){
-  const closes = candles.map(x => x.c);
-  const highs  = candles.map(x => x.h);
-  const lows   = candles.map(x => x.l);
-  const vols   = candles.map(x => x.v);
-
-  const entry = closes[closes.length - 1];
-
-  const rsi = calcRSI(closes, 14);
-  const macd = calcMACD(closes);
-  const atrRaw = calcATR(highs, lows, closes, 14);
-  const volTrend = calcVolumeTrend(vols, 20);
-  const ema20 = emaLast(closes, 20);
-  const ema50 = emaLast(closes, 50);
-  const trend = (ema20 >= ema50) ? 1 : -1;
-
-  const sim = calcSimilarityStatsEnhanced(closes, highs, lows, vols, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
-
-  const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
-  const domPrev = (typeof state.btcDomPrev === "number") ? state.btcDomPrev : null;
-  const domUp = (dom !== null && domPrev !== null) ? (dom - domPrev) : 0;
-
-  const isAlt = (symbol !== "BTCUSDT");
-  let domDamp = 1.0;
-
-  if(dom !== null){
-    if(dom > 50) domDamp *= DOM_DAMP_BASE;
-    if(domUp > 0.15) domDamp *= DOM_UP_PENALTY;
-    if(isAlt && dom > 53) domDamp *= DOM_ALT_PENALTY;
-  }
-
-  // base probs from similarity (laplace)
-  let longP = sim.longProb;
-  let shortP = sim.shortProb;
-
-  // tiny indicator bias
-  const rsiBias   = clamp((50 - rsi) / 50, -1, 1);
-  const macdBias  = clamp(macd.hist * 6, -1, 1);
-  const volBias   = clamp(volTrend, -1, 1);
-  const trendBias = clamp(trend * 0.8, -1, 1);
-
-  longP  += (0.10 * rsiBias) + (0.08 * macdBias) + (0.05 * volBias) + (0.06 * trendBias);
-  shortP += (-0.10 * rsiBias) + (-0.08 * macdBias) + (-0.05 * volBias) + (-0.06 * trendBias);
-
-  // dominance pull to 0.5
-  longP  = 0.5 + (longP - 0.5) * domDamp;
-  shortP = 0.5 + (shortP - 0.5) * domDamp;
-
-  // normalize
-  const sum = Math.max(longP + shortP, 1e-9);
-  longP /= sum; shortP /= sum;
-
-  const typeRaw = (longP >= shortP) ? "LONG" : "SHORT";
-  const winProb = Math.max(longP, shortP);
-  const edge = Math.abs(longP - shortP);
-
-  const successCount = (typeRaw === "LONG") ? sim.upCount : sim.downCount;
-  const totalCount = sim.count;
-  const winProbConservative = wilsonLowerBound(successCount, totalCount, WILSON_Z);
-
-  // TP/SL
-  const tfMult = TF_MULT[tf] || 1.2;
-  const atrMin = entry * (ATR_MIN_PCT / 100);
-  const atrUsed = Math.max(atrRaw, atrMin);
-
-  let tpDist = atrUsed * tfMult;
-  let slDist = tpDist / RR;
-
-  let tp = (typeRaw === "LONG") ? (entry + tpDist) : (entry - tpDist);
-  let sl = (typeRaw === "LONG") ? (entry - slDist) : (entry + slDist);
-
-  let tpPct = Math.abs((tp - entry) / entry) * 100;
-  let slPct = Math.abs((sl - entry) / entry) * 100;
-
-  if(tpPct > TP_MAX_PCT){
-    tpPct = TP_MAX_PCT;
-    const newTpDist = entry * (tpPct/100);
-    tp = (typeRaw === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
-    sl = (typeRaw === "LONG") ? (entry - (newTpDist/RR)) : (entry + (newTpDist/RR));
-    slPct = Math.abs((sl - entry) / entry) * 100;
-  }
-
-  const holdReasons = [];
-  if(sim.count < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${sim.count}개)`);
-  if(sim.avgSim < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${sim.avgSim.toFixed(1)}%)`);
-  if(edge < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edge*100).toFixed(1)}%)`);
-  if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
-  if(winProbConservative < MIN_WINPROB_TO_TRADE) holdReasons.push(`보수확률 낮음(${(winProbConservative*100).toFixed(1)}%)`);
-  if(volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
-
-  const isHold = holdReasons.length > 0;
-
-  return {
-    id: Date.now(),
-    symbol,
-    tf: tf === "60" ? "1H" : tf === "240" ? "4H" : "1D",
-    tfRaw: tf,
-    type: isHold ? "HOLD" : typeRaw,
-    entry,
-    tp: isHold ? null : tp,
-    sl: isHold ? null : sl,
-    tpPct: isHold ? null : tpPct,
-    slPct: isHold ? null : slPct,
-    createdAt: Date.now(),
-    explain: {
-      winProb,
-      winProbConservative,
-      longP, shortP,
-      edge,
-      simAvg: sim.avgSim,
-      simCount: sim.count,
-      upCount: sim.upCount,
-      downCount: sim.downCount,
-      rsi,
-      macdHist: macd.hist,
-      atr: atrUsed,
-      volTrend,
-      ema20, ema50,
-      trend,
-      btcDom: dom,
-      btcDomUp: domUp,
-      holdReasons
-    }
-  };
-}
-
-/* ==========================================================
-   H) 결과 모달 표시
-========================================================== */
-let tempPos = null;
-
-function showResultModal(pos){
-  tempPos = pos;
-
-  const modal = document.getElementById("result-modal");
-  const icon = document.getElementById("modal-icon");
-  const title = document.getElementById("modal-title");
-  const subtitle = document.getElementById("modal-subtitle");
-  const grid = document.getElementById("modal-grid");
-  const content = document.getElementById("modal-content");
-  const confirmBtn = document.getElementById("modal-confirm");
-
-  const isLong = pos.type === "LONG";
-  const isHold = pos.type === "HOLD";
-
-  icon.textContent = isHold ? "⏸️" : (isLong ? "📈" : "📉");
-  title.textContent = isHold ? "HOLD (보류)" : `${pos.type} SIGNAL`;
-  title.style.color = isHold ? "var(--text-sub)" : (isLong ? "var(--success)" : "var(--danger)");
-  subtitle.textContent = `${pos.symbol} | ${pos.tf}`;
-
-  const ex = pos.explain || {};
-  const mtf = ex.mtf || null;
-
-  if(isHold){
-    const reasons = (ex.holdReasons || []).map(r => `- ${escapeHTML(r)}`).join("<br/>");
-
-    grid.innerHTML = `
-      <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
-      <div class="mini-box"><small>보수확률</small><div>${((ex.winProbConservative ?? 0)*100).toFixed(1)}%</div></div>
-      <div class="mini-box"><small>유사도 평균</small><div>${(ex.simAvg ?? 0).toFixed(1)}%</div></div>
-      <div class="mini-box"><small>표본 수</small><div>${ex.simCount ?? 0}개</div></div>
-    `;
-
-    let mtfLine = "";
-    if(mtf?.enabled){
-      mtfLine = `
-        <br/><br/><b>MTF(타임프레임 합의):</b><br/>
-        - LONG ${(mtf.alignLong*100).toFixed(0)}% / SHORT ${(mtf.alignShort*100).toFixed(0)}% / HOLD ${(mtf.alignHold*100).toFixed(0)}%<br/>
-        - 합의점수 ${(mtf.alignScore*100).toFixed(0)}% · 엣지 ${(mtf.mtfEdge*100).toFixed(1)}%<br/>
-      `;
-    }
-
-    content.innerHTML = `
-      <b>이번에는 “보류”가 더 안전해요.</b><br/>
-      ${reasons}
-      ${mtfLine}
-      <br/><br/>
-      <b>정리:</b> 애매할 때 억지로 진입하면 장기 승률이 내려가서, 이번은 패스합니다.
-    `;
-
-    confirmBtn.disabled = true;
-    confirmBtn.textContent = "보류는 등록하지 않음";
-  }else{
-    grid.innerHTML = `
-      <div class="mini-box"><small>진입가</small><div>$${pos.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
-      <div class="mini-box"><small>보수확률</small><div>${((ex.winProbConservative ?? ex.winProb ?? 0)*100).toFixed(1)}%</div></div>
-      <div class="mini-box"><small>목표가(TP)</small><div style="color:var(--success)">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${pos.tpPct.toFixed(2)}%)</div></div>
-      <div class="mini-box"><small>손절가(SL)</small><div style="color:var(--danger)">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${pos.slPct.toFixed(2)}%)</div></div>
-    `;
-
-    const domMsg = (typeof ex.btcDom === "number")
-      ? `BTC 도미넌스 ${ex.btcDom.toFixed(1)}% (최근 ${ex.btcDomUp>=0?"+":""}${ex.btcDomUp.toFixed(2)}p)`
-      : `BTC 도미넌스: 데이터 없음`;
-
-    let mtfMsg = "";
-    if(mtf?.enabled){
-      mtfMsg = `
-        <br/>
-        <b>MTF 합의:</b>
-        LONG ${(mtf.alignLong*100).toFixed(0)}% / SHORT ${(mtf.alignShort*100).toFixed(0)}% / HOLD ${(mtf.alignHold*100).toFixed(0)}%
-        (합의 ${(mtf.alignScore*100).toFixed(0)}%)
-      `;
-    }
-
-    content.innerHTML = `
-      <b>근거 요약:</b><br/>
-      - 유사패턴 ${ex.simCount ?? "-"}개 · 평균 유사도 ${(ex.simAvg ?? 0).toFixed(1)}%<br/>
-      - 보수확률 ${((ex.winProbConservative ?? 0)*100).toFixed(1)}% · 엣지 ${(ex.edge*100).toFixed(1)}%<br/>
-      - RSI ${(ex.rsi ?? 0).toFixed(1)} · MACD ${(ex.macdHist ?? 0).toFixed(4)}<br/>
-      - 추세(EMA20/EMA50) ${(ex.ema20 ?? 0) >= (ex.ema50 ?? 0) ? "상승 우위" : "하락 우위"}<br/>
-      - 거래량 흐름 ${(ex.volTrend ?? 0) >= 0 ? "증가" : "감소"}<br/>
-      - ${domMsg}
-      ${mtfMsg}
-      <br/><br/>
-      <b>정리:</b> “보수확률 + 합의”까지 통과해서 ${pos.type}만 제안합니다.
-    `;
-
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = "추적 시스템에 등록";
-  }
-
-  modal.style.display = "flex";
-}
-
-function closeModal(){
-  document.getElementById("result-modal").style.display = "none";
-  tempPos = null;
-}
-
-/* ==========================================================
-   I) 추적 등록 + 추적/종료/기록/통계
-========================================================== */
-function confirmTrack(){
-  if(!tempPos) return;
-  if(tempPos.type === "HOLD") return;
-
-  if(hasActivePosition(tempPos.symbol, tempPos.tfRaw)){
-    alert("이미 같은 코인/같은 기간의 추적 포지션이 있습니다.");
-    return;
-  }
-
-  state.activePositions = state.activePositions || [];
-  state.activePositions.unshift({
-    ...tempPos,
-    status: "ACTIVE",
-    lastPrice: tempPos.entry,
-    pnl: 0
-  });
-
-  saveState();
-  closeModal();
-  renderTrackingList();
-  renderClosedTrades();
-  updateStatsUI();
-}
-
-// PART 1의 가격 갱신에서 추적도 같이 돌리도록 "함수 덮어쓰기"
-const __updateCoinRowPart1 = updateCoinRow;
-updateCoinRow = function(symbol, price, changePct, silent=false){
-  __updateCoinRowPart1(symbol, price, changePct, silent);
-
-  // 실시간 추적 (해당 심볼만)
-  try{
-    if(price > 0) trackPositions(symbol, price);
-  }catch(e){}
-};
-
-function trackPositions(symbol, currentPrice){
-  if(!state.activePositions || !state.activePositions.length) return;
-
-  let changed = false;
-
-  for(let i = state.activePositions.length - 1; i >= 0; i--){
-    const pos = state.activePositions[i];
-    if(pos.symbol !== symbol) continue;
-
-    pos.lastPrice = currentPrice;
-
-    let pnl = 0;
-    if(pos.type === "LONG"){
-      pnl = ((currentPrice - pos.entry) / pos.entry) * 100;
-    }else{
-      pnl = ((pos.entry - currentPrice) / pos.entry) * 100;
-    }
-    pos.pnl = pnl;
-
-    let close = false;
-    let win = false;
-    let exitPrice = null;
-    let exitReason = "";
-
-    if(pos.type === "LONG"){
-      if(currentPrice >= pos.tp){ close = true; win = true; exitPrice = pos.tp; exitReason="TP"; }
-      else if(currentPrice <= pos.sl){ close = true; win = false; exitPrice = pos.sl; exitReason="SL"; }
-    }else{
-      if(currentPrice <= pos.tp){ close = true; win = true; exitPrice = pos.tp; exitReason="TP"; }
-      else if(currentPrice >= pos.sl){ close = true; win = false; exitPrice = pos.sl; exitReason="SL"; }
-    }
-
-    if(close){
-      state.history = state.history || { total:0, win:0 };
-      state.history.total++;
-      if(win) state.history.win++;
-
-      state.closedTrades = state.closedTrades || [];
-      const record = {
-        id: Date.now(),
-        symbol: pos.symbol,
-        tf: pos.tf,
-        tfRaw: pos.tfRaw,
-        type: pos.type,
-        entry: pos.entry,
-        exit: exitPrice ?? currentPrice,
-        pnlPct: pnl,
-        win,
-        reason: exitReason,
-        closedAt: Date.now()
-      };
-      state.closedTrades.unshift(record);
-      state.closedTrades = state.closedTrades.slice(0, 30);
-
-      state.activePositions.splice(i, 1);
-      changed = true;
-
-      alert(`[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnl.toFixed(2)}%`);
-    }else{
-      changed = true;
-    }
-  }
-
-  if(changed){
-    saveState();
-    renderTrackingList();
-    renderClosedTrades();
-    updateStatsUI();
-  }
-}
-
-function renderTrackingList(){
-  const container = document.getElementById("tracking-container");
-  const list = state.activePositions || [];
-
-  if(!list.length){
-    container.innerHTML = `
-      <div style="text-align:center; padding:50px; color:var(--text-sub); font-weight:950;">
-        <i class="fa-solid fa-radar" style="font-size:44px; opacity:.18;"></i><br><br>
-        현재 추적 중인 포지션이 없습니다.<br/>
-        왼쪽에서 코인을 고르고 “AI 분석”을 눌러보세요.
-      </div>
-    `;
-    return;
-  }
-
-  // ✅ PART 1 CSS에 없는 카드 스타일이므로, 최소 인라인 스타일로 렌더
-  container.innerHTML = list.map(pos => {
-    const isUp = (pos.pnl ?? 0) >= 0;
-    const color = isUp ? "var(--success)" : "var(--danger)";
-
-    const denom = Math.max(Math.abs((pos.tp ?? pos.entry) - pos.entry), 1e-9);
-    const numer = (pos.type === "LONG")
-      ? ((pos.lastPrice ?? pos.entry) - pos.entry)
-      : (pos.entry - (pos.lastPrice ?? pos.entry));
-
-    let progress = (numer / denom) * 100;
-    progress = clamp(progress, 0, 100);
-
-    const ex = pos.explain || {};
-    const mtf = ex.mtf || null;
-
-    const explainLine =
-      `유사 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed(1)}% · 보수확률 ${((ex.winProbConservative ?? 0)*100).toFixed(1)}% · 엣지 ${((ex.edge ?? 0)*100).toFixed(1)}%` +
-      (mtf?.enabled ? ` · 합의 ${(mtf.alignScore*100).toFixed(0)}%` : "");
-
-    return `
-      <div style="background:#fff; border:1px solid var(--border); border-radius:16px; padding:14px; margin-bottom:12px; box-shadow:0 2px 8px rgba(0,0,0,.03);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <div style="font-weight:950;">${pos.symbol} <span style="font-size:12px; color:var(--text-sub); font-weight:950;">${pos.tf}</span></div>
-          <div style="font-weight:950; padding:4px 10px; border-radius:999px; border:1px solid var(--border); background:var(--secondary); color:${pos.type==="LONG"?"var(--success)":"var(--danger)"};">
-            ${pos.type}
-          </div>
-        </div>
-
-        <div style="display:grid; grid-template-columns:1fr 1.2fr 1fr; gap:10px; align-items:center;">
-          <div>
-            <div style="font-size:11px; color:var(--text-sub); font-weight:900;">현재가</div>
-            <div style="font-weight:950;">$${(pos.lastPrice||pos.entry).toLocaleString(undefined,{maximumFractionDigits:6})}</div>
-          </div>
-
-          <div>
-            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:900; margin-bottom:6px;">
-              <span style="color:${color};">수익률 ${(pos.pnl ?? 0).toFixed(2)}%</span>
-              <span style="color:var(--text-sub);">목표까지 ${progress.toFixed(1)}%</span>
-            </div>
-            <div style="height:10px; background:var(--border); border-radius:999px; overflow:hidden;">
-              <div style="height:10px; width:${progress}%; background:${color};"></div>
-            </div>
-          </div>
-
-          <div style="text-align:right;">
-            <div style="font-size:11px; color:var(--text-sub); font-weight:900;">TP / SL</div>
-            <div style="font-weight:950; color:var(--success);">$${(pos.tp ?? pos.entry).toLocaleString(undefined,{maximumFractionDigits:6})}</div>
-            <div style="font-weight:950; color:var(--danger);">$${(pos.sl ?? pos.entry).toLocaleString(undefined,{maximumFractionDigits:6})}</div>
-          </div>
-        </div>
-
-        <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:900;">${escapeHTML(explainLine)}</div>
-      </div>
-    `;
-  }).join("");
-}
-
-function renderClosedTrades(){
-  const container = document.getElementById("history-container");
-  const countEl = document.getElementById("history-count");
-  const list = state.closedTrades || [];
-  if(countEl) countEl.textContent = String(list.length);
-
-  if(!list.length){
-    container.innerHTML = `
-      <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:4px 2px;">
-        아직 종료된 기록이 없습니다.
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = list.slice(0, 8).map(x => {
-    const badge = x.win ? `<span class="badge-win">성공</span>` : `<span class="badge-lose">실패</span>`;
-    const pnlColor = x.pnlPct >= 0 ? "var(--success)" : "var(--danger)";
-    return `
-      <div class="history-item">
-        <div class="left">
-          ${badge}
-          <span>${x.symbol.replace("USDT","")} ${x.tf}</span>
-          <span style="color:var(--text-sub); font-weight:950;">(${x.reason})</span>
-        </div>
-        <div style="text-align:right;">
-          <div style="color:${pnlColor}; font-weight:950;">${x.pnlPct.toFixed(2)}%</div>
-          <div style="color:var(--text-sub); font-size:10px; font-weight:900;">
-            ${new Date(x.closedAt).toLocaleTimeString()}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-function updateStatsUI(){
-  const totalEl = document.getElementById("total-stat");
-  const winEl = document.getElementById("win-stat");
-  const actEl = document.getElementById("active-stat");
-
-  state.history = state.history || { total:0, win:0 };
-  const total = state.history.total || 0;
-  const win = state.history.win || 0;
-  const rate = total > 0 ? (win / total) * 100 : 0;
-
-  if(totalEl) totalEl.innerText = total;
-  if(winEl) winEl.innerText = `${rate.toFixed(1)}%`;
-  if(actEl) actEl.innerText = (state.activePositions || []).length;
-}
-
-/* ==========================================================
-   J) 백테스트(runBacktest) - 강화형
-========================================================== */
-async function runBacktest(){
-  const btBtn = document.getElementById("bt-btn");
-  btBtn.disabled = true;
-  btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트...';
-
-  try{
-    const candles = await fetchCandles(state.symbol, state.tf, EXTENDED_LIMIT);
-    if(candles.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
-
-    let wins=0, total=0;
-    let pnlSum=0;
-
-    const end = candles.length - (FUTURE_H + 20);
-    const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
-
-    for(let idx = start; idx < end; idx += 7){
-      const pos = await buildFinalSignalMTFBacktest(state.symbol, state.tf, candles, idx);
-      if(pos.type === "HOLD") continue;
-
-      const ex = pos.explain || {};
-      const mtf = ex.mtf || null;
-
-      const p = ex.winProbConservative ?? 0;
-      const edge = ex.edge ?? 0;
-      const simAvg = ex.simAvg ?? 0;
-      const align = mtf?.enabled ? (mtf.alignScore ?? 0) : 0;
-
-      if(p < BT_MIN_PROB) continue;
-      if(edge < BT_MIN_EDGE) continue;
-      if(simAvg < BT_MIN_SIM) continue;
-      if(mtf?.enabled && align < BT_MIN_ALIGN) continue;
-
-      const future = candles.slice(idx+1, Math.min(idx+1+140, candles.length));
-      const outcome = simulateOutcome(pos, future);
-      if(!outcome.resolved) continue;
-
-      total++;
-      if(outcome.win) wins++;
-      pnlSum += outcome.pnlPct;
-
-      if(total >= BACKTEST_TRADES) break;
-    }
-
-    const winRate = total ? (wins/total)*100 : 0;
-    const avgPnl = total ? (pnlSum/total) : 0;
-
-    alert(
-      `백테스트 결과\n` +
-      `- 횟수: ${total}회\n` +
-      `- 승률: ${winRate.toFixed(1)}%\n` +
-      `- 평균수익: ${avgPnl.toFixed(2)}%\n\n` +
-      `필터: 보수확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%, 합의≥${Math.round(BT_MIN_ALIGN*100)}%`
-    );
-  }catch(e){
-    console.error(e);
-    alert("백테스트 중 오류가 발생했습니다.");
-  }finally{
-    btBtn.disabled = false;
-    btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
-  }
-}
-
-async function buildFinalSignalMTFBacktest(symbol, tfRaw, fullCandlesForSelectedTF, idx){
-  const tfSet = MTF_SET[tfRaw] || [tfRaw];
-  const weights = MTF_WEIGHT[tfRaw] || { [tfRaw]:1.0 };
-
-  const btTFSet = tfSet.slice(0, 2); // 성능 보호: 2개 TF만
-  const perTF = [];
-
-  for(const tf of btTFSet){
-    if(tf === tfRaw){
-      const slice = fullCandlesForSelectedTF.slice(0, idx+1);
-      const s = buildSignalFromCandlesOneTF(symbol, tf, slice);
-      perTF.push({ tf, ok:true, sig:s });
-      continue;
-    }
-
-    const candles = await fetchCandles(symbol, tf, EXTENDED_LIMIT);
-    const targetT = fullCandlesForSelectedTF[Math.max(0, idx)]?.t ?? 0;
-    const cut = candles.filter(c => c.t <= targetT);
-    if(cut.length < (SIM_WINDOW + FUTURE_H + 80)){
-      perTF.push({ tf, ok:false, reason:"캔들 부족" });
-      continue;
-    }
-    const s = buildSignalFromCandlesOneTF(symbol, tf, cut);
-    perTF.push({ tf, ok:true, sig:s });
-  }
-
-  const valid = perTF.filter(x=>x.ok).map(x=>x.sig);
-  if(valid.length === 0) return buildSignalFromCandlesOneTF(symbol, tfRaw, fullCandlesForSelectedTF.slice(0, idx+1));
-  if(!MTF_ENABLED || valid.length === 1) return finalizeSingleToDisplay(valid[0]);
-
-  let longScore = 0, shortScore = 0, holdHits = 0;
-  for(const item of perTF){
-    if(!item.ok) continue;
-    const w = weights[item.tf] ?? 0.2;
-    const sig = item.sig;
-    if(sig.type === "HOLD"){ holdHits += w; continue; }
-    if(sig.type === "LONG") longScore += w;
-    else if(sig.type === "SHORT") shortScore += w;
-  }
-
-  const totalScore = longScore + shortScore + holdHits + 1e-9;
-  const alignLong = longScore / totalScore;
-  const alignShort = shortScore / totalScore;
-  const alignHold = holdHits / totalScore;
-
-  const picked = (alignLong >= alignShort) ? "LONG" : "SHORT";
-  const alignScore = Math.max(alignLong, alignShort);
-  const mtfEdge = Math.abs(alignLong - alignShort);
-
-  const mtfHoldReasons = [];
-  if(alignHold >= 0.34) mtfHoldReasons.push(`여러 TF가 보류`);
-  if(alignScore < MTF_MIN_ALIGN_SCORE) mtfHoldReasons.push(`합의 부족`);
-  if(mtfEdge < MTF_MIN_EDGE) mtfHoldReasons.push(`합의 엣지 부족`);
-
-  const base = valid.find(x=>x.tfRaw===tfRaw) || valid[0];
-  let finalType = base.type;
-
-  if(finalType !== "HOLD"){
-    const oppositeStrong = (picked !== finalType) && (alignScore >= 0.72);
-    if(MTF_DISAGREE_HOLD && oppositeStrong){
-      finalType = "HOLD";
-      mtfHoldReasons.push(`MTF 강한 반대`);
-    }
-  }
-  if(finalType !== "HOLD" && mtfHoldReasons.length) finalType = "HOLD";
-
-  const mtfInfo = {
-    enabled: true,
-    set: btTFSet.slice(),
-    alignLong, alignShort, alignHold,
-    picked,
-    alignScore,
-    mtfEdge,
-    holdReasons: mtfHoldReasons
-  };
-
-  const final = {
-    ...base,
-    type: finalType,
-    explain: {
-      ...(base.explain || {}),
-      mtf: mtfInfo
-    }
-  };
-
-  if(final.type === "HOLD"){
-    const hr = (final.explain?.holdReasons || []).slice();
-    for(const r of mtfHoldReasons) hr.push(r);
-    final.explain.holdReasons = uniq(hr);
-  }
-
-  return finalizeSingleToDisplay(final);
-}
-
-function simulateOutcome(pos, futureCandles){
-  for(const c of futureCandles){
-    const hi = c.h, lo = c.l;
-    if(pos.type === "LONG"){
-      if(hi >= pos.tp){
-        const pnl = ((pos.tp - pos.entry)/pos.entry)*100;
-        return { resolved:true, win:true, pnlPct:pnl };
-      }
-      if(lo <= pos.sl){
-        const pnl = ((pos.sl - pos.entry)/pos.entry)*100;
-        return { resolved:true, win:false, pnlPct:pnl };
-      }
-    }else{
-      if(lo <= pos.tp){
-        const pnl = ((pos.entry - pos.tp)/pos.entry)*100;
-        return { resolved:true, win:true, pnlPct:pnl };
-      }
-      if(hi >= pos.sl){
-        const pnl = ((pos.entry - pos.sl)/pos.entry)*100;
-        return { resolved:true, win:false, pnlPct:pnl };
-      }
-    }
-  }
-  return { resolved:false, win:false, pnlPct:0 };
-}
-
-/* ==========================================================
-   K) 캔들 Fetch
-========================================================== */
-async function fetchCandles(symbol, tf, limit){
-  const res = await fetchJSON(BYBIT_KLINE(symbol, tf, limit), { timeoutMs: 9000, retry: 1 });
-  const kline = res?.result?.list || [];
-  const candles = kline.map(row => ({
-    t: Number(row[0]),
-    o: parseFloat(row[1]),
-    h: parseFloat(row[2]),
-    l: parseFloat(row[3]),
-    c: parseFloat(row[4]),
-    v: parseFloat(row[5])
-  })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
-  candles.sort((a,b)=> a.t - b.t);
-  return candles;
-}
-
-/* ==========================================================
-   L) 유사도 엔진 강화(리턴 + ATR% + 볼륨변화)
-========================================================== */
-function calcSimilarityStatsEnhanced(closes, highs, lows, vols, winLen, futureH, step, topK){
-  const n = closes.length;
-  const curStart = n - winLen;
-  const curClose = closes.slice(curStart, n);
-  const curHigh  = highs.slice(curStart, n);
-  const curLow   = lows.slice(curStart, n);
-  const curVol   = vols.slice(curStart, n);
-
-  const curRet = returns(curClose);
-  const curAtrP = atrPctSeries(curHigh, curLow, curClose, 14);
-  const curVolChg = volChangeSeries(curVol);
-
-  const sims = [];
-  const lastStart = n - winLen - futureH - 2;
-
-  for(let s=0; s<=lastStart; s+=step){
-    const segClose = closes.slice(s, s + winLen);
-    const segHigh  = highs.slice(s, s + winLen);
-    const segLow   = lows.slice(s, s + winLen);
-    const segVol   = vols.slice(s, s + winLen);
-
-    const ret = returns(segClose);
-    const atrp = atrPctSeries(segHigh, segLow, segClose, 14);
-    const vchg = volChangeSeries(segVol);
-
-    const simRet  = zncc(curRet, ret);
-    const simAtr  = zncc(curAtrP, atrp);
-    const simVol  = zncc(curVolChg, vchg);
-
-    if(!Number.isFinite(simRet) || !Number.isFinite(simAtr) || !Number.isFinite(simVol)) continue;
-
-    const sim = (0.62 * simRet) + (0.25 * simAtr) + (0.13 * simVol);
-
-    const entry = closes[s + winLen - 1];
-    const future = closes[s + winLen - 1 + futureH];
-    const r = (future - entry) / Math.max(entry, 1e-12);
-
-    sims.push({ sim, r });
-  }
-
-  sims.sort((a,b)=> b.sim - a.sim);
-  const top = sims.slice(0, Math.min(topK, sims.length));
-
-  const count = top.length;
-  if(count === 0){
-    return { longProb: 0.5, shortProb: 0.5, avgSim: 0, count: 0, upCount:0, downCount:0 };
-  }
-
-  const upCount = top.filter(x => x.r >= 0).length;
-  const downCount = count - upCount;
-
-  const longProb = (upCount + 1) / (count + 2);
-  const shortProb = (downCount + 1) / (count + 2);
-
-  const avgZ = top.reduce((a,b)=>a+b.sim,0) / count;
-  const avgSim = clamp((avgZ + 1) * 50, 0, 100);
-
-  return { longProb, shortProb, avgSim, count, upCount, downCount };
-}
-
-function atrPctSeries(highSeg, lowSeg, closeSeg, period=14){
-  const n = closeSeg.length;
-  if(n < 6) return Array(Math.max(n-1,0)).fill(0);
-
-  const trs = [];
-  for(let i=1;i<n;i++){
-    const h = highSeg[i], l = lowSeg[i], pc = closeSeg[i-1];
-    const tr = Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc));
-    trs.push(tr);
-  }
-
-  const out = [];
-  for(let i=0;i<trs.length;i++){
-    const start = Math.max(0, i - period + 1);
-    const slice = trs.slice(start, i+1);
-    const atr = slice.reduce((a,b)=>a+b,0) / Math.max(slice.length,1);
-    const pct = atr / Math.max(closeSeg[i+1], 1e-12);
-    out.push(pct);
-  }
-  return out;
-}
-
-function volChangeSeries(volSeg){
-  const out = [];
-  for(let i=1;i<volSeg.length;i++){
-    const prev = Math.max(volSeg[i-1], 1e-12);
-    out.push((volSeg[i] - volSeg[i-1]) / prev);
-  }
-  return out;
-}
-
-/* ==========================================================
-   M) 윌슨 하한(보수 확률)
-========================================================== */
-function wilsonLowerBound(success, total, z=1.64){
-  if(total <= 0) return 0;
-  const n = total;
-  const phat = success / n;
-
-  const z2 = z*z;
-  const denom = 1 + (z2/n);
-  const center = phat + (z2/(2*n));
-  const margin = z * Math.sqrt((phat*(1-phat) + (z2/(4*n))) / n);
-
-  return clamp((center - margin) / denom, 0, 1);
-}
-
-/* ==========================================================
-   N) 마무리 보정
-========================================================== */
-function finalizeSingleToDisplay(sig){
-  if(sig.type !== "HOLD"){
-    if(!(Number.isFinite(sig.tp) && Number.isFinite(sig.sl))){
-      sig.type = "HOLD";
-      sig.tp = null; sig.sl = null; sig.tpPct = null; sig.slPct = null;
-      sig.explain = sig.explain || {};
-      sig.explain.holdReasons = uniq([...(sig.explain.holdReasons||[]), "TP/SL 계산 실패(보류)"]);
-    }
-  }
-  sig.tf = sig.tfRaw === "60" ? "1H" : sig.tfRaw === "240" ? "4H" : "1D";
-  return sig;
-}
-
-/* ==========================================================
-   O) Protections
-========================================================== */
-function hasActivePosition(symbol, tfRaw){
-  return (state.activePositions || []).some(p => p.symbol === symbol && p.tfRaw === tfRaw);
-}
-
-function isInCooldown(key){
-  const last = state.lastSignalAt?.[key] || 0;
-  const cd = COOLDOWN_MS[state.tf] || (10*60*1000);
-  return (Date.now() - last) < cd;
-}
-
-/* ==========================================================
-   P) Indicators / Similarity Utils
-========================================================== */
-function returns(seg){
-  const out = [];
-  for(let i=1;i<seg.length;i++){
-    out.push((seg[i] - seg[i-1]) / Math.max(seg[i-1], 1e-12));
-  }
-  return out;
-}
-
-function zncc(a,b){
-  const m = Math.min(a.length, b.length);
-  if(m < 5) return 0;
-
-  const a0 = a.slice(0,m);
-  const b0 = b.slice(0,m);
-
-  const ma = mean(a0), mb = mean(b0);
-  let sa = 0, sb = 0;
-  for(let i=0;i<m;i++){
-    sa += (a0[i]-ma)*(a0[i]-ma);
-    sb += (b0[i]-mb)*(b0[i]-mb);
-  }
-  sa = Math.sqrt(sa / m);
-  sb = Math.sqrt(sb / m);
-  if(sa === 0 || sb === 0) return 0;
-
-  let dot = 0;
-  for(let i=0;i<m;i++){
-    dot += ((a0[i]-ma)/sa) * ((b0[i]-mb)/sb);
-  }
-  return dot / m;
-}
-
-function mean(arr){
-  return arr.reduce((a,b)=>a+b,0) / Math.max(arr.length,1);
-}
-
-function calcRSI(closes, period=14){
-  if(closes.length < period+1) return 50;
-  let gains = 0, losses = 0;
-  for(let i = closes.length - period - 1; i < closes.length - 1; i++){
-    const diff = closes[i+1] - closes[i];
-    if(diff >= 0) gains += diff;
-    else losses -= diff;
-  }
-  if(losses === 0) return 100;
-  const rs = gains / losses;
-  return 100 - (100 / (1 + rs));
-}
-
-function ema(values, period){
-  const k = 2 / (period + 1);
-  let prev = values[0];
-  const out = [prev];
-  for(let i=1;i<values.length;i++){
-    prev = values[i]*k + prev*(1-k);
-    out.push(prev);
-  }
-  return out;
-}
-
-function emaLast(values, period){
-  if(values.length < period) return values[values.length-1] || 0;
-  const e = ema(values.slice(-Math.max(period*3, period+5)), period);
-  return e[e.length-1];
-}
-
-function calcMACD(closes){
-  if(closes.length < 60) return { macd:0, signal:0, hist:0 };
-  const e12 = ema(closes, 12);
-  const e26 = ema(closes, 26);
-  const macdLine = e12.map((v,i)=> v - e26[i]);
-  const signalLine = ema(macdLine, 9);
-  const macd = macdLine[macdLine.length-1];
-  const signal = signalLine[signalLine.length-1];
-  const hist = macd - signal;
-  return { macd, signal, hist };
-}
-
-function calcATR(highs, lows, closes, period=14){
-  if(closes.length < period+1) return 0;
-  const trs = [];
-  for(let i=1;i<closes.length;i++){
-    const h = highs[i], l = lows[i], pc = closes[i-1];
-    const tr = Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc));
-    trs.push(tr);
-  }
-  const slice = trs.slice(-period);
-  const sum = slice.reduce((a,b)=>a+b,0);
-  return sum / Math.max(slice.length,1);
-}
-
-function calcVolumeTrend(vols, lookback=20){
-  if(vols.length < lookback*2) return 0;
-  const a = avg(vols.slice(-lookback));
-  const b = avg(vols.slice(-(lookback*2), -lookback));
-  if(b === 0) return 0;
-  return (a - b) / b;
-}
-
-function avg(arr){
-  if(!arr.length) return 0;
-  return arr.reduce((a,b)=>a+b,0) / arr.length;
-}
-
-/* ==========================================================
-   Q) Safe HTML / uniq
-========================================================== */
-function escapeHTML(str){
-  return String(str)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-
-function uniq(arr){
-  const out = [];
-  const set = new Set();
-  for(const x of arr){
-    const k = String(x);
-    if(set.has(k)) continue;
-    set.add(k);
-    out.push(x);
-  }
-  return out;
-}
-
-/* ==========================================================
-   R) PART 2 로딩 직후: 추천/추적/통계 렌더
-========================================================== */
-try{
-  renderScanResults();
-  renderTrackingList();
-  renderClosedTrades();
-  updateStatsUI();
-}catch(e){}
-
-</script>
-<!-- =========================
-  PART 2 END
-========================= -->
-
-
 </body>
 </html>
-
