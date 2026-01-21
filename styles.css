@@ -641,6 +641,14 @@ body{
     overflow:auto; /* ✅ allow page scroll */
     padding-bottom: var(--safe-bottom);
   }
+
+  /* ✅ 핵심: index.html 인라인(#app display:flex) 때문에 가로로 밀림 -> 세로 강제 */
+  #app{
+    flex-direction: column;
+    height: auto !important;
+    min-height: 100vh;
+  }
+
   .sidebar{
     width:100%;
     min-width:0;
@@ -653,13 +661,13 @@ body{
   }
   .chart-container{
     flex:none;
-    min-height: 260px;
-    height: 42vh;         /* ✅ chart gets enough room */
-    max-height: 520px;
+    min-height: 320px;
+    height: 52vh;         /* ✅ 차트가 확실히 보이게 (원하면 48~60vh로 조절) */
+    max-height: 640px;
   }
   .tracking-dashboard{
     flex:none;
-    min-height: 260px;
+    min-height: 320px;
     height: auto;
   }
   .market-list{
