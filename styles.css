@@ -428,7 +428,7 @@ body{
   flex-direction:column;
   position:relative;
   background:#fff;
-  min-width: 0; /* ✅ prevent overflow */
+  min-width: 0;
 }
 .chart-container{
   flex:1.45;
@@ -629,23 +629,25 @@ body{
 }
 
 /* ==========================================================
-   ✅ MOBILE OPTIMIZATION
-   - 2단(좌/우) → 1단(세로)
-   - 차트 높이 줄이고, 리스트/버튼 크기 최적화
+   ✅ MOBILE OPTIMIZATION (차트/추적 안보임 FIX 포함)
+   - 핵심: index.html 인라인(#app display:flex; height:100%) 때문에
+          모바일에서 가로 레이아웃이 유지되어 main-panel이 밀릴 수 있음
+   - 해결: #app display/flex-direction을 !important로 강제
    ========================================================== */
 @media (max-width: 980px){
   body{
     display:block;
     height:auto;
     min-height:100vh;
-    overflow:auto; /* ✅ allow page scroll */
+    overflow:auto;
     padding-bottom: var(--safe-bottom);
   }
 
-  /* ✅ 핵심: index.html 인라인(#app display:flex) 때문에 가로로 밀림 -> 세로 강제 */
   #app{
-    flex-direction: column;
-    height: auto !important;
+    display:flex !important;
+    flex-direction: column !important;
+    width:100% !important;
+    height:auto !important;
     min-height: 100vh;
   }
 
@@ -659,10 +661,11 @@ body{
     width:100%;
     min-width:0;
   }
+
   .chart-container{
     flex:none;
     min-height: 320px;
-    height: 52vh;         /* ✅ 차트가 확실히 보이게 (원하면 48~60vh로 조절) */
+    height: 52vh;
     max-height: 640px;
   }
   .tracking-dashboard{
@@ -670,21 +673,15 @@ body{
     min-height: 320px;
     height: auto;
   }
-  .market-list{
-    max-height: 46vh;     /* ✅ prevent endless sidebar taking all space */
-  }
-  .tracking-list{
-    max-height: 56vh;
-  }
+
+  .market-list{ max-height: 46vh; }
+  .tracking-list{ max-height: 56vh; }
 }
 
 @media (max-width: 720px){
   .brand-header{ padding:18px 16px; }
   .brand-header h1{ font-size:22px; }
-  .stats-dashboard{
-    padding:12px;
-    gap:10px;
-  }
+  .stats-dashboard{ padding:12px; gap:10px; }
   .stat-card{ padding:10px; border-radius:12px; }
   .stat-value{ font-size:16px; }
 
@@ -713,10 +710,7 @@ body{
   .tracking-list{ padding:12px; }
   .position-card{ padding:14px; border-radius:16px; }
   .card-symbol{ font-size:16px; }
-  .card-grid{
-    grid-template-columns:1fr;
-    gap:10px;
-  }
+  .card-grid{ grid-template-columns:1fr; gap:10px; }
   .price-info{ text-align:left; display:flex; justify-content:space-between; gap:10px; }
   .price-label{ margin-bottom:0; }
   .progress-text{ font-size:12px; }
@@ -735,7 +729,6 @@ body{
   .action-btn{ font-size:13.5px; }
 }
 
-/* Reduce motion for accessibility */
 @media (prefers-reduced-motion: reduce){
   *{ transition:none !important; animation:none !important; }
 }
