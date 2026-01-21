@@ -1,720 +1,1334 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YOPO AI PRO | Enterprise Crypto Analytics</title>
-    
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <style>
-        /* * [DESIGN SYSTEM] KMASTER Brand Identity 
-         * Theme: Blue & White (Trust, Professional, Clear)
-         */
-        :root {
-            --primary-color: #0052ff;
-            --primary-hover: #0039b3;
-            --bg-color: #f4f6f8;
-            --surface-color: #ffffff;
-            --border-color: #e1e4e8;
-            --text-primary: #1a202c;
-            --text-secondary: #5f6c7b;
-            --success-color: #00c076;
-            --error-color: #ff4d4f;
-            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-            --shadow-md: 0 4px 6px rgba(0,0,0,0.05);
-            --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>YOPO AI PRO | Premium Crypto Analytics</title>
 
-        * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
-        body {
-            font-family: 'Pretendard', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            margin: 0;
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
-        }
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
 
-        /* --- LAYOUT: SIDEBAR (Left Panel) --- */
-        .sidebar {
-            width: 400px;
-            background: var(--surface-color);
-            border-right: 1px solid var(--border-color);
-            display: flex;
-            flex-direction: column;
-            z-index: 50;
-            box-shadow: var(--shadow-md);
-        }
+  <style>
+    :root{
+      --primary:#0052ff;
+      --primary-dark:#0039b3;
+      --primary-light:#e6eeff;
+      --secondary:#f8fbff;
+      --card-bg:#ffffff;
+      --text-main:#1a202c;
+      --text-sub:#718096;
+      --border:#e2e8f0;
+      --success:#00c076;
+      --danger:#ff4d4f;
+      --shadow:0 4px 20px rgba(0,0,0,.05);
+    }
+    *{ box-sizing:border-box; }
+    body{
+      font-family:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,Roboto,sans-serif;
+      background:var(--secondary);
+      color:var(--text-main);
+      margin:0;
+      display:flex;
+      height:100vh;
+      overflow:hidden;
+    }
 
-        .brand-section {
-            padding: 24px;
-            border-bottom: 1px solid var(--border-color);
-            background: linear-gradient(to bottom, #fff, #f8faff);
-        }
-        .brand-logo {
-            font-size: 22px;
-            font-weight: 900;
-            color: var(--primary-color);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            letter-spacing: -0.5px;
-        }
-        .brand-tag {
-            font-size: 10px;
-            background: var(--primary-color);
-            color: white;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
-        .brand-desc {
-            margin-top: 6px;
-            font-size: 12px;
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
+    .sidebar{
+      width:420px;
+      background:var(--card-bg);
+      border-right:1px solid var(--border);
+      display:flex;
+      flex-direction:column;
+      z-index:100;
+      box-shadow:4px 0 15px rgba(0,0,0,.02);
+    }
 
-        /* Dashboard Stats (Real-time aggregation) */
-        .dashboard-stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            padding: 20px;
-            background: var(--surface-color);
-            border-bottom: 1px solid var(--border-color);
-        }
-        .stat-card {
-            background: #f8fafc;
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 12px;
-            text-align: center;
-            transition: 0.2s;
-        }
-        .stat-card:hover { border-color: var(--primary-color); background: #f0f7ff; }
-        .stat-label { font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 4px; font-weight: 600; }
-        .stat-value { font-size: 16px; font-weight: 800; color: var(--primary-color); }
+    .brand-header{
+      padding:26px 22px;
+      border-bottom:1px solid var(--border);
+      background:linear-gradient(180deg,#fff 0%, var(--secondary) 100%);
+    }
+    .brand-header h1{
+      color:var(--primary);
+      margin:0;
+      font-size:26px;
+      font-weight:900;
+      letter-spacing:-1px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .brand-badge{
+      font-size:10px;
+      background:var(--primary);
+      color:#fff;
+      padding:2px 8px;
+      border-radius:4px;
+      font-weight:900;
+    }
+    .brand-sub{
+      font-size:12px;
+      color:var(--text-sub);
+      margin-top:6px;
+      font-weight:700;
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .mini-pill{
+      font-size:11px;
+      padding:4px 10px;
+      border-radius:999px;
+      background:var(--primary-light);
+      color:var(--primary-dark);
+      font-weight:900;
+      white-space:nowrap;
+    }
 
-        /* Coin List (Scrollable) */
-        .market-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 10px;
-        }
-        .coin-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 14px 16px;
-            margin-bottom: 8px;
-            background: var(--surface-color);
-            border: 1px solid transparent;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .coin-row:hover { background: #f1f5f9; }
-        .coin-row.active {
-            background: #eff6ff;
-            border-color: var(--primary-color);
-            box-shadow: var(--shadow-sm);
-        }
-        .coin-info-group h4 { margin: 0; font-size: 15px; font-weight: 700; color: var(--text-primary); }
-        .coin-info-group span { font-size: 11px; color: var(--text-secondary); font-weight: 500; }
-        .coin-price-group { text-align: right; }
-        .coin-price-val { font-size: 15px; font-weight: 700; color: var(--primary-color); }
-        .coin-change-val { font-size: 11px; font-weight: 600; margin-top: 2px; }
+    .stats-dashboard{
+      display:grid;
+      grid-template-columns:1fr 1fr 1fr;
+      gap:12px;
+      padding:18px 18px 16px;
+      background:#fff;
+      border-bottom:1px solid var(--border);
+    }
+    .stat-card{
+      background:var(--secondary);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:12px;
+      text-align:center;
+      transition:.2s;
+    }
+    .stat-card:hover{ border-color:var(--primary); transform:translateY(-1px); }
+    .stat-label{ font-size:11px; color:var(--text-sub); display:block; margin-bottom:4px; font-weight:900; }
+    .stat-value{ font-size:18px; font-weight:950; color:var(--primary); }
 
-        /* Analysis Controls (Fixed Bottom) */
-        .control-panel {
-            padding: 20px;
-            background: var(--surface-color);
-            border-top: 1px solid var(--border-color);
-            box-shadow: 0 -4px 20px rgba(0,0,0,0.03);
-        }
-        .timeframe-wrapper {
-            display: flex;
-            background: #f1f5f9;
-            padding: 4px;
-            border-radius: 10px;
-            margin-bottom: 12px;
-        }
-        .tf-btn {
-            flex: 1;
-            border: none;
-            background: transparent;
-            padding: 10px;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--text-secondary);
-            cursor: pointer;
-            border-radius: 8px;
-            transition: 0.2s;
-        }
-        .tf-btn.active {
-            background: var(--surface-color);
-            color: var(--primary-color);
-            box-shadow: var(--shadow-sm);
-        }
-        .predict-btn {
-            width: 100%;
-            border: none;
-            background: var(--primary-color);
-            color: white;
-            padding: 16px;
-            border-radius: 12px;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: 0.2s;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 8px;
-        }
-        .predict-btn:hover { background: var(--primary-hover); transform: translateY(-1px); }
-        .predict-btn:active { transform: translateY(0); }
+    .market-list{ flex:1; overflow-y:auto; padding:12px 14px 12px; }
+    .section-title{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:0 6px 10px;
+      color:var(--text-sub);
+      font-size:12px;
+      font-weight:900;
+      gap:10px;
+    }
+    .section-title .right{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-weight:900;
+    }
+    .status-dot{
+      width:8px; height:8px; border-radius:50%;
+      background:#cbd5e0;
+      display:inline-block;
+    }
+    .status-dot.ok{ background:var(--success); }
+    .status-dot.warn{ background:#f59e0b; }
+    .status-dot.bad{ background:var(--danger); }
 
-        /* --- LAYOUT: MAIN PANEL (Right Panel) --- */
-        .main-panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: var(--surface-color);
-            position: relative;
-        }
+    .coin-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:16px;
+      margin-bottom:10px;
+      background:#fff;
+      border:1px solid transparent;
+      border-radius:14px;
+      cursor:pointer;
+      transition:.15s ease;
+      box-shadow:0 2px 5px rgba(0,0,0,.01);
+    }
+    .coin-row:hover{ border-color:var(--border); background:var(--secondary); }
+    .coin-row.active{
+      border-color:var(--primary);
+      background:var(--primary-light);
+      box-shadow:0 4px 12px rgba(0,82,255,.15);
+    }
+    .coin-info h4{ margin:0; font-size:16px; font-weight:950; }
+    .coin-info span{ font-size:11px; color:var(--text-sub); font-weight:800; }
+    .coin-price h4{ margin:0; font-size:16px; font-weight:950; color:var(--primary); text-align:right; }
+    .coin-price span{ font-size:11px; font-weight:900; display:block; text-align:right; margin-top:3px; }
+    .small-metrics{ margin-top:4px; font-size:10px; color:var(--text-sub); font-weight:800; text-align:right; }
 
-        /* Chart Section */
-        .chart-section {
-            flex: 1.4;
-            background: #fff;
-            position: relative;
-            border-bottom: 1px solid var(--border-color);
-        }
+    .analysis-controls{
+      padding:18px;
+      background:#fff;
+      border-top:1px solid var(--border);
+      box-shadow:0 -5px 20px rgba(0,0,0,.03);
+    }
+    .tf-selector{
+      display:flex;
+      background:var(--secondary);
+      padding:4px;
+      border-radius:10px;
+      margin-bottom:12px;
+    }
+    .tf-btn{
+      flex:1;
+      border:none;
+      background:transparent;
+      padding:10px;
+      font-size:13px;
+      font-weight:950;
+      color:var(--text-sub);
+      cursor:pointer;
+      border-radius:8px;
+      transition:.15s;
+    }
+    .tf-btn.active{
+      background:#fff;
+      color:var(--primary);
+      box-shadow:0 2px 5px rgba(0,0,0,.05);
+    }
+    .action-btn{
+      width:100%;
+      border:none;
+      background:var(--primary);
+      color:#fff;
+      padding:16px 14px;
+      border-radius:12px;
+      font-size:16px;
+      font-weight:950;
+      cursor:pointer;
+      transition:.2s;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      gap:10px;
+    }
+    .action-btn:hover{ background:var(--primary-dark); transform:translateY(-1px); box-shadow:0 5px 15px rgba(0,82,255,.25); }
+    .action-btn:disabled{ background:#cbd5e0; cursor:not-allowed; transform:none; box-shadow:none; }
 
-        /* Tracking Section (Live Monitor) */
-        .tracking-section {
-            flex: 1;
-            background: #f8fafc;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            border-top: 4px solid var(--primary-color);
-        }
-        .tracking-header {
-            padding: 15px 24px;
-            background: var(--surface-color);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .tracking-title { font-size: 16px; font-weight: 800; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
-        .live-indicator {
-            font-size: 10px; font-weight: 800; color: #fff;
-            background: var(--error-color); padding: 3px 8px; border-radius: 12px;
-            animation: pulse-red 2s infinite;
-        }
+    .tiny-note{
+      margin-top:10px;
+      font-size:11px;
+      color:var(--text-sub);
+      line-height:1.45;
+      font-weight:800;
+    }
 
-        .tracking-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-        }
+    .main-panel{
+      flex:1;
+      display:flex;
+      flex-direction:column;
+      position:relative;
+      background:#fff;
+    }
+    .chart-container{
+      flex:1.45;
+      background:#fff;
+      border-bottom:1px solid var(--border);
+      position:relative;
+    }
+    .tracking-dashboard{
+      flex:1;
+      background:var(--secondary);
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+      border-top:4px solid var(--primary);
+    }
+    .tracking-header{
+      padding:14px 20px;
+      background:#fff;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+    }
+    .tracking-header h3{
+      margin:0;
+      font-size:16px;
+      font-weight:950;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .live-badge{
+      font-size:10px;
+      background:#ff4d4f;
+      color:#fff;
+      padding:2px 8px;
+      border-radius:999px;
+      animation:pulse 1.5s infinite;
+      font-weight:950;
+    }
+    .tracking-list{ flex:1; overflow-y:auto; padding:18px; }
 
-        /* Tracking Cards */
-        .position-card {
-            background: var(--surface-color);
-            border-radius: 12px;
-            padding: 18px;
-            margin-bottom: 12px;
-            border: 1px solid var(--border-color);
-            box-shadow: var(--shadow-sm);
-            display: grid;
-            grid-template-columns: 1.5fr 3fr 1.5fr;
-            gap: 15px;
-            align-items: center;
-            position: relative;
-            overflow: hidden;
-        }
-        .position-card::before {
-            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
-            background: var(--text-secondary);
-        }
-        .position-card.long::before { background: var(--success-color); }
-        .position-card.short::before { background: var(--error-color); }
+    .position-card{
+      background:#fff;
+      border-radius:16px;
+      padding:18px;
+      margin-bottom:14px;
+      border:1px solid var(--border);
+      box-shadow:0 2px 10px rgba(0,0,0,.02);
+      transition:.2s;
+    }
+    .position-card:hover{ transform:translateY(-1px); box-shadow:0 10px 18px rgba(0,0,0,.05); }
+    .card-header{ display:flex; justify-content:space-between; margin-bottom:12px; align-items:center; }
+    .card-symbol{ font-size:18px; font-weight:950; }
+    .card-type{
+      font-size:12px;
+      font-weight:950;
+      padding:4px 10px;
+      border-radius:999px;
+    }
+    .type-LONG{ background:#e6fffa; color:var(--success); }
+    .type-SHORT{ background:#fff5f5; color:var(--danger); }
+    .type-HOLD{ background:#f1f5f9; color:var(--text-sub); }
 
-        .pos-info h5 { margin: 0 0 4px 0; font-size: 16px; font-weight: 800; color: var(--text-primary); }
-        .pos-info span { font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
-        .pos-info .badge-long { background: #e6fffa; color: var(--success-color); }
-        .pos-info .badge-short { background: #fff5f5; color: var(--error-color); }
+    .card-grid{
+      display:grid;
+      grid-template-columns:1fr 1.7fr 1fr;
+      gap:14px;
+      align-items:center;
+    }
+    .price-info{ text-align:center; }
+    .price-label{ font-size:11px; color:var(--text-sub); display:block; font-weight:900; margin-bottom:2px; }
+    .price-val{ font-size:14px; font-weight:950; }
 
-        .pos-progress { text-align: center; }
-        .progress-bar-bg {
-            height: 8px; background: #e2e8f0; border-radius: 4px;
-            margin: 8px 0; overflow: hidden; position: relative;
-        }
-        .progress-bar-fill { height: 100%; width: 0%; transition: width 0.5s ease; }
-        .pos-stats { font-size: 11px; font-weight: 600; color: var(--text-secondary); display: flex; justify-content: space-between; }
+    .progress-text{
+      font-size:12px;
+      font-weight:950;
+      display:flex;
+      justify-content:space-between;
+      margin-bottom:6px;
+    }
+    .progress-track{
+      height:10px;
+      background:#edf2f7;
+      border-radius:6px;
+      overflow:hidden;
+    }
+    .progress-fill{ height:100%; transition:width .35s ease; }
 
-        .pos-result { text-align: right; }
-        .pnl-text { font-size: 18px; font-weight: 900; display: block; }
-        .pnl-label { font-size: 10px; color: var(--text-secondary); }
+    .card-foot{
+      margin-top:10px;
+      font-size:11px;
+      color:var(--text-sub);
+      font-weight:900;
+      line-height:1.35;
+      background:var(--secondary);
+      border:1px dashed var(--border);
+      border-radius:12px;
+      padding:10px 12px;
+    }
 
-        /* Modal (Analysis Result) */
-        .modal-backdrop {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5); z-index: 2000;
-            display: none; justify-content: center; align-items: center;
-            backdrop-filter: blur(4px);
-        }
-        .modal-content {
-            background: var(--surface-color); width: 420px; padding: 30px;
-            border-radius: 20px; box-shadow: var(--shadow-lg);
-            animation: slideUp 0.3s ease-out;
-        }
-        .modal-header { text-align: center; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; }
-        .modal-title { font-size: 24px; font-weight: 900; margin: 0; color: var(--primary-color); }
-        .analysis-details { background: #f8fafc; padding: 15px; border-radius: 10px; font-size: 13px; line-height: 1.6; margin-bottom: 20px; border: 1px solid var(--border-color); }
-        .confirm-btn {
-            width: 100%; padding: 14px; background: var(--text-primary); color: white;
-            border: none; border-radius: 10px; font-weight: 700; cursor: pointer;
-        }
+    .modal-overlay{
+      position:absolute;
+      inset:0;
+      background:rgba(0,0,0,.4);
+      z-index:2000;
+      display:none;
+      justify-content:center;
+      align-items:center;
+      backdrop-filter:blur(5px);
+    }
+    .analysis-modal{
+      width:500px;
+      max-width:92vw;
+      background:#fff;
+      border-radius:24px;
+      padding:26px;
+      box-shadow:0 25px 50px rgba(0,0,0,.2);
+      border:1px solid var(--border);
+      animation:popUp .25s cubic-bezier(.175,.885,.32,1.275);
+    }
+    .modal-header{
+      text-align:center;
+      margin-bottom:18px;
+      border-bottom:1px solid var(--border);
+      padding-bottom:14px;
+    }
+    .modal-signal{ font-size:40px; margin-bottom:8px; }
+    .analysis-text{
+      background:var(--secondary);
+      padding:16px;
+      border-radius:12px;
+      font-size:13.5px;
+      line-height:1.65;
+      color:var(--text-main);
+      margin-bottom:14px;
+      border-left:4px solid var(--primary);
+      font-weight:800;
+    }
+    .modal-grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+      margin-bottom:14px;
+      font-weight:950;
+    }
+    .mini-box{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px;
+      text-align:left;
+    }
+    .mini-box small{ display:block; color:var(--text-sub); font-weight:950; margin-bottom:3px; }
+    .modal-btn{
+      width:100%;
+      padding:14px;
+      border:none;
+      background:var(--primary);
+      color:#fff;
+      border-radius:12px;
+      font-weight:950;
+      cursor:pointer;
+      font-size:15px;
+    }
+    .modal-btn.secondary{
+      margin-top:8px;
+      background:#f1f5f9;
+      color:var(--text-main);
+      border:1px solid var(--border);
+    }
 
-        /* Animation */
-        @keyframes pulse-red { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    </style>
+    @keyframes pulse{0%{opacity:1}50%{opacity:.5}100%{opacity:1}}
+    @keyframes popUp{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
+  </style>
 </head>
+
 <body>
-
-<aside class="sidebar">
-    <div class="brand-section">
-        <div class="brand-logo">
-            <i class="fa-solid fa-cube"></i> YOPO PRO
-            <span class="brand-tag">KMASTER</span>
-        </div>
-        <div class="brand-desc">AI-Powered Crypto Analytics Engine</div>
+  <div class="sidebar">
+    <div class="brand-header">
+      <h1><i class="fa-solid fa-layer-group"></i> YOPO AI PRO <span class="brand-badge">PREMIUM</span></h1>
+      <div class="brand-sub">
+        <span>KMASTER REAL-TIME CRYPTO ANALYTICS</span>
+        <span class="mini-pill" id="btc-dom-pill">BTC DOM: --</span>
+      </div>
     </div>
 
-    <div class="dashboard-stats">
-        <div class="stat-card">
-            <span class="stat-label">Total Analysis</span>
-            <span class="stat-value" id="stat-total">0</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Win Rate</span>
-            <span class="stat-value" id="stat-win">0%</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Tracking</span>
-            <span class="stat-value" id="stat-active">0</span>
-        </div>
+    <div class="stats-dashboard">
+      <div class="stat-card">
+        <span class="stat-label">누적 분석</span>
+        <span class="stat-value" id="total-stat">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">성공률</span>
+        <span class="stat-value" id="win-stat">0%</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">추적 중</span>
+        <span class="stat-value" id="active-stat">0</span>
+      </div>
     </div>
 
-    <div class="market-list" id="market-list-view">
-        </div>
-
-    <div class="control-panel">
-        <div class="timeframe-wrapper">
-            <button class="tf-btn active" onclick="app.setTF('60', this)">1H (Scalping)</button>
-            <button class="tf-btn" onclick="app.setTF('240', this)">4H (Swing)</button>
-            <button class="tf-btn" onclick="app.setTF('D', this)">1D (Trend)</button>
-        </div>
-        <button class="predict-btn" id="btn-predict" onclick="app.runAnalysis()">
-            <i class="fa-solid fa-bolt"></i> AI 패턴 분석 실행
-        </button>
+    <div class="market-list">
+      <div class="section-title">
+        <span>유망 코인 15 (자동 선정)</span>
+        <span class="right">
+          <span class="status-dot" id="api-dot"></span>
+          <span id="universe-ts">업데이트: --</span>
+        </span>
+      </div>
+      <div id="market-list-container"></div>
     </div>
-</aside>
 
-<main class="main-panel">
-    <section class="chart-section" id="chart-view">
-        </section>
-
-    <section class="tracking-section">
-        <div class="tracking-header">
-            <div class="tracking-title">
-                <i class="fa-solid fa-crosshairs"></i> 실시간 포지션 추적 모니터
-            </div>
-            <span class="live-indicator">● LIVE MARKET SYNC</span>
-        </div>
-        <div class="tracking-list" id="tracking-view">
-            </div>
-    </section>
-</main>
-
-<div class="modal-backdrop" id="analysis-modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <div style="font-size:12px; color:#718096; margin-bottom:5px;" id="modal-subtitle">BTCUSDT | 1H STRATEGY</div>
-            <h2 class="modal-title" id="modal-title">LONG SIGNAL</h2>
-        </div>
-        <div class="analysis-details" id="modal-desc">
-            </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
-            <div style="text-align:center; padding:10px; background:#f1f5f9; border-radius:8px;">
-                <span style="font-size:10px; color:#718096;">목표가(TP)</span><br>
-                <b style="color:var(--success-color); font-size:14px;" id="modal-tp">0.00</b>
-            </div>
-            <div style="text-align:center; padding:10px; background:#f1f5f9; border-radius:8px;">
-                <span style="font-size:10px; color:#718096;">손절가(SL)</span><br>
-                <b style="color:var(--error-color); font-size:14px;" id="modal-sl">0.00</b>
-            </div>
-        </div>
-        <button class="confirm-btn" onclick="app.confirmAnalysis()">트래킹 시스템 등록</button>
+    <div class="analysis-controls">
+      <div class="tf-selector">
+        <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
+        <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
+        <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
+      </div>
+      <button class="action-btn" id="predict-btn" onclick="executeAnalysis()">
+        <i class="fa-solid fa-microchip"></i> AI 분석 및 예측 실행
+      </button>
+      <div class="tiny-note">
+        - 서버 없이(HTML 1파일) 동작하는 “최대한 안정화 버전”입니다.<br/>
+        - 유사패턴 표본이 부족하거나 확신이 낮으면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
+        - 외부 API가 잠시 느려져도, 최소 기능은 계속 작동하도록 설계했습니다.
+      </div>
     </div>
-</div>
+  </div>
 
-<script src="https://s3.tradingview.com/tv.js"></script>
+  <div class="main-panel">
+    <div class="chart-container" id="chart-wrap"></div>
 
-<script>
-/**
- * YOPO AI PRO - Core Application Logic
- * Structured with strict 'State - Logic - View' architecture.
- */
-const AppConfig = {
-    coins: [
-        {s:'BTCUSDT', n:'Bitcoin'}, {s:'ETHUSDT', n:'Ethereum'}, {s:'SOLUSDT', n:'Solana'},
-        {s:'XRPUSDT', n:'Ripple'}, {s:'ADAUSDT', n:'Cardano'}, {s:'DOGEUSDT', n:'Dogecoin'},
-        {s:'AVAXUSDT', n:'Avalanche'}, {s:'DOTUSDT', n:'Polkadot'}, {s:'LINKUSDT', n:'Chainlink'},
-        {s:'POLUSDT', n:'Polygon'}, {s:'TRXUSDT', n:'Tron'}, {s:'BCHUSDT', n:'BCH'},
-        {s:'NEARUSDT', n:'Near'}, {s:'LTCUSDT', n:'Litecoin'}, {s:'APTUSDT', n:'Aptos'}
-    ]
-};
+    <div class="tracking-dashboard">
+      <div class="tracking-header">
+        <h3><i class="fa-solid fa-radar"></i> 실시간 포지션 정밀 추적</h3>
+        <span class="live-badge">LIVE</span>
+      </div>
+      <div class="tracking-list" id="tracking-container"></div>
+    </div>
+  </div>
 
-class YopoEngine {
-    constructor() {
-        // [State Management] 앱의 모든 상태를 이곳에서 관리
-        this.state = {
-            symbol: 'BTCUSDT',
-            tf: '60', // 60(1h), 240(4h), D(1d)
-            prices: {}, // 실시간 가격 캐시
-            activeTrades: [], // 추적 중인 포지션
-            stats: this.loadStats(), // 누적 통계
-            tempAnalysis: null // 모달용 임시 데이터
-        };
-        
-        this.init();
+  <div class="modal-overlay" id="result-modal">
+    <div class="analysis-modal">
+      <div class="modal-header">
+        <div id="modal-icon" class="modal-signal">📈</div>
+        <h2 id="modal-title" style="margin:0; color:var(--primary);">LONG SIGNAL</h2>
+        <p id="modal-subtitle" style="margin:6px 0 0; color:var(--text-sub); font-weight:900;">BTCUSDT | 1H</p>
+      </div>
+
+      <div class="modal-grid" id="modal-grid"></div>
+      <div id="modal-content" class="analysis-text"></div>
+
+      <button class="modal-btn" id="modal-confirm" onclick="confirmTrack()">추적 시스템에 등록</button>
+      <button class="modal-btn secondary" onclick="closeModal()">닫기</button>
+    </div>
+  </div>
+
+  <script src="https://s3.tradingview.com/tv.js"></script>
+  <script>
+    /*************************************************************
+     * YOPO AI PRO (Single-File, Robust Edition)
+     * - 목표: 서버 없이도 “최대한 안정/일관/오류방지”
+     *************************************************************/
+
+    // ---------- Storage ----------
+    const STORAGE_KEY = "yopo_single_v4_state";
+
+    // ---------- API ----------
+    const BYBIT_TICKERS = "https://api.bybit.com/v5/market/tickers?category=linear";
+    const BYBIT_KLINE = (symbol, interval, limit) =>
+      `https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+
+    const CG_MARKETS = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h";
+    const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
+
+    // ---------- Analysis Params ----------
+    const SIM_WINDOW = 40;      // 패턴 길이(캔들)
+    const FUTURE_H = 8;         // 과거 패턴 이후 몇 캔들 뒤 방향 확인
+    const SIM_STEP = 2;         // 스캔 간격
+    const SIM_TOPK = 25;        // 상위 유사 패턴 개수
+
+    // HOLD(보류) 규칙(승률 보호 핵심)
+    const HOLD_MIN_TOPK = 12;        // 유사패턴 표본 최소
+    const HOLD_MIN_SIM_AVG = 55;     // 평균 유사도(%) 최소
+    const HOLD_MIN_EDGE = 0.08;      // 롱/숏 확률 차이(엣지) 최소 (8%)
+    const HOLD_MIN_TP_PCT = 0.8;     // 목표수익률이 너무 작으면 의미 없으니 보류(0.8% 미만)
+
+    // TP/SL (ATR 기반)
+    const RR = 2.0;
+    const TF_MULT = { "60": 1.2, "240": 2.0, "D": 3.5 };
+    const ATR_MIN_PCT = 0.15;  // ATR 너무 작을 때 최소 변동 가정(0.15%)
+    const TP_MAX_PCT = 20.0;   // 너무 과한 목표 제한
+
+    // ---------- Candidate List (기본 15) ----------
+    const DEFAULT_CANDIDATES = [
+      { s: "BTCUSDT", n: "비트코인", cg: "bitcoin" },
+      { s: "ETHUSDT", n: "이더리움", cg: "ethereum" },
+      { s: "SOLUSDT", n: "솔라나", cg: "solana" },
+      { s: "XRPUSDT", n: "리플", cg: "ripple" },
+      { s: "ADAUSDT", n: "에이다", cg: "cardano" },
+      { s: "DOGEUSDT", n: "도지코인", cg: "dogecoin" },
+      { s: "AVAXUSDT", n: "아발란체", cg: "avalanche-2" },
+      { s: "DOTUSDT", n: "폴카닷", cg: "polkadot" },
+      { s: "LINKUSDT", n: "체인링크", cg: "chainlink" },
+      { s: "POLUSDT", n: "폴리곤", cg: "polygon-ecosystem-token" },
+      { s: "TRXUSDT", n: "트론", cg: "tron" },
+      { s: "BCHUSDT", n: "비트코인캐시", cg: "bitcoin-cash" },
+      { s: "NEARUSDT", n: "니어프로토콜", cg: "near" },
+      { s: "LTCUSDT", n: "라이트코인", cg: "litecoin" },
+      { s: "APTUSDT", n: "앱토스", cg: "aptos" }
+    ];
+
+    // ---------- State ----------
+    let state = loadState() || {
+      symbol: "BTCUSDT",
+      tf: "60",
+      universe: DEFAULT_CANDIDATES.map(x => ({...x})),
+      activePositions: [],
+      history: { total: 0, win: 0 },
+      lastUniverseAt: 0,
+      btcDom: null,
+      lastApiHealth: "warn" // ok/warn/bad
+    };
+
+    let tempPos = null;
+
+    // ---------- Boot ----------
+    document.addEventListener("DOMContentLoaded", async () => {
+      initChart();
+      renderUniverseList();
+      renderTrackingList();
+      updateStatsUI();
+
+      await refreshUniverseAndGlobals();
+      await marketTick();
+
+      setInterval(marketTick, 2000);
+      setInterval(refreshUniverseAndGlobals, 60000);
+    });
+
+    // ---------- UI ----------
+    function setTF(tf, btn){
+      state.tf = tf;
+      document.querySelectorAll(".tf-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      saveState();
+      initChart();
     }
 
-    init() {
-        this.renderMarketList();
-        this.loadChart();
-        this.updateStatsUI();
-        
-        // [Engine Loop] 2초마다 마켓 데이터 동기화 및 트래킹 업데이트
-        setInterval(() => this.syncMarket(), 2000);
+    function switchCoin(symbol){
+      state.symbol = symbol;
+      document.querySelectorAll(".coin-row").forEach(r => r.classList.remove("active"));
+      const row = document.getElementById(`row-${symbol}`);
+      if(row) row.classList.add("active");
+      saveState();
+      initChart();
     }
 
-    // --- DATA LAYER ---
-    async syncMarket() {
-        try {
-            const res = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
-            const json = await res.json();
-            
-            // 가격 업데이트 및 트래킹 감시
-            json.result.list.forEach(ticker => {
-                const price = parseFloat(ticker.lastPrice);
-                const change = parseFloat(ticker.price24hPcnt);
-                
-                // 1. 가격 캐시 업데이트
-                this.state.prices[ticker.symbol] = price;
-                
-                // 2. UI 리스트 업데이트 (해당 코인이 리스트에 있다면)
-                this.updateCoinUI(ticker.symbol, price, change);
-
-                // 3. [핵심] 활성 포지션 감시 (5번 요구사항)
-                this.monitorPositions(ticker.symbol, price);
-            });
-        } catch (e) { console.warn("Market Sync skipped"); }
+    // ---------- Chart ----------
+    function initChart(){
+      document.getElementById("chart-wrap").innerHTML = "";
+      new TradingView.widget({
+        autosize:true,
+        symbol:"BYBIT:" + state.symbol,
+        interval:state.tf,
+        timezone:"Asia/Seoul",
+        theme:"light",
+        style:"1",
+        locale:"ko",
+        toolbar_bg:"#f1f3f6",
+        enable_publishing:false,
+        hide_top_toolbar:false,
+        container_id:"chart-wrap"
+      });
     }
 
-    // --- LOGIC LAYER (AI Analysis) ---
-    async runAnalysis() {
-        const btn = document.getElementById('btn-predict');
-        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> 분석 중...';
-        btn.disabled = true;
-
-        try {
-            // 1. 과거 데이터 수집 (RSI, 패턴 분석용)
-            const kline = await this.fetchKline(this.state.symbol, this.state.tf);
-            const closes = kline.map(k => parseFloat(k[4]));
-            
-            // 2. 지표 계산
-            const rsi = this.calculateRSI(closes);
-            const currentPrice = closes[0];
-            
-            // 3. AI 판단 (RSI 기반 역추세 + 트렌드 혼합)
-            // RSI < 40: 과매도(Long), RSI > 60: 과매수(Short), 그외 트렌드 추종
-            let type = rsi < 45 ? 'LONG' : (rsi > 55 ? 'SHORT' : (Math.random()>0.5 ? 'LONG':'SHORT'));
-            
-            // 4. 목표가/손절가 산출 (기간별 차등 - 4번 요구사항)
-            // 1H: 2%, 4H: 5%, 1D: 10% 기반 + 변동성 계수
-            const baseRates = {'60': 0.02, '240': 0.05, 'D': 0.10};
-            const rate = baseRates[this.state.tf] || 0.02;
-            
-            const tp = type === 'LONG' ? currentPrice * (1 + rate) : currentPrice * (1 - rate);
-            const sl = type === 'LONG' ? currentPrice * (1 - rate/2) : currentPrice * (1 + rate/2);
-
-            // 5. 결과 준비
-            this.state.tempAnalysis = {
-                id: Date.now(),
-                symbol: this.state.symbol,
-                type: type,
-                tf: this.state.tf,
-                entry: currentPrice,
-                tp: tp,
-                sl: sl,
-                rsi: rsi.toFixed(2),
-                rate: (rate * 100).toFixed(1)
-            };
-
-            // 6. 모달 표시
-            this.showModal();
-
-        } catch (e) {
-            alert("데이터 분석 실패. 네트워크를 확인하세요.");
-        } finally {
-            btn.innerHTML = '<i class="fa-solid fa-bolt"></i> AI 패턴 분석 실행';
-            btn.disabled = false;
-        }
-    }
-
-    confirmAnalysis() {
-        if (!this.state.tempAnalysis) return;
-        
-        // 트래킹 리스트에 추가
-        this.state.activeTrades.unshift(this.state.tempAnalysis);
-        this.state.tempAnalysis = null;
-        
-        document.getElementById('analysis-modal').style.display = 'none';
-        this.renderTracking();
-        this.updateStatsUI();
-    }
-
-    // [핵심 로직] 포지션 감시 및 판정
-    monitorPositions(symbol, currentPrice) {
-        let updated = false;
-
-        // 역방향 순회 (배열 삭제 대응)
-        for (let i = this.state.activeTrades.length - 1; i >= 0; i--) {
-            const trade = this.state.activeTrades[i];
-            if (trade.symbol !== symbol) continue;
-
-            let isEnd = false;
-            let isWin = false;
-
-            if (trade.type === 'LONG') {
-                if (currentPrice >= trade.tp) { isEnd = true; isWin = true; }
-                else if (currentPrice <= trade.sl) { isEnd = true; isWin = false; }
-            } else {
-                if (currentPrice <= trade.tp) { isEnd = true; isWin = true; }
-                else if (currentPrice >= trade.sl) { isEnd = true; isWin = false; }
-            }
-
-            if (isEnd) {
-                // 결과 확정
-                this.state.stats.total++;
-                if (isWin) this.state.stats.win++;
-                this.saveStats();
-                
-                // 리스트에서 제거 및 알림
-                this.state.activeTrades.splice(i, 1);
-                this.updateStatsUI();
-                alert(`[${trade.symbol}] ${isWin ? '🎯 목표가 달성 (수익)' : '🛡️ 손절가 도달 (방어)'}`);
-                updated = true;
-            } else {
-                // 진행 상태 업데이트 (렌더링용)
-                // 단순히 값만 갱신하고 렌더링은 updateTracking에서 처리
-                if (this.needsRenderUpdate(trade, currentPrice)) updated = true;
-            }
-        }
-        
-        if (updated) this.renderTracking();
-    }
-
-    // --- UI LAYER ---
-    renderMarketList() {
-        const list = document.getElementById('market-list-view');
-        list.innerHTML = AppConfig.coins.map(c => `
-            <div class="coin-row" id="row-${c.s}" onclick="app.setSymbol('${c.s}')">
-                <div class="coin-info-group">
-                    <h4>${c.s.replace('USDT','')}</h4>
-                    <span>${c.n}</span>
-                </div>
-                <div class="coin-price-group" id="price-box-${c.s}">
-                    <div class="coin-price-val">---</div>
-                    <div class="coin-change-val">---</div>
-                </div>
-            </div>
-        `).join('');
-        // 초기 활성 코인 표시
-        this.highlightActiveRow();
-    }
-
-    updateCoinUI(symbol, price, change) {
-        // 리스트 내 가격 업데이트
-        const box = document.getElementById(`price-box-${symbol}`);
-        if (box) {
-            const color = change >= 0 ? 'var(--success-color)' : 'var(--error-color)';
-            box.innerHTML = `
-                <div class="coin-price-val" style="color:${color}">$${price.toLocaleString()}</div>
-                <div class="coin-change-val" style="color:${color}">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</div>
-            `;
-        }
-    }
-
-    renderTracking() {
-        const container = document.getElementById('tracking-view');
-        if (this.state.activeTrades.length === 0) {
-            container.innerHTML = `<div style="text-align:center; padding:40px; color:#a0aec0;">
-                <i class="fa-solid fa-satellite-dish" style="font-size:32px; opacity:0.2; margin-bottom:10px;"></i><br>
-                실시간 추적 중인 포지션이 없습니다.
-            </div>`;
-            return;
+    // ---------- Universe + Dominance (No-server robust) ----------
+    async function refreshUniverseAndGlobals(){
+      const apiDot = document.getElementById("api-dot");
+      try{
+        // CoinGecko global (dominance) - optional
+        const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 1 });
+        const dom = g?.data?.market_cap_percentage?.btc;
+        if(typeof dom === "number"){
+          state.btcDom = dom;
+          document.getElementById("btc-dom-pill").innerText = `BTC DOM: ${dom.toFixed(1)}%`;
         }
 
-        container.innerHTML = this.state.activeTrades.map(t => {
-            const curr = this.state.prices[t.symbol] || t.entry;
-            const isLong = t.type === 'LONG';
-            
-            // PnL 계산
-            const pnl = isLong 
-                ? ((curr - t.entry) / t.entry * 100) 
-                : ((t.entry - curr) / t.entry * 100);
-            
-            // 진행률 계산 (Entry -> TP 까지의 거리 대비 현재 진행도)
-            const totalDist = Math.abs(t.tp - t.entry);
-            const currDist = Math.abs(curr - t.entry);
-            // 방향이 맞을 때만 진행률 증가, 틀리면 0 처리 혹은 마이너스 표현 대신 PnL로 확인
-            let progress = (currDist / totalDist) * 100;
-            // 방향이 반대면 progress바는 0으로 유지 (역행 중임)
-            if (pnl < 0) progress = 0;
-            if (progress > 100) progress = 100;
+        // CoinGecko markets - optional but preferred
+        const markets = await fetchJSON(CG_MARKETS, { timeoutMs: 7000, retry: 1 });
 
-            const color = pnl >= 0 ? 'var(--success-color)' : 'var(--error-color)';
-            const bgClass = isLong ? 'long' : 'short';
+        const enriched = DEFAULT_CANDIDATES.map(c => {
+          const m = Array.isArray(markets) ? markets.find(x => x.id === c.cg) : null;
+          const mc = m?.market_cap ?? 0;
+          const vol = m?.total_volume ?? 0;
+          const chg = m?.price_change_percentage_24h ?? 0;
 
-            return `
-            <div class="position-card ${bgClass}">
-                <div class="pos-info">
-                    <h5>${t.symbol.replace('USDT','')} <span class="badge-${bgClass}">${t.type}</span></h5>
-                    <div class="pos-stats">
-                        <span>진입: $${t.entry.toLocaleString()}</span>
-                        <span>TF: ${t.tf === '60'?'1H':t.tf==='240'?'4H':'1D'}</span>
-                    </div>
-                </div>
-                
-                <div class="pos-progress">
-                    <div class="pos-stats">
-                        <span style="color:${color}">${pnl.toFixed(2)}%</span>
-                        <span>Target ${progress.toFixed(0)}%</span>
-                    </div>
-                    <div class="progress-bar-bg">
-                        <div class="progress-bar-fill" style="width:${progress}%; background:${color}"></div>
-                    </div>
-                </div>
+          // score: 안정(시총) + 유동(거래량) + 기회(변동)
+          const score =
+            safeLog10(mc) * 0.45 +
+            safeLog10(vol) * 0.45 +
+            Math.min(Math.abs(chg), 20) * 0.10;
 
-                <div class="pos-result">
-                    <span class="pnl-text" style="color:${color}">$${curr.toLocaleString()}</span>
-                    <span class="pnl-label">현재가</span>
-                </div>
-            </div>`;
-        }).join('');
+          return { ...c, mc, vol, chg, score };
+        }).sort((a,b)=> b.score - a.score);
+
+        state.universe = enriched.slice(0, 15);
+        state.lastUniverseAt = Date.now();
+        state.lastApiHealth = "ok";
+        saveState();
+
+        document.getElementById("universe-ts").innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+        apiDot.className = "status-dot ok";
+
+        renderUniverseList();
+      }catch(e){
+        // CoinGecko 실패해도 “Bybit 기반 유동성 TOP15”로 자동 대체 (완전 중요)
+        console.warn("CoinGecko unavailable -> fallback to Bybit universe", e);
+        apiDot.className = "status-dot warn";
+        state.lastApiHealth = "warn";
+        saveState();
+
+        await fallbackUniverseFromBybit();
+      }
     }
 
-    showModal() {
-        const t = this.state.tempAnalysis;
-        const color = t.type === 'LONG' ? 'var(--success-color)' : 'var(--error-color)';
-        
-        document.getElementById('modal-title').innerText = `${t.type} SIGNAL`;
-        document.getElementById('modal-title').style.color = color;
-        document.getElementById('modal-subtitle').innerText = `${t.symbol} | ${t.tf === '60'?'1H':t.tf==='240'?'4H':'1D'} TIME FRAME`;
-        
-        document.getElementById('modal-desc').innerHTML = `
-            <b>[AI 분석 리포트]</b><br>
-            현재 RSI 지표는 <b>${t.rsi}</b>이며, 거래량 가중 이동평균(VWAP) 분석 결과 
-            <b style="color:${color}">${t.type === 'LONG'?'상승':'하락'} 모멘텀</b>이 강하게 포착되었습니다.<br><br>
-            과거 6개월 데이터 패턴 매칭 결과, 현 구간 진입 시 기대 수익률은 
-            약 <b>${t.rate}%</b>로 산출됩니다.
+    async function fallbackUniverseFromBybit(){
+      try{
+        const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+        const tickers = json?.result?.list || [];
+
+        // turnover24h / volume24h 유사 필드가 있을 수 있으나,
+        // v5에서 turnover(거래대금)에 해당하는 값이 여러 이름으로 올 수 있어 안전하게 처리
+        const rows = tickers
+          .map(t => {
+            const symbol = t.symbol;
+            const last = parseFloat(t.lastPrice || "0");
+            const chg = parseFloat(t.price24hPcnt || "0") * 100;
+            // 안전한 turnover 후보들
+            const turn =
+              parseFloat(t.turnover24h || "0") ||
+              parseFloat(t.turnover || "0") ||
+              parseFloat(t.volume24h || "0") ||
+              parseFloat(t.volume || "0") || 0;
+            return { symbol, last, chg, turn };
+          })
+          .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0);
+
+        // 유동성 상위(거래대금/거래량) 기준 TOP15
+        rows.sort((a,b)=> (b.turn - a.turn));
+        const top = rows.slice(0, 60); // 후보 넓게
+
+        // 기본 후보 목록과 최대한 겹치게 우선
+        const baseSet = new Set(DEFAULT_CANDIDATES.map(x=>x.s));
+        const picked = [];
+
+        for(const r of top){
+          if(picked.length >= 15) break;
+          if(baseSet.has(r.symbol)){
+            const base = DEFAULT_CANDIDATES.find(x=>x.s===r.symbol);
+            picked.push({ ...base, chg: r.chg, turn: r.turn, score: safeLog10(r.turn) });
+          }
+        }
+        // 그래도 15개 미달이면 top에서 채움(이름은 심볼로 표시)
+        for(const r of top){
+          if(picked.length >= 15) break;
+          if(picked.some(x=>x.s===r.symbol)) continue;
+          picked.push({ s: r.symbol, n: r.symbol.replace("USDT",""), cg: null, chg: r.chg, turn: r.turn, score: safeLog10(r.turn) });
+        }
+
+        state.universe = picked.slice(0, 15);
+        state.lastUniverseAt = Date.now();
+        saveState();
+
+        document.getElementById("universe-ts").innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+        renderUniverseList();
+      }catch(e){
+        console.error("Bybit fallback universe failed:", e);
+        // 최후: 기존 리스트 유지
+      }
+    }
+
+    function renderUniverseList(){
+      const container = document.getElementById("market-list-container");
+      container.innerHTML = "";
+      state.universe.forEach(coin => {
+        const div = document.createElement("div");
+        div.className = `coin-row ${coin.s === state.symbol ? "active" : ""}`;
+        div.id = `row-${coin.s}`;
+        div.onclick = () => switchCoin(coin.s);
+        div.innerHTML = `
+          <div class="coin-info">
+            <h4>${coin.s.replace("USDT","")}</h4>
+            <span>${coin.n || "-"}</span>
+          </div>
+          <div class="coin-price" id="price-${coin.s}">
+            <h4>---</h4><span>---</span>
+            <div class="small-metrics" id="meta-${coin.s}"></div>
+          </div>
         `;
-        document.getElementById('modal-tp').innerText = `$ ${t.tp.toLocaleString()}`;
-        document.getElementById('modal-sl').innerText = `$ ${t.sl.toLocaleString()}`;
+        container.appendChild(div);
 
-        document.getElementById('analysis-modal').style.display = 'flex';
-    }
-
-    // --- UTILS ---
-    setSymbol(s) {
-        this.state.symbol = s;
-        this.highlightActiveRow();
-        this.loadChart();
-    }
-    
-    setTF(tf, el) {
-        this.state.tf = tf;
-        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-        el.classList.add('active');
-        this.loadChart();
-    }
-
-    highlightActiveRow() {
-        document.querySelectorAll('.coin-row').forEach(r => r.classList.remove('active'));
-        const row = document.getElementById(`row-${this.state.symbol}`);
-        if(row) row.classList.add('active');
-    }
-
-    loadChart() {
-        new TradingView.widget({
-            "autosize": true, "symbol": "BYBIT:" + this.state.symbol,
-            "interval": this.state.tf, "timezone": "Asia/Seoul", "theme": "light",
-            "style": "1", "locale": "ko", "toolbar_bg": "#f1f3f6", "enable_publishing": false,
-            "container_id": "chart-view"
-        });
-    }
-
-    async fetchKline(symbol, tf) {
-        // Bybit API
-        const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${tf}&limit=100`);
-        const json = await res.json();
-        return json.result.list;
-    }
-
-    calculateRSI(prices, period=14) {
-        let gains = 0, losses = 0;
-        for(let i=0; i<period; i++){
-            const diff = prices[i] - prices[i+1];
-            if(diff >= 0) gains += diff; else losses -= diff;
+        const meta = document.getElementById(`meta-${coin.s}`);
+        if(meta){
+          // CoinGecko 기반이면 시총/거래량 표시, fallback이면 turnover 표시
+          const mcTxt = coin.mc ? `시총 ${formatMoney(coin.mc)}` : "";
+          const volTxt = coin.vol ? `거래량 ${formatMoney(coin.vol)}` : "";
+          const turnTxt = coin.turn ? `유동성 ${formatMoney(coin.turn)}` : "";
+          const chgTxt = (typeof coin.chg === "number") ? `24h ${coin.chg.toFixed(1)}%` : "";
+          meta.innerText = [mcTxt, volTxt, turnTxt, chgTxt].filter(Boolean).join(" · ");
         }
-        const rs = gains / (losses || 1); // 0나누기 방지
-        return 100 - (100 / (1 + rs));
+      });
     }
 
-    loadStats() { return JSON.parse(localStorage.getItem('yopo_stats_v3')) || { total: 0, win: 0 }; }
-    saveStats() { localStorage.setItem('yopo_stats_v3', JSON.stringify(this.state.stats)); }
-    
-    updateStatsUI() {
-        const s = this.state.stats;
-        document.getElementById('stat-total').innerText = s.total;
-        document.getElementById('stat-active').innerText = this.state.activeTrades.length;
-        const rate = s.total > 0 ? ((s.win / s.total) * 100).toFixed(1) : 0;
-        document.getElementById('stat-win').innerText = `${rate}%`;
+    // ---------- Market tick + tracking ----------
+    async function marketTick(){
+      try{
+        const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+        const tickers = json?.result?.list || [];
+        const symbols = new Set(state.universe.map(x => x.s));
+
+        for(const t of tickers){
+          if(!symbols.has(t.symbol)) continue;
+          const price = parseFloat(t.lastPrice || "0");
+          const chg = parseFloat(t.price24hPcnt || "0") * 100;
+          if(price > 0) updateCoinRow(t.symbol, price, chg);
+          if(price > 0) trackPositions(t.symbol, price);
+        }
+
+        // 현재 선택 심볼이 유니버스 밖이면 보정
+        if(!symbols.has(state.symbol) && state.universe[0]){
+          switchCoin(state.universe[0].s);
+        }
+      }catch(e){
+        console.error("Market tick error:", e);
+        // 상태표시(최소한)
+        const apiDot = document.getElementById("api-dot");
+        apiDot.className = "status-dot bad";
+      }
     }
 
-    needsRenderUpdate(trade, currentPrice) {
-        // 성능 최적화: 가격 변동이 있을 때만 true 반환 (실제로는 매번 렌더링해도 무방하나 확장성 고려)
-        return true; 
+    function updateCoinRow(symbol, price, changePct){
+      const el = document.getElementById(`price-${symbol}`);
+      if(!el) return;
+      const color = changePct >= 0 ? "var(--success)" : "var(--danger)";
+      const sign = changePct >= 0 ? "+" : "";
+      el.querySelector("h4").innerHTML = `<span style="color:${color}">$${price.toLocaleString(undefined,{maximumFractionDigits:6})}</span>`;
+      el.querySelector("span").innerHTML = `<span style="color:${color}">${sign}${changePct.toFixed(2)}%</span>`;
     }
-}
 
-// 앱 실행
-const app = new YopoEngine();
+    // ---------- Analysis ----------
+    async function executeAnalysis(){
+      const btn = document.getElementById("predict-btn");
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 분석 중...';
 
-</script>
+      try{
+        const limit = 420; // 여유 있게
+        const res = await fetchJSON(BYBIT_KLINE(state.symbol, state.tf, limit), { timeoutMs: 9000, retry: 1 });
+        const kline = res?.result?.list || [];
+        if(kline.length < (SIM_WINDOW + FUTURE_H + 60)){
+          throw new Error("캔들 데이터가 부족합니다.");
+        }
+
+        const candles = kline.map(row => ({
+          t: Number(row[0]),
+          o: parseFloat(row[1]),
+          h: parseFloat(row[2]),
+          l: parseFloat(row[3]),
+          c: parseFloat(row[4]),
+          v: parseFloat(row[5])
+        })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c));
+
+        candles.sort((a,b)=> a.t - b.t);
+
+        const closes = candles.map(x => x.c);
+        const highs  = candles.map(x => x.h);
+        const lows   = candles.map(x => x.l);
+        const vols   = candles.map(x => x.v);
+
+        const entry = closes[closes.length - 1];
+
+        // indicators
+        const rsi = calcRSI(closes, 14);
+        const macd = calcMACD(closes);
+        const atr = calcATR(highs, lows, closes, 14);
+        const volTrend = calcVolumeTrend(vols, 20);
+
+        // similarity stats (robust)
+        const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
+
+        // dominance damp
+        const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
+        const domDamp = (dom !== null && dom > 50) ? 0.85 : 1.0;
+
+        // base probs from similarity
+        let longP = sim.longProb;
+        let shortP = sim.shortProb;
+
+        // bias from indicators
+        const rsiBias = clamp((50 - rsi) / 50, -1, 1);
+        const macdBias = clamp(macd.hist * 6, -1, 1);
+        const volBias = clamp(volTrend, -1, 1);
+
+        // combine (deterministic)
+        longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias);
+        shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias);
+
+        longP = 0.5 + (longP - 0.5) * domDamp;
+        shortP = 0.5 + (shortP - 0.5) * domDamp;
+
+        // normalize
+        const sum = Math.max(longP + shortP, 1e-9);
+        longP /= sum; shortP /= sum;
+
+        const type = (longP >= shortP) ? "LONG" : "SHORT";
+        const winProb = Math.max(longP, shortP);
+        const edge = Math.abs(longP - shortP);
+
+        // TP/SL from ATR (with min clamp)
+        const tfMult = TF_MULT[state.tf] || 1.2;
+
+        // ATR 너무 작으면 최소 변동 가정
+        const atrMin = entry * (ATR_MIN_PCT / 100);
+        const atrUsed = Math.max(atr, atrMin);
+
+        let tpDist = atrUsed * tfMult;
+        let slDist = tpDist / RR;
+
+        let tp = (type === "LONG") ? (entry + tpDist) : (entry - tpDist);
+        let sl = (type === "LONG") ? (entry - slDist) : (entry + slDist);
+
+        let tpPct = Math.abs((tp - entry) / entry) * 100;
+        let slPct = Math.abs((sl - entry) / entry) * 100;
+
+        // 목표 과도하면 제한
+        if(tpPct > TP_MAX_PCT){
+          tpPct = TP_MAX_PCT;
+          const newTpDist = entry * (tpPct/100);
+          tp = (type === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
+          sl = (type === "LONG") ? (entry - (newTpDist/RR)) : (entry + (newTpDist/RR));
+          slPct = Math.abs((sl - entry) / entry) * 100;
+        }
+
+        // HOLD rules (승률 보호)
+        const holdReasons = [];
+        if(sim.count < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본이 너무 적음(${sim.count}개)`);
+        if(sim.avgSim < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균이 낮음(${sim.avgSim.toFixed(1)}%)`);
+        if(edge < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 확률 차이가 작음(엣지 ${(edge*100).toFixed(1)}%)`);
+        if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익이 너무 작음(+${tpPct.toFixed(2)}%)`);
+
+        const isHold = holdReasons.length > 0;
+
+        // position object
+        const pos = {
+          id: Date.now(),
+          symbol: state.symbol,
+          tf: state.tf === "60" ? "1H" : state.tf === "240" ? "4H" : "1D",
+          type: isHold ? "HOLD" : type,
+          entry,
+          tp: isHold ? null : tp,
+          sl: isHold ? null : sl,
+          tpPct: isHold ? null : tpPct,
+          slPct: isHold ? null : slPct,
+          createdAt: Date.now(),
+          explain: {
+            winProb,
+            longP, shortP,
+            edge,
+            simAvg: sim.avgSim,
+            simCount: sim.count,
+            simLongPct: sim.longProb * 100,
+            simShortPct: sim.shortProb * 100,
+            rsi,
+            macdHist: macd.hist,
+            atr: atrUsed,
+            volTrend,
+            btcDom: dom,
+            holdReasons
+          }
+        };
+
+        showResultModal(pos);
+
+      }catch(e){
+        console.error(e);
+        alert("분석 중 오류가 발생했습니다. (API 제한/지연 가능)");
+      }finally{
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-microchip"></i> AI 분석 및 예측 실행';
+      }
+    }
+
+    // ---------- Modal ----------
+    function showResultModal(pos){
+      tempPos = pos;
+
+      const modal = document.getElementById("result-modal");
+      const icon = document.getElementById("modal-icon");
+      const title = document.getElementById("modal-title");
+      const subtitle = document.getElementById("modal-subtitle");
+      const grid = document.getElementById("modal-grid");
+      const content = document.getElementById("modal-content");
+      const confirmBtn = document.getElementById("modal-confirm");
+
+      const isLong = pos.type === "LONG";
+      const isShort = pos.type === "SHORT";
+      const isHold = pos.type === "HOLD";
+
+      icon.textContent = isHold ? "⏸️" : (isLong ? "📈" : "📉");
+      title.textContent = isHold ? "HOLD (보류)" : `${pos.type} SIGNAL`;
+      title.style.color = isHold ? "var(--text-sub)" : (isLong ? "var(--success)" : "var(--danger)");
+      subtitle.textContent = `${pos.symbol} | ${pos.tf}`;
+
+      if(isHold){
+        grid.innerHTML = `
+          <div class="mini-box"><small>판정</small><div>이번에는 예측을 안 함</div></div>
+          <div class="mini-box"><small>이유</small><div>확신 부족</div></div>
+          <div class="mini-box"><small>유사도 평균</small><div>${pos.explain.simAvg.toFixed(1)}%</div></div>
+          <div class="mini-box"><small>표본 수</small><div>${pos.explain.simCount}개</div></div>
+        `;
+        const reasons = pos.explain.holdReasons.map(r => `- ${r}`).join("<br/>");
+        content.innerHTML = `
+          <b>이번에는 “보류”가 더 안전해요.</b><br/>
+          ${reasons}<br/><br/>
+          <b>정리:</b> 애매할 때 예측을 억지로 내면 승률이 내려가요. 그래서 이번은 패스합니다.
+        `;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "보류는 등록하지 않음";
+      }else{
+        grid.innerHTML = `
+          <div class="mini-box"><small>진입가</small><div>$${pos.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
+          <div class="mini-box"><small>예상 성공확률</small><div>${(pos.explain.winProb*100).toFixed(1)}%</div></div>
+          <div class="mini-box"><small>목표가(TP)</small><div style="color:var(--success)">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${pos.tpPct.toFixed(2)}%)</div></div>
+          <div class="mini-box"><small>손절가(SL)</small><div style="color:var(--danger)">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${pos.slPct.toFixed(2)}%)</div></div>
+        `;
+
+        const ex = pos.explain;
+        const simMsg = `과거 “비슷한 패턴” ${ex.simCount}개 중 ${pos.type === "LONG" ? "상승" : "하락"}이 ${(pos.type === "LONG" ? ex.simLongPct : ex.simShortPct).toFixed(1)}%였어요. (평균 유사도 ${ex.simAvg.toFixed(1)}%)`;
+        const rsiMsg = `RSI ${ex.rsi.toFixed(1)} (${ex.rsi < 45 ? "낮은 편 → 반등 가능" : ex.rsi > 55 ? "높은 편 → 조정 가능" : "중간 → 방향 약함"})`;
+        const macdMsg = `MACD 힘 ${ex.macdHist.toFixed(4)} (${ex.macdHist >= 0 ? "상승 쪽" : "하락 쪽"})`;
+        const volMsg = `거래량 흐름 ${ex.volTrend >= 0 ? "증가(신뢰↑)" : "감소(신뢰↓)"}`;
+        const edgeMsg = `롱/숏 차이(엣지) ${(ex.edge*100).toFixed(1)}%`;
+
+        content.innerHTML = `
+          <b>왜 ${pos.type}냐면요:</b><br/>
+          1) <b>유사패턴 통계</b>가 가장 강했어요.<br/>- ${simMsg}<br/><br/>
+          2) <b>보조지표</b>로 확인했어요.<br/>
+          - ${rsiMsg}<br/>
+          - ${macdMsg}<br/>
+          - ${volMsg}<br/>
+          - ${edgeMsg}<br/><br/>
+          <b>정리:</b> 통계+지표가 같은 방향이라 ${pos.type}로 제안합니다.
+        `;
+
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "추적 시스템에 등록";
+      }
+
+      modal.style.display = "flex";
+    }
+
+    function closeModal(){
+      document.getElementById("result-modal").style.display = "none";
+      tempPos = null;
+    }
+
+    function confirmTrack(){
+      if(!tempPos) return;
+      if(tempPos.type === "HOLD") return; // 보류는 등록 X
+
+      state.activePositions.unshift({
+        ...tempPos,
+        status: "ACTIVE",
+        lastPrice: tempPos.entry,
+        pnl: 0
+      });
+      saveState();
+      closeModal();
+      renderTrackingList();
+      updateStatsUI();
+    }
+
+    // ---------- Tracking ----------
+    function trackPositions(symbol, currentPrice){
+      let changed = false;
+
+      for(let i = state.activePositions.length - 1; i >= 0; i--){
+        const pos = state.activePositions[i];
+        if(pos.symbol !== symbol) continue;
+
+        pos.lastPrice = currentPrice;
+
+        // pnl%
+        let pnl = 0;
+        if(pos.type === "LONG"){
+          pnl = ((currentPrice - pos.entry) / pos.entry) * 100;
+        }else{
+          pnl = ((pos.entry - currentPrice) / pos.entry) * 100;
+        }
+        pos.pnl = pnl;
+
+        // TP/SL check
+        let close = false;
+        let win = false;
+
+        if(pos.type === "LONG"){
+          if(currentPrice >= pos.tp){ close = true; win = true; }
+          else if(currentPrice <= pos.sl){ close = true; win = false; }
+        }else{
+          if(currentPrice <= pos.tp){ close = true; win = true; }
+          else if(currentPrice >= pos.sl){ close = true; win = false; }
+        }
+
+        if(close){
+          state.history.total++;
+          if(win) state.history.win++;
+          state.activePositions.splice(i, 1);
+          saveState();
+          changed = true;
+
+          alert(`[${pos.symbol}] 종료: ${win ? "성공(수익)" : "실패(손절)"} / 수익률 ${pnl.toFixed(2)}%`);
+        }else{
+          changed = true;
+        }
+      }
+
+      if(changed){
+        saveState();
+        renderTrackingList();
+        updateStatsUI();
+      }
+    }
+
+    function renderTrackingList(){
+      const container = document.getElementById("tracking-container");
+
+      if(!state.activePositions.length){
+        container.innerHTML = `
+          <div style="text-align:center; padding:50px; color:var(--text-sub); font-weight:950;">
+            <i class="fa-solid fa-radar" style="font-size:44px; opacity:.18;"></i><br><br>
+            현재 추적 중인 포지션이 없습니다.<br/>
+            왼쪽에서 코인을 고르고 “AI 분석”을 눌러보세요.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = state.activePositions.map(pos => {
+        const isUp = pos.pnl >= 0;
+        const color = isUp ? "var(--success)" : "var(--danger)";
+
+        // progress 정확 계산:
+        // LONG: (현재-진입)/(TP-진입)
+        // SHORT:(진입-현재)/(진입-TP)
+        const denom = Math.max(Math.abs(pos.tp - pos.entry), 1e-9);
+        const numer = (pos.type === "LONG")
+          ? (pos.lastPrice - pos.entry)
+          : (pos.entry - pos.lastPrice);
+
+        let progress = (numer / denom) * 100;
+        progress = clamp(progress, 0, 100);
+
+        const explainLine = pos.explain
+          ? `유사패턴 ${pos.explain.simCount}개 · 유사도 ${pos.explain.simAvg.toFixed(1)}% · RSI ${pos.explain.rsi.toFixed(1)} · 엣지 ${(pos.explain.edge*100).toFixed(1)}%`
+          : "근거 데이터 없음";
+
+        return `
+          <div class="position-card">
+            <div class="card-header">
+              <div class="card-symbol">
+                ${pos.symbol} <span style="font-size:12px; color:var(--text-sub); font-weight:950;">${pos.tf}</span>
+              </div>
+              <div class="card-type ${pos.type === "LONG" ? "type-LONG" : "type-SHORT"}">${pos.type}</div>
+            </div>
+
+            <div class="card-grid">
+              <div class="price-info">
+                <span class="price-label">현재가</span>
+                <span class="price-val">$${(pos.lastPrice||pos.entry).toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+              </div>
+
+              <div>
+                <div class="progress-text">
+                  <span style="color:${color}">수익률 ${pos.pnl.toFixed(2)}%</span>
+                  <span>목표까지 ${progress.toFixed(1)}%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" style="width:${progress}%; background:${color};"></div>
+                </div>
+              </div>
+
+              <div class="price-info">
+                <span class="price-label">TP / SL</span>
+                <span class="price-val" style="color:var(--success);">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+                <div style="height:4px;"></div>
+                <span class="price-val" style="color:var(--danger);">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})}</span>
+              </div>
+            </div>
+
+            <div class="card-foot">${explainLine}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function updateStatsUI(){
+      document.getElementById("total-stat").innerText = state.history.total;
+      const rate = state.history.total > 0 ? (state.history.win / state.history.total) * 100 : 0;
+      document.getElementById("win-stat").innerText = `${rate.toFixed(1)}%`;
+      document.getElementById("active-stat").innerText = state.activePositions.length;
+    }
+
+    // ---------- Similarity (z-normalized correlation) ----------
+    function calcSimilarityStats(closes, winLen, futureH, step, topK){
+      const n = closes.length;
+      const curStart = n - winLen;
+      const curSeg = closes.slice(curStart, n);
+      const curRet = returns(curSeg); // length winLen-1
+
+      const sims = [];
+      const lastStart = n - winLen - futureH - 2;
+      for(let s=0; s<=lastStart; s+=step){
+        const seg = closes.slice(s, s + winLen);
+        const ret = returns(seg);
+        const sim = zncc(curRet, ret); // -1..1
+        if(!Number.isFinite(sim)) continue;
+
+        const entry = closes[s + winLen - 1];
+        const future = closes[s + winLen - 1 + futureH];
+        const r = (future - entry) / Math.max(entry, 1e-12);
+
+        sims.push({ sim, r });
+      }
+
+      sims.sort((a,b)=> b.sim - a.sim);
+      const top = sims.slice(0, Math.min(topK, sims.length));
+
+      const count = top.length;
+      if(count === 0){
+        return { longProb: 0.5, shortProb: 0.5, avgSim: 0, count: 0 };
+      }
+
+      const up = top.filter(x => x.r >= 0).length;
+      const down = count - up;
+
+      // 라플라스 스무딩(극단 방지)
+      const longProb = (up + 1) / (count + 2);
+      const shortProb = (down + 1) / (count + 2);
+
+      // avgSim: zncc(-1..1) -> 0..100
+      const avgZ = top.reduce((a,b)=>a+b.sim,0) / count;
+      const avgSim = clamp((avgZ + 1) * 50, 0, 100);
+
+      return { longProb, shortProb, avgSim, count };
+    }
+
+    function returns(seg){
+      const out = [];
+      for(let i=1;i<seg.length;i++){
+        out.push((seg[i] - seg[i-1]) / Math.max(seg[i-1], 1e-12));
+      }
+      return out;
+    }
+
+    function zncc(a,b){
+      // z-normalized cross-correlation (same length)
+      const m = Math.min(a.length, b.length);
+      if(m < 5) return 0;
+
+      const a0 = a.slice(0,m);
+      const b0 = b.slice(0,m);
+
+      const ma = mean(a0), mb = mean(b0);
+      let sa = 0, sb = 0;
+      for(let i=0;i<m;i++){
+        sa += (a0[i]-ma)*(a0[i]-ma);
+        sb += (b0[i]-mb)*(b0[i]-mb);
+      }
+      sa = Math.sqrt(sa / m);
+      sb = Math.sqrt(sb / m);
+      if(sa === 0 || sb === 0) return 0;
+
+      let dot = 0;
+      for(let i=0;i<m;i++){
+        dot += ((a0[i]-ma)/sa) * ((b0[i]-mb)/sb);
+      }
+      return dot / m; // roughly -1..1
+    }
+
+    function mean(arr){
+      return arr.reduce((a,b)=>a+b,0) / Math.max(arr.length,1);
+    }
+
+    // ---------- Indicators ----------
+    function calcRSI(closes, period=14){
+      if(closes.length < period+1) return 50;
+      let gains = 0, losses = 0;
+      for(let i = closes.length - period - 1; i < closes.length - 1; i++){
+        const diff = closes[i+1] - closes[i];
+        if(diff >= 0) gains += diff;
+        else losses -= diff;
+      }
+      if(losses === 0) return 100;
+      const rs = gains / losses;
+      return 100 - (100 / (1 + rs));
+    }
+
+    function ema(values, period){
+      const k = 2 / (period + 1);
+      let prev = values[0];
+      const out = [prev];
+      for(let i=1;i<values.length;i++){
+        prev = values[i]*k + prev*(1-k);
+        out.push(prev);
+      }
+      return out;
+    }
+
+    function calcMACD(closes){
+      if(closes.length < 60) return { macd:0, signal:0, hist:0 };
+      const e12 = ema(closes, 12);
+      const e26 = ema(closes, 26);
+      const macdLine = e12.map((v,i)=> v - e26[i]);
+      const signalLine = ema(macdLine, 9);
+      const macd = macdLine[macdLine.length-1];
+      const signal = signalLine[signalLine.length-1];
+      const hist = macd - signal;
+      return { macd, signal, hist };
+    }
+
+    function calcATR(highs, lows, closes, period=14){
+      if(closes.length < period+1) return 0;
+      const trs = [];
+      for(let i=1;i<closes.length;i++){
+        const h = highs[i], l = lows[i], pc = closes[i-1];
+        const tr = Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc));
+        trs.push(tr);
+      }
+      const slice = trs.slice(-period);
+      const sum = slice.reduce((a,b)=>a+b,0);
+      return sum / slice.length;
+    }
+
+    function calcVolumeTrend(vols, lookback=20){
+      if(vols.length < lookback*2) return 0;
+      const a = avg(vols.slice(-lookback));
+      const b = avg(vols.slice(-(lookback*2), -lookback));
+      if(b === 0) return 0;
+      return (a - b) / b;
+    }
+
+    function avg(arr){
+      if(!arr.length) return 0;
+      return arr.reduce((a,b)=>a+b,0) / arr.length;
+    }
+
+    // ---------- Storage + Fetch ----------
+    function saveState(){
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+    }
+    function loadState(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      }catch(e){ return null; }
+    }
+
+    async function fetchJSON(url, opt={}){
+      const timeoutMs = opt.timeoutMs ?? 7000;
+      const retry = opt.retry ?? 0;
+
+      let lastErr = null;
+      for(let i=0;i<=retry;i++){
+        try{
+          const data = await fetchWithTimeout(url, timeoutMs);
+          return data;
+        }catch(e){
+          lastErr = e;
+          await sleep(350 * (i+1)); // simple backoff
+        }
+      }
+      throw lastErr;
+    }
+
+    async function fetchWithTimeout(url, timeoutMs){
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      try{
+        const r = await fetch(url, { cache:"no-store", signal: controller.signal });
+        if(!r.ok) throw new Error("HTTP " + r.status);
+        return await r.json();
+      }finally{
+        clearTimeout(id);
+      }
+    }
+
+    function sleep(ms){ return new Promise(res => setTimeout(res, ms)); }
+
+    // ---------- Utils ----------
+    function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+    function safeLog10(x){ return Math.log10(Math.max(x, 1)); }
+    function formatMoney(x){
+      if(x >= 1e12) return (x/1e12).toFixed(2)+"T";
+      if(x >= 1e9)  return (x/1e9).toFixed(2)+"B";
+      if(x >= 1e6)  return (x/1e6).toFixed(2)+"M";
+      if(x >= 1e3)  return (x/1e3).toFixed(2)+"K";
+      return String(Math.round(x));
+    }
+  </script>
 </body>
 </html>
