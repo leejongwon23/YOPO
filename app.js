@@ -7,6 +7,12 @@
  * ✅ PATCH (2026-01-21)
  * 1) 실시간 포지션 정밀추적: 전략별(1H/4H/1D) 남은시간(카운트다운) 표시
  * 2) 추적 카드 TP/SL에 +% / -% 표시
+ *
+ * ✅ PATCH (2026-01-22)
+ * A) 남은시간(카운트다운) 기준 수정: 1H=1시간, 4H=4시간, 1D=24시간
+ *    (기존 FUTURE_H(8) 때문에 1H가 8H로 계산되던 문제 해결)
+ * B) 카운트 시작 시점 수정: "추적 등록 버튼"이 아니라 "예측(분석) 순간"부터 시작
+ * C) 카운트다운 UI 갱신 주기: 15초 → 1초 (실시간 느낌)
  *************************************************************/
 
 // ---------- AUTH ----------
@@ -54,7 +60,7 @@ const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
 
 // ---------- Similarity / Analysis Params ----------
 const SIM_WINDOW = 40;
-const FUTURE_H = 8;     // ✅ “평가 기간”에 사용 (남은 카운트 계산용)
+const FUTURE_H = 8;     // ✅ 유사도/백테스트의 "미래 캔들" 평가 구간에 사용 (카운트다운 시간에는 사용하지 않음)
 const SIM_STEP = 2;
 const SIM_TOPK = 25;
 
@@ -141,10 +147,12 @@ function formatRemain(ms){
   const d = Math.floor(h / 24);
   const hh = h % 24;
   const mm = m % 60;
+  const ss = s % 60;
 
   if(d > 0) return `${d}일 ${hh}시간`;
   if(h > 0) return `${h}시간 ${mm}분`;
-  return `${m}분`;
+  if(m > 0) return `${m}분 ${ss}초`;
+  return `${ss}초`;
 }
 function ensureStrategyCountUI(){
   const header = document.querySelector(".tracking-header");
@@ -179,12 +187,13 @@ function updateStrategyCountUI(){
   `;
 }
 function getPosExpiryAt(pos){
-  // ✅ “전략별 카운트 남은 것” = FUTURE_H개 캔들(평가기간) 기준 타이머
-  //    예: 1H 전략이면 FUTURE_H(8) = 8시간이 하나의 평가 구간
+  // ✅ (FIX) 카운트다운은 "전략 자체의 기간" 기준
+  //    - 1H = 1시간
+  //    - 4H = 4시간
+  //    - 1D = 24시간
   const tfMs = tfToMs(pos.tfRaw);
-  const horizonMs = tfMs * FUTURE_H;
-  const start = pos.createdAt || Date.now();
-  return start + horizonMs;
+  const start = pos.createdAt || Date.now(); // createdAt은 "예측(분석) 순간"으로 고정
+  return start + tfMs;
 }
 
 // ---------- Boot ----------
@@ -216,11 +225,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
-  // ✅ 남은시간(카운트다운) UI 갱신용(가벼운 텍스트만 갱신)
+  // ✅ (FIX) 남은시간(카운트다운) UI 갱신용
+  // - 15초마다가 아니라 "1초"로 갱신해서 실시간처럼 보이게
   setInterval(() => {
     if(!state.activePositions?.length) return;
-    renderTrackingList(); // 단일파일이라 가장 안전하게 전체 렌더로 처리
-  }, 15000);
+    renderTrackingList();
+  }, 1000);
 });
 
 // ---------- UI ----------
@@ -600,7 +610,7 @@ function buildSignalFromCandles(symbol, tf, candles){
     sl: isHold ? null : sl,
     tpPct: isHold ? null : tpPct,
     slPct: isHold ? null : slPct,
-    createdAt: Date.now(),
+    createdAt: Date.now(), // ✅ 예측(분석) 순간
     explain: {
       winProb,
       longP, shortP,
@@ -702,9 +712,10 @@ function confirmTrack(){
     return;
   }
 
-  // ✅ PATCH: createdAt/expiryAt (전략별 남은 카운트 표시용)
-  const createdAt = Date.now();
-  const expiryAt = createdAt + (tfToMs(tempPos.tfRaw) * FUTURE_H);
+  // ✅ (FIX) createdAt은 "예측(분석) 순간"을 그대로 사용
+  // ✅ (FIX) expiryAt은 1H/4H/1D "그 자체의 시간" 기준
+  const createdAt = tempPos.createdAt || Date.now();
+  const expiryAt = createdAt + tfToMs(tempPos.tfRaw);
 
   state.activePositions.unshift({
     ...tempPos,
@@ -826,7 +837,7 @@ function renderTrackingList(){
     const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
     const slPct = Number.isFinite(pos.slPct) ? pos.slPct : null;
 
-    // ✅ PATCH: remaining countdown
+    // ✅ (FIX) remaining countdown
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
     const remainMs = expiryAt - Date.now();
     const remainText = formatRemain(remainMs);
