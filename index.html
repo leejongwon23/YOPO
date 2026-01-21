@@ -2,70 +2,142 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>YOPO - 실시간 코인 분석</title>
+    <title>YOPO - 프리미엄 코인 분석</title>
     <style>
-        /* [디자인] Blue & White 컨셉 설정 */
-        body { font-family: 'Pretendard', sans-serif; background-color: #f4f7fa; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        h1 { color: #0052ff; text-align: center; } /* 강조색: 신뢰를 주는 블루 */
+        /* 고급스러운 Blue & White 테마 */
+        body { font-family: 'Pretendard', sans-serif; background-color: #f8faff; color: #333; margin: 0; display: flex; height: 100vh; overflow: hidden; }
         
-        /* [디자인] 코인 리스트 카드 스타일 */
-        .coin-card {
-            background: white;
-            border-radius: 12px;
-            padding: 15px 20px;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05); /* 은은한 그림자 */
+        /* 왼쪽 리스트 영역 */
+        .sidebar { width: 350px; background: white; border-right: 1px solid #e1e8f0; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 25px; border-bottom: 2px solid #f0f4f8; }
+        .sidebar-header h2 { color: #0052ff; margin: 0; font-size: 22px; letter-spacing: -1px; }
+        
+        .coin-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .coin-item { 
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 15px; margin-bottom: 8px; border-radius: 10px; cursor: pointer;
+            transition: all 0.2s; border: 1px solid transparent;
         }
-        .coin-name { font-weight: bold; font-size: 1.1em; }
-        .coin-price { color: #0052ff; font-weight: bold; }
+        .coin-item:hover { background: #f0f5ff; border-color: #0052ff; }
+        .coin-item.active { background: #eef2ff; border-color: #0052ff; box-shadow: 0 4px 10px rgba(0,82,255,0.1); }
+        
+        .coin-info { display: flex; flex-direction: column; }
+        .coin-symbol { font-weight: bold; color: #1a1e27; }
+        .coin-name { font-size: 12px; color: #888; }
+        .coin-price { font-weight: bold; color: #0052ff; text-align: right; }
+
+        /* 오른쪽 차트 영역 */
+        .main-content { flex: 1; display: flex; flex-direction: column; background: white; }
+        #chart-container { flex: 1; width: 100%; height: 100%; }
+        
+        /* 스크롤바 디자인 */
+        .coin-list::-webkit-scrollbar { width: 6px; }
+        .coin-list::-webkit-scrollbar-thumb { background: #e1e8f0; border-radius: 10px; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>YOPO 실시간 마켓</h1>
-    <p style="text-align: center; color: #666;">현재 바이비트 거래대금 상위 코인 정보를 가져오는 중입니다...</p>
-    
-    <div id="coin-list"></div>
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>YOPO Analysis</h2>
+        <p style="font-size: 13px; color: #666; margin: 5px 0 0 0;">실시간 시장 데이터 연동 중</p>
+    </div>
+    <div class="coin-list" id="coin-list">
+        </div>
 </div>
 
+<div class="main-content">
+    <div id="chart-container">
+        </div>
+</div>
+
+<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+
 <script>
-    // [기능] 바이비트에서 데이터를 가져오는 함수
-    async function getPrices() {
+    // 이종원님이 요청하신 15종 고정 코인 리스트 (바이비트 기준)
+    const fixedCoins = [
+        { symbol: 'BTCUSDT', name: '비트코인' },
+        { symbol: 'ETHUSDT', name: '이더리움' },
+        { symbol: 'SOLUSDT', name: '솔라나' },
+        { symbol: 'XRPUSDT', name: '리플' },
+        { symbol: 'ADAUSDT', name: '에이다' },
+        { symbol: 'DOGEUSDT', name: '도지코인' },
+        { symbol: 'AVAXUSDT', name: '아발란체' },
+        { symbol: 'DOTUSDT', name: '폴카닷' },
+        { symbol: 'LINKUSDT', name: '체인링크' },
+        { symbol: 'POLUSDT', name: '폴리곤' },
+        { symbol: 'TRXUSDT', name: '트론' },
+        { symbol: 'BCHUSDT', name: '비트코인캐시' },
+        { symbol: 'NEARUSDT', name: '니어프로토콜' },
+        { symbol: 'LTCUSDT', name: '라이트코인' },
+        { symbol: 'APTUSDT', name: '앱토스' }
+    ];
+
+    let currentSymbol = 'BTCUSDT';
+
+    // 1. 차트 그리기 함수
+    function loadChart(symbol) {
+        new TradingView.widget({
+            "autosize": true,
+            "symbol": "BYBIT:" + symbol,
+            "interval": "60",
+            "timezone": "Asia/Seoul",
+            "theme": "light",
+            "style": "1",
+            "locale": "ko",
+            "toolbar_bg": "#f1f3f6",
+            "enable_publishing": false,
+            "hide_top_toolbar": false,
+            "save_image": false,
+            "container_id": "chart-container"
+        });
+    }
+
+    // 2. 코인 리스트 생성 및 실시간 가격 업데이트
+    async function updatePrices() {
         try {
-            // 바이비트 API에 "지금 가격 좀 알려줘"라고 요청하는 부분입니다.
             const response = await fetch('https://api.bybit.com/v5/market/tickers?category=linear');
             const data = await response.json();
-            const coins = data.result.list;
+            const tickers = data.result.list;
 
-            // 거래대금이 높은 순서대로 15개만 자르기
-            const top15 = coins.sort((a, b) => b.turnover24h - a.turnover24h).slice(0, 15);
-
-            // 화면에 뿌려주기
             const listContainer = document.getElementById('coin-list');
-            listContainer.innerHTML = ''; // 기존 내용을 지우고 새로고침
+            
+            fixedCoins.forEach(coin => {
+                const ticker = tickers.find(t => t.symbol === coin.symbol);
+                const price = ticker ? parseFloat(ticker.lastPrice).toLocaleString() : '연결중..';
+                
+                let item = document.getElementById(coin.symbol);
+                
+                if (!item) {
+                    item = document.createElement('div');
+                    item.id = coin.symbol;
+                    item.className = `coin-item ${coin.symbol === currentSymbol ? 'active' : ''}`;
+                    item.onclick = () => {
+                        document.querySelectorAll('.coin-item').forEach(el => el.classList.remove('active'));
+                        item.classList.add('active');
+                        currentSymbol = coin.symbol;
+                        loadChart(coin.symbol);
+                    };
+                    listContainer.appendChild(item);
+                }
 
-            top15.forEach(coin => {
-                const card = `
-                    <div class="coin-card">
-                        <span class="coin-name">${coin.symbol}</span>
-                        <span class="coin-price">$ ${parseFloat(coin.lastPrice).toLocaleString()}</span>
+                item.innerHTML = `
+                    <div class="coin-info">
+                        <span class="coin-symbol">${coin.symbol.replace('USDT', '')}</span>
+                        <span class="coin-name">${coin.name}</span>
                     </div>
+                    <span class="coin-price">$ ${price}</span>
                 `;
-                listContainer.insertAdjacentHTML('beforeend', card);
             });
-        } catch (error) {
-            console.error("데이터를 가져오는데 실패했습니다:", error);
+        } catch (e) {
+            console.error("가격 업데이트 오류:", e);
         }
     }
 
-    // 처음에 한 번 실행하고, 5초마다 새로고침합니다.
-    getPrices();
-    setInterval(getPrices, 5000);
+    // 초기 실행
+    loadChart(currentSymbol);
+    updatePrices();
+    setInterval(updatePrices, 3000); // 3초마다 가격 갱신
 </script>
 
 </body>
