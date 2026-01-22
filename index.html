@@ -175,7 +175,9 @@
   <!-- TradingView (전역 위젯) -->
   <script src="https://s3.tradingview.com/tv.js"></script>
 
-  <!-- ✅ JS -->
-  <script src="./app.js"></script>
+  <!-- ✅ JS (순서 절대 고정: core → api → features) -->
+  <script src="./app.core.js"></script>
+  <script src="./app.api.js"></script>
+  <script src="./app.features.js"></script>
 </body>
 </html>
