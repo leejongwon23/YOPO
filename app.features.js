@@ -116,6 +116,10 @@ function settleExpiredPositions(){
       }
     }
 
+    // ✅ (1번 업그레이드 핵심) 결과 확정 시: 실패패턴 DB에 누적 기록
+    // - app.core.js에 있는 recordTradeToPatternDB(pos, win)을 사용
+    try{ recordTradeToPatternDB(pos, win); }catch(e){}
+
     state.history.total++;
     if(win) state.history.win++;
 
@@ -601,6 +605,9 @@ function trackPositions(symbol, currentPrice){
     }
 
     if(close){
+      // ✅ (1번 업그레이드 핵심) 결과 확정 시: 실패패턴 DB에 누적 기록
+      try{ recordTradeToPatternDB(pos, win); }catch(e){}
+
       state.history.total++;
       if(win) state.history.win++;
 
