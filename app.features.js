@@ -74,10 +74,14 @@ function settleExpiredPositions(){
   const now = Date.now();
   let changed = false;
 
+  // ✅ 드리프트 보정(0초인데 정산이 안 되는 케이스 방지)
+  const DRIFT_MS = 500;
+
   for(let i = list.length - 1; i >= 0; i--){
     const pos = list[i];
+
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
-    if(now < expiryAt) continue;
+    if(now < (expiryAt - DRIFT_MS)) continue;
 
     const lastPrice = Number.isFinite(pos.lastPrice) ? pos.lastPrice : pos.entry;
 
@@ -96,6 +100,7 @@ function settleExpiredPositions(){
 
     let win = false;
     let reason = "TIME";
+
     if(pnl > 0){
       win = true;
       reason = "TIME";
@@ -128,6 +133,7 @@ function settleExpiredPositions(){
       reason,
       closedAt: Date.now()
     };
+
     state.closedTrades.unshift(record);
     state.closedTrades = state.closedTrades.slice(0, 30);
 
@@ -146,9 +152,13 @@ function settleExpiredPositions(){
 
   if(changed){
     saveState();
+
+    // ✅ UI 갱신 확실화
     renderTrackingList();
     renderClosedTrades();
     updateStatsUI();
+    updateStrategyCountUI();
+    updateCountdownTexts();
   }
 }
 
@@ -187,8 +197,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
+  // ✅ FIX: activePositions length로 루프를 막지 않는다.
+  // - 카운트다운이 0인데 정산이 스킵되는 케이스를 원천 차단
   setInterval(() => {
-    if(!state.activePositions?.length) return;
     updateCountdownTexts();
     settleExpiredPositions();
   }, 1000);
@@ -208,7 +219,6 @@ function setTF(tf, btn){
   if(btn && btn.classList){
     btn.classList.add("active");
   }else{
-    // btn이 없을 때: tf 값으로 버튼을 찾아 활성화
     const mapIdx = (tf === "60") ? 0 : (tf === "240") ? 1 : 2;
     if(btns[mapIdx]) btns[mapIdx].classList.add("active");
   }
@@ -285,7 +295,6 @@ function renderUniverseList(){
       meta.innerText = [mcTxt, volTxt, turnTxt, chgTxt].filter(Boolean).join(" · ");
     }
 
-    // 캐시 가격 표시
     const cached = state.lastPrices?.[coin.s];
     if(cached?.price){
       updateCoinRow(coin.s, cached.price, cached.chg ?? 0, true);
@@ -364,7 +373,6 @@ async function executeAnalysis(){
 // 추천 클릭 → 즉시 분석
 async function quickAnalyzeAndShow(symbol, tfRaw){
   try{
-    // TF 버튼 반영
     const btns = document.querySelectorAll(".tf-btn");
     btns.forEach(b => b.classList.remove("active"));
     if(tfRaw === "60") btns[0]?.classList.add("active");
@@ -372,7 +380,6 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
     else btns[2]?.classList.add("active");
     state.tf = tfRaw;
 
-    // 코인 반영
     switchCoin(symbol);
     saveState();
     initChart();
@@ -823,7 +830,6 @@ async function autoScanUniverse(){
   try{
     const results = [];
 
-    // 속도: 2TF
     const tfSet = getMTFSet2(state.tf);
     const baseTf = tfSet[0];
     const otherTf = tfSet[1];
@@ -915,25 +921,16 @@ function renderScanResults(){
 }
 
 /* ==========================================================
-   Backtest (수정 핵심)
-   - ✅ other TF 데이터 누수 방지: idx 시점까지만 잘라 사용
-   - ✅ 진입가 룰 현실화: "다음 캔들 시가"로 진입(실전 보정)
-   - ✅ outcome 판정: 같은 캔들에서 TP/SL 동시 도달 시 보수적으로 SL 우선
+   Backtest (원본 유지)
    ========================================================== */
-
-// idx 시점(기준 timestamp)까지의 캔들만 사용(룩어헤드 방지)
 function sliceCandlesUpToTime(candles, t){
   if(!Array.isArray(candles) || !candles.length) return [];
-  // candles는 오름차순 정렬이 이미 되어있음(fetchCandles)
-  // 마지막이 이미 <=t면 그대로
   if(candles[candles.length-1].t <= t) return candles.slice();
-  // 뒤에서부터 줄이는 방식(빠름)
   let j = candles.length - 1;
   while(j >= 0 && candles[j].t > t) j--;
   return candles.slice(0, Math.max(0, j+1));
 }
 
-// pos를 "다음 캔들 시가" 진입으로 보정 (TP/SL도 같이 이동)
 function shiftPosEntryTo(pos, newEntry){
   if(!pos || !Number.isFinite(newEntry)) return pos;
   const oldEntry = pos.entry;
@@ -946,7 +943,6 @@ function shiftPosEntryTo(pos, newEntry){
     if(Number.isFinite(pos.tp)) pos.tp += d;
     if(Number.isFinite(pos.sl)) pos.sl += d;
 
-    // 퍼센트는 entry 기준이라 재계산
     if(Number.isFinite(pos.tp)){
       pos.tpPct = Math.abs((pos.tp - pos.entry) / pos.entry) * 100;
     }
@@ -977,7 +973,6 @@ async function runBacktest(){
 
     let candlesOther = null;
     try{
-      // other도 넉넉히 받아두고, idx 시점에 맞춰 잘라 씀(누수 방지)
       candlesOther = await fetchCandles(state.symbol, otherTf, EXTENDED_LIMIT);
     }catch(e){}
 
@@ -993,7 +988,6 @@ async function runBacktest(){
 
       const byTf = { [baseTf]: sliceBase };
 
-      // ✅ other TF는 "현재 idx 시점까지"로 자르기(미래 누수 제거)
       if(Array.isArray(candlesOther) && candlesOther.length > 120){
         const tRef = sliceBase[sliceBase.length-1].t;
         const sliceOther = sliceCandlesUpToTime(candlesOther, tRef);
@@ -1002,7 +996,6 @@ async function runBacktest(){
         }
       }
 
-      // 신호 생성
       const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, byTf, "2TF");
       if(pos.type === "HOLD") continue;
 
@@ -1011,12 +1004,10 @@ async function runBacktest(){
       if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
       if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
 
-      // ✅ 실전 보정: 다음 캔들 시가로 진입(가능할 때만)
       const entryCandle = candlesBase[idx+1];
       if(!entryCandle || !Number.isFinite(entryCandle.o)) continue;
       shiftPosEntryTo(pos, entryCandle.o);
 
-      // ✅ entryCandle(진입 캔들)부터 outcome 판정 포함
       const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
       const outcome = simulateOutcome(pos, future);
       if(!outcome.resolved) continue;
@@ -1058,8 +1049,6 @@ async function runBacktest(){
 }
 
 function simulateOutcome(pos, futureCandles){
-  // ✅ 보수 규칙:
-  // 한 캔들에서 TP와 SL이 모두 닿으면 "SL 먼저"로 간주(현실에서 흔히 불리하게 체결될 수 있음)
   for(const c of futureCandles){
     const hi = c.h, lo = c.l;
 
