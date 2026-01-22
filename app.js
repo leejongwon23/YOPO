@@ -11,6 +11,11 @@
  * ✅ PATCH (2026-01-22)
  * A) 카운트다운: 전체 렌더링 반복 제거 → 부분 업데이트로 변경(성능/안정성)
  * B) TP/SL 종료 알림: alert() 제거 → 토스트 알림으로 변경(UX/실시간 끊김 방지)
+ *
+ * ✅ FIX (2026-01-22)
+ * 1) 남은시간 계산: FUTURE_H 곱 제거 → 전략 자체 시간(1H/4H/1D)로 고정
+ * 2) 기존 저장 포지션 expiryAt 자동 보정(마이그레이션)
+ * 3) 카운트다운 초 단위 표시(실시간 체감)
  *************************************************************/
 
 // ---------- AUTH ----------
@@ -58,7 +63,7 @@ const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
 
 // ---------- Similarity / Analysis Params ----------
 const SIM_WINDOW = 40;
-const FUTURE_H = 8;     // ✅ “평가 기간”에 사용 (남은 카운트 계산용)
+const FUTURE_H = 8;     // ✅ “평가 기간”에 사용 (유사패턴 미래 비교용)  ※ 카운트다운에는 사용 금지
 const SIM_STEP = 2;
 const SIM_TOPK = 25;
 
@@ -133,23 +138,31 @@ let tempPos = null;
    ========================================================== */
 function tfToMs(tfRaw){
   // Bybit interval: "60", "240", "D"
-  if(tfRaw === "60") return 60 * 60 * 1000;
-  if(tfRaw === "240") return 4 * 60 * 60 * 1000;
-  return 24 * 60 * 60 * 1000; // "D"
+  if(tfRaw === "60") return 60 * 60 * 1000;        // 1H
+  if(tfRaw === "240") return 4 * 60 * 60 * 1000;   // 4H
+  return 24 * 60 * 60 * 1000;                      // 1D
 }
+
+// ✅ FIX: 초 단위 표시까지 (실시간 카운트 체감)
 function formatRemain(ms){
   ms = Math.max(0, ms|0);
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  const d = Math.floor(h / 24);
-  const hh = h % 24;
-  const mm = m % 60;
 
-  if(d > 0) return `${d}일 ${hh}시간`;
-  if(h > 0) return `${h}시간 ${mm}분`;
-  return `${m}분`;
+  const totalSec = Math.floor(ms / 1000);
+  const ss = totalSec % 60;
+
+  const totalMin = Math.floor(totalSec / 60);
+  const mm = totalMin % 60;
+
+  const totalH = Math.floor(totalMin / 60);
+  const hh = totalH % 24;
+
+  const dd = Math.floor(totalH / 24);
+
+  if(dd > 0) return `${dd}일 ${hh}시간`;
+  if(totalH > 0) return `${totalH}시간 ${mm}분 ${ss}초`;
+  return `${totalMin}분 ${ss}초`;
 }
+
 function ensureStrategyCountUI(){
   const header = document.querySelector(".tracking-header");
   if(!header) return;
@@ -165,6 +178,7 @@ function ensureStrategyCountUI(){
   box.style.color = "var(--text-sub)";
   header.appendChild(box);
 }
+
 function updateStrategyCountUI(){
   const el = document.getElementById("tf-counts");
   if(!el) return;
@@ -182,12 +196,11 @@ function updateStrategyCountUI(){
     <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1D ${cD}</span>
   `;
 }
+
+// ✅ FIX: “전략 자체 시간”을 만료로 사용 (FUTURE_H 금지)
 function getPosExpiryAt(pos){
-  // ✅ “전략별 카운트 남은 것” = FUTURE_H개 캔들(평가기간) 기준 타이머
-  const tfMs = tfToMs(pos.tfRaw);
-  const horizonMs = tfMs * FUTURE_H;
   const start = pos.createdAt || Date.now();
-  return start + horizonMs;
+  return start + tfToMs(pos.tfRaw);
 }
 
 /* ==========================================================
@@ -254,29 +267,37 @@ function toast(msg, kind="info"){
 
 /* ==========================================================
    ✅ PATCH (2026-01-22): COUNTDOWN 부분 업데이트
-   - renderTrackingList()로 전체를 매번 다시 만들지 않고,
-     data-expiry / id 기반으로 남은시간 텍스트만 갱신
    ========================================================== */
+
+// ✅ FIX: 기존 저장된 포지션 expiryAt이 FUTURE_H 기반이면 자동 보정
 function ensureExpiryOnAllPositions(){
-  // 예전 저장 데이터(expiryAt 없음)도 자동 보정
   if(!state.activePositions?.length) return;
   let changed = false;
+
   for(const p of state.activePositions){
-    if(!p.createdAt) { p.createdAt = Date.now(); changed = true; }
-    if(!p.expiryAt){
-      p.expiryAt = getPosExpiryAt(p);
+    if(!p.createdAt){
+      p.createdAt = Date.now();
+      changed = true;
+    }
+
+    const expected = p.createdAt + tfToMs(p.tfRaw);
+
+    // 5분 이상 차이나면 잘못된 값으로 판단하고 교정
+    if(!p.expiryAt || Math.abs(p.expiryAt - expected) > (5 * 60 * 1000)){
+      p.expiryAt = expected;
       changed = true;
     }
   }
+
   if(changed) saveState();
 }
+
 function updateCountdownTexts(){
   const list = state.activePositions || [];
   if(!list.length) return;
 
   for(const pos of list){
-    const id = pos.id;
-    const el = document.getElementById(`remain-${id}`);
+    const el = document.getElementById(`remain-${pos.id}`);
     if(!el) continue;
 
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
@@ -299,6 +320,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ✅ PATCH
   ensureToastUI();
+
+  // ✅ FIX: 기존 activePositions expiryAt 보정
   ensureExpiryOnAllPositions();
 
   initChart();
@@ -318,9 +341,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
-  // ✅ PATCH: 남은시간(카운트다운) UI 갱신용
-  // - 기존: renderTrackingList() 전체 렌더
-  // - 변경: 남은시간 텍스트만 부분 업데이트
+  // ✅ PATCH: 남은시간 텍스트만 부분 업데이트
   setInterval(() => {
     if(!state.activePositions?.length) return;
     updateCountdownTexts();
@@ -592,7 +613,6 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
     saveState();
     initChart();
 
-    // 분석 실행(중복/쿨다운은 추천은 예외적으로 “사용자 선택”이니 경고만)
     if(hasActivePosition(symbol, tfRaw)){
       toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)", "warn");
       return;
@@ -806,9 +826,9 @@ function confirmTrack(){
     return;
   }
 
-  // ✅ PATCH: createdAt/expiryAt (전략별 남은 카운트 표시용)
+  // ✅ FIX: expiryAt = 전략 자체 시간(1H/4H/1D)
   const createdAt = Date.now();
-  const expiryAt = createdAt + (tfToMs(tempPos.tfRaw) * FUTURE_H);
+  const expiryAt = createdAt + tfToMs(tempPos.tfRaw);
 
   state.activePositions.unshift({
     ...tempPos,
@@ -890,17 +910,16 @@ function trackPositions(symbol, currentPrice){
 
   if(changed){
     saveState();
-    renderTrackingList();      // ✅ 가격/진행률은 계속 전체 렌더(시장변화 반영)
+    renderTrackingList();      // ✅ 가격/진행률은 전체 렌더
     renderClosedTrades();
     updateStatsUI();
-    // ✅ 카운트다운은 별도로 계속 부분 업데이트 중
+    // 카운트다운은 별도 interval로 부분 업데이트
   }
 }
 
 function renderTrackingList(){
   const container = document.getElementById("tracking-container");
 
-  // ✅ PATCH: header TF counts update
   ensureStrategyCountUI();
   updateStrategyCountUI();
 
@@ -915,7 +934,7 @@ function renderTrackingList(){
     return;
   }
 
-  // ✅ PATCH: expiry 보정
+  // ✅ FIX: expiry 보정
   ensureExpiryOnAllPositions();
 
   container.innerHTML = state.activePositions.map(pos => {
@@ -931,12 +950,9 @@ function renderTrackingList(){
     progress = clamp(progress, 0, 100);
 
     const ex = pos.explain || {};
-
-    // ✅ PATCH: TP/SL percent (표시)
     const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
     const slPct = Number.isFinite(pos.slPct) ? pos.slPct : null;
 
-    // ✅ PATCH: remaining countdown (초기 렌더 값)
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
     const remainMs = expiryAt - Date.now();
     const remainText = formatRemain(remainMs);
@@ -990,7 +1006,6 @@ function renderTrackingList(){
     `;
   }).join("");
 
-  // ✅ PATCH: 렌더 직후 1회 카운트다운 동기화
   updateCountdownTexts();
 }
 
@@ -1036,7 +1051,6 @@ function updateStatsUI(){
   document.getElementById("win-stat").innerText = `${rate.toFixed(1)}%`;
   document.getElementById("active-stat").innerText = state.activePositions.length;
 
-  // ✅ PATCH
   ensureStrategyCountUI();
   updateStrategyCountUI();
 }
@@ -1144,7 +1158,6 @@ async function runBacktest(){
       const pos = buildSignalFromCandles(state.symbol, state.tf, sliceCandles);
       if(pos.type === "HOLD") continue;
 
-      // ✅ 필터 강화(백테스트만)
       const ex = pos.explain || {};
       if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
       if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
