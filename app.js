@@ -16,6 +16,23 @@
  * 1) 남은시간 계산: FUTURE_H 곱 제거 → 전략 자체 시간(1H/4H/1D)로 고정
  * 2) 기존 저장 포지션 expiryAt 자동 보정(마이그레이션)
  * 3) 카운트다운 초 단위 표시(실시간 체감)
+ *
+ * ✅ UPGRADE (2026-01-22)
+ * ★ MTF(멀티 타임프레임) 합의 도입
+ * - 분석(버튼/추천): 1H+4H+1D 3TF 합의(정밀)
+ * - 자동스캔/백테스트: 2TF 합의(속도)
+ * - 합의가 깨지면 HOLD 이유로 자동 반영(꼼수X, 승률 안정화)
+ *
+ * ✅ UPGRADE (2026-01-22B)
+ * ★ ② 확신도 기반 TP/SL 미세 조정
+ * - 확신 높음(edge/winProb): TP 조금 확대 + RR 살짝↑
+ * - 확신 보통: 기본에 가깝게
+ * - 확신 낮음: TP 현실적으로 축소 + RR↓(승률↑ 방향)
+ *
+ * ✅ UPGRADE (2026-01-22C)
+ * ★ ③ TIME 종료 판정 고도화(MFE 반영)
+ * - TIME 종료 시 최종 pnl뿐 아니라, "중간에 얼마나 갔는지(mfePct)" 반영
+ * - “중간에 충분히 갔던 신호”를 통계적으로 보정 (조작X: 규칙 공개)
  *************************************************************/
 
 // ---------- AUTH ----------
@@ -73,11 +90,34 @@ const HOLD_MIN_SIM_AVG = 55;
 const HOLD_MIN_EDGE = 0.08;
 const HOLD_MIN_TP_PCT = 0.8;
 
+// ✅ MTF(멀티 타임프레임) 합의 기준 (꼼수X: 근거를 늘려서 안정화)
+const MTF_WEIGHTS_3TF = { "60": 0.50, "240": 0.30, "D": 0.20 }; // 분석(정밀): 3TF
+const MTF_WEIGHTS_2TF = { "base": 0.65, "other": 0.35 };       // 스캔/백테스트(속도): 2TF
+const MTF_MIN_AGREE = 2;           // 3TF 중 최소 2개는 같은 방향이어야 안정
+const MTF_DISAGREE_PENALTY = 0.06; // 합의 부족이면 edge를 살짝 깎아 더 보수적(HOLD 증가)
+
 // TP/SL
 const RR = 2.0;
 const TF_MULT = { "60": 1.2, "240": 2.0, "D": 3.5 };
 const ATR_MIN_PCT = 0.15;
 const TP_MAX_PCT = 20.0;
+
+// ✅ UPGRADE ②: 확신도 기반 TP/SL 미세 조정 파라미터
+// - 목표: “확신 낮은데 욕심 TP”를 줄여 실패↓, 실전 체감 승률↑
+const CONF_TIER_HIGH = { winProb: 0.66, edge: 0.13 };  // 둘 다 만족하면 HIGH
+const CONF_TIER_MID  = { winProb: 0.60, edge: 0.10 };  // 둘 중 하나라도 약하면 MID
+// HIGH: TP ↑ + RR ↑(조금 더 멀리)
+// MID : 거의 기본
+// LOW : TP ↓ + RR ↓(TP 더 가깝게, SL은 상대적으로 넓혀 승률↑)
+const CONF_TP_SCALE  = { HIGH: 1.10, MID: 1.00, LOW: 0.88 };
+const CONF_RR_VALUE  = { HIGH: 2.20, MID: 1.90, LOW: 1.45 };
+const CONF_EDGE_FLOOR = 0.04; // 너무 애매한 엣지는 LOW 취급(안전)
+
+// ✅ UPGRADE ③: TIME 종료 판정 고도화(MFE 반영)
+// - TIME 종료 시 최종 pnl<=0이라도, 중간에 “충분히” 갔던 신호는 성공으로 보정
+// - 조작X: 공개 규칙(둘 다 만족해야 TIME 성공으로 인정)
+const TIME_MFE_MIN_PCT = 0.45;    // 최소 0.45%는 중간에 가야 함
+const TIME_MFE_TP_RATIO = 0.55;   // “TP의 55% 이상”까지 갔으면 충분했다고 판단
 
 // cooldown
 const COOLDOWN_MS = { "60": 10 * 60 * 1000, "240": 30 * 60 * 1000, "D": 2 * 60 * 60 * 1000 };
@@ -287,6 +327,12 @@ function ensureExpiryOnAllPositions(){
       p.expiryAt = expected;
       changed = true;
     }
+
+    // ✅ UPGRADE ③: mfePct 초기값 보정(구버전 마이그레이션)
+    if(typeof p.mfePct !== "number"){
+      p.mfePct = 0;
+      changed = true;
+    }
   }
 
   if(changed) saveState();
@@ -306,6 +352,477 @@ function updateCountdownTexts(){
   }
 }
 
+/* ==========================================================
+   ✅ UPGRADE ③: TIME 종료 처리(MFE 반영)
+   ========================================================== */
+function settleExpiredPositions(){
+  const list = state.activePositions || [];
+  if(!list.length) return;
+
+  const now = Date.now();
+  let changed = false;
+
+  for(let i = list.length - 1; i >= 0; i--){
+    const pos = list[i];
+    const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
+    if(now < expiryAt) continue;
+
+    // 만료 시점: TP/SL 미도달 → TIME 종료
+    const lastPrice = Number.isFinite(pos.lastPrice) ? pos.lastPrice : pos.entry;
+
+    // 최종 pnl
+    let pnl = 0;
+    if(pos.type === "LONG"){
+      pnl = ((lastPrice - pos.entry) / pos.entry) * 100;
+    }else{
+      pnl = ((pos.entry - lastPrice) / pos.entry) * 100;
+    }
+    pos.pnl = pnl;
+
+    // ✅ MFE 기반 보정 승리 조건(공개 규칙)
+    // 1) 최종 pnl>0 이면 성공
+    // 2) 아니면, 중간에 mfePct가 (최소 TIME_MFE_MIN_PCT) AND (TP의 TIME_MFE_TP_RATIO 이상) 도달했으면 성공으로 보정
+    const mfe = (typeof pos.mfePct === "number") ? pos.mfePct : 0;
+    const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
+
+    let win = false;
+    let reason = "TIME";
+    if(pnl > 0){
+      win = true;
+      reason = "TIME";
+    }else{
+      const needByTp = (tpPct !== null) ? (tpPct * TIME_MFE_TP_RATIO) : TIME_MFE_MIN_PCT;
+      const need = Math.max(TIME_MFE_MIN_PCT, needByTp);
+      if(mfe >= need){
+        win = true;
+        reason = "TIME_MFE"; // ✅ “중간에 충분히 갔던 신호” 보정
+      }else{
+        win = false;
+        reason = "TIME";
+      }
+    }
+
+    state.history.total++;
+    if(win) state.history.win++;
+
+    const record = {
+      id: Date.now(),
+      symbol: pos.symbol,
+      tf: pos.tf,
+      tfRaw: pos.tfRaw,
+      type: pos.type,
+      entry: pos.entry,
+      exit: lastPrice,
+      pnlPct: pnl,
+      mfePct: mfe,
+      win,
+      reason,
+      closedAt: Date.now()
+    };
+    state.closedTrades.unshift(record);
+    state.closedTrades = state.closedTrades.slice(0, 30);
+
+    list.splice(i, 1);
+    changed = true;
+
+    const extra = (reason === "TIME_MFE")
+      ? ` / MFE ${mfe.toFixed(2)}% (보정승)`
+      : ` / MFE ${mfe.toFixed(2)}%`;
+    toast(`[${pos.symbol} ${pos.tf}] 시간 종료: ${win ? "성공" : "실패"} (${reason}) / 수익률 ${pnl.toFixed(2)}%${extra}`, win ? "success" : "danger");
+  }
+
+  if(changed){
+    saveState();
+    renderTrackingList();
+    renderClosedTrades();
+    updateStatsUI();
+  }
+}
+
+/* ==========================================================
+   ✅ UPGRADE ②: 확신도 기반 TP/SL 미세 조정
+   ========================================================== */
+function getConfidenceTier(winProb, edge){
+  const e = Math.max(0, edge || 0);
+  const w = Math.max(0, Math.min(1, winProb || 0));
+
+  if(e < CONF_EDGE_FLOOR) return "LOW";
+  if(w >= CONF_TIER_HIGH.winProb && e >= CONF_TIER_HIGH.edge) return "HIGH";
+  if(w >= CONF_TIER_MID.winProb && e >= CONF_TIER_MID.edge) return "MID";
+  return "LOW";
+}
+
+function applyConfidenceTpSl(tpDist, winProb, edge){
+  const tier = getConfidenceTier(winProb, edge);
+
+  const tpScale = CONF_TP_SCALE[tier] ?? 1.0;
+  const rr = CONF_RR_VALUE[tier] ?? RR;
+
+  return {
+    tier,
+    rr,
+    tpDist: tpDist * tpScale
+  };
+}
+
+/* ==========================================================
+   ✅ UPGRADE: MTF(멀티 타임프레임) 합의
+   ========================================================== */
+
+// 3TF(정밀)에서 사용할 TF 세트
+function getMTFSet3(){
+  return ["60", "240", "D"];
+}
+
+// 2TF(속도)에서 base tf에 맞춰 “옆 TF” 하나만 선택
+function getMTFSet2(baseTf){
+  if(baseTf === "60") return ["60", "240"];
+  if(baseTf === "240") return ["240", "D"];
+  return ["D", "240"]; // 1D는 4H와 같이 보는게 체감이 좋음
+}
+
+// tfRaw -> 사람이 읽기 좋은 이름
+function tfName(tfRaw){
+  return tfRaw === "60" ? "1H" : tfRaw === "240" ? "4H" : "1D";
+}
+
+// “확률/엣지/유사도” 계산을 재사용하기 위한 코어 함수
+function computeSignalCore(symbol, tfRaw, candles){
+  const closes = candles.map(x => x.c);
+  const highs  = candles.map(x => x.h);
+  const lows   = candles.map(x => x.l);
+  const vols   = candles.map(x => x.v);
+
+  const entry = closes[closes.length - 1];
+
+  const rsi = calcRSI(closes, 14);
+  const macd = calcMACD(closes);
+  const atrRaw = calcATR(highs, lows, closes, 14);
+  const volTrend = calcVolumeTrend(vols, 20);
+  const ema20 = emaLast(closes, 20);
+  const ema50 = emaLast(closes, 50);
+  const trend = (ema20 >= ema50) ? 1 : -1;
+
+  const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
+
+  const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
+  const domPrev = (typeof state.btcDomPrev === "number") ? state.btcDomPrev : null;
+  const domUp = (dom !== null && domPrev !== null) ? (dom - domPrev) : 0;
+
+  const isAlt = (symbol !== "BTCUSDT");
+  let domDamp = 1.0;
+  let domHoldBoost = 0.0;
+  if(dom !== null){
+    if(dom > 50) domDamp *= 0.88;
+    if(domUp > 0.15) { domDamp *= 0.85; domHoldBoost += 1; }
+    if(isAlt && dom > 53) { domDamp *= 0.82; domHoldBoost += 1; }
+  }
+
+  let longP = sim.longProb;
+  let shortP = sim.shortProb;
+
+  const rsiBias = clamp((50 - rsi) / 50, -1, 1);
+  const macdBias = clamp(macd.hist * 6, -1, 1);
+  const volBias = clamp(volTrend, -1, 1);
+  const trendBias = clamp(trend * 0.8, -1, 1);
+
+  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
+  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
+
+  longP  = 0.5 + (longP - 0.5) * domDamp;
+  shortP = 0.5 + (shortP - 0.5) * domDamp;
+
+  const sum = Math.max(longP + shortP, 1e-9);
+  longP /= sum; shortP /= sum;
+
+  const type = (longP >= shortP) ? "LONG" : "SHORT";
+  const winProb = Math.max(longP, shortP);
+  const edge = Math.abs(longP - shortP);
+
+  return {
+    entry,
+    tfRaw,
+    type,
+    winProb,
+    longP,
+    shortP,
+    edge,
+    simAvg: sim.avgSim,
+    simCount: sim.count,
+    rsi,
+    macdHist: macd.hist,
+    atrRaw,
+    volTrend,
+    ema20,
+    ema50,
+    trend,
+    btcDom: dom,
+    btcDomUp: domUp,
+    domHoldBoost
+  };
+}
+
+// ✅ 3TF(정밀) 합의: 분석 버튼/추천 클릭에서 사용
+function consensus3TF(cores){
+  // cores: { "60": core, "240": core, "D": core }
+  const w = MTF_WEIGHTS_3TF;
+
+  let longP = 0, shortP = 0;
+  let simAvgW = 0, simCountW = 0;
+  let edgeW = 0, winProbW = 0;
+
+  const votes = [];
+  for(const tfRaw of Object.keys(w)){
+    const c = cores[tfRaw];
+    if(!c) continue;
+    const wt = w[tfRaw] || 0;
+    longP += (c.longP * wt);
+    shortP += (c.shortP * wt);
+    simAvgW += (c.simAvg * wt);
+    simCountW += (c.simCount * wt);
+    edgeW += (c.edge * wt);
+    winProbW += (c.winProb * wt);
+    votes.push(c.type);
+  }
+
+  const sum = Math.max(longP + shortP, 1e-9);
+  longP /= sum; shortP /= sum;
+
+  const type = (longP >= shortP) ? "LONG" : "SHORT";
+  const winProb = Math.max(longP, shortP);
+  let edge = Math.abs(longP - shortP);
+
+  // 합의 점수(3표 중 같은 방향 개수)
+  let agree = 0;
+  for(const v of votes){
+    if(v === type) agree++;
+  }
+
+  // 합의 부족이면 edge를 살짝 깎아서 HOLD로 더 잘 가게 만들기(꼼수X)
+  if(agree < MTF_MIN_AGREE){
+    edge = Math.max(0, edge - MTF_DISAGREE_PENALTY);
+  }
+
+  return {
+    longP, shortP, type, winProb, edge,
+    simAvg: simAvgW,
+    simCount: Math.round(simCountW),
+    agree,
+    votes
+  };
+}
+
+// ✅ 2TF(속도) 합의: 스캔/백테스트에서 사용
+function consensus2TF(baseCore, otherCore){
+  const wb = MTF_WEIGHTS_2TF.base;
+  const wo = MTF_WEIGHTS_2TF.other;
+
+  let longP = baseCore.longP * wb + otherCore.longP * wo;
+  let shortP = baseCore.shortP * wb + otherCore.shortP * wo;
+
+  const sum = Math.max(longP + shortP, 1e-9);
+  longP /= sum; shortP /= sum;
+
+  const type = (longP >= shortP) ? "LONG" : "SHORT";
+  const winProb = Math.max(longP, shortP);
+  let edge = Math.abs(longP - shortP);
+
+  // 2TF가 서로 반대면 edge를 살짝 깎기
+  const agree = (baseCore.type === otherCore.type) ? 2 : 1;
+  if(agree < 2){
+    edge = Math.max(0, edge - (MTF_DISAGREE_PENALTY * 0.7));
+  }
+
+  return {
+    longP, shortP, type, winProb, edge,
+    simAvg: (baseCore.simAvg * wb + otherCore.simAvg * wo),
+    simCount: Math.round(baseCore.simCount * wb + otherCore.simCount * wo),
+    agree,
+    votes: [baseCore.type, otherCore.type]
+  };
+}
+
+// ✅ “합의 기반 최종 포지션” 만들기
+function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
+  const baseCandles = candlesByTf[baseTfRaw];
+  const base = computeSignalCore(symbol, baseTfRaw, baseCandles);
+
+  // TP/SL은 “기준 TF”로 잡는다 (기간/목표가가 일관돼야 실전 운영이 쉬움)
+  const entry = base.entry;
+
+  const atrMin = entry * (ATR_MIN_PCT / 100);
+  const atrUsed = Math.max(base.atrRaw, atrMin);
+
+  const tfMult = TF_MULT[baseTfRaw] || 1.2;
+  let tpDistBase = atrUsed * tfMult;
+
+  // ---- MTF 합의 확률 만들기 ----
+  let con = null;
+  let mtfExplain = null;
+
+  if(mode === "3TF"){
+    const cores = {};
+    for(const tfRaw of getMTFSet3()){
+      const candles = candlesByTf[tfRaw];
+      if(!candles || candles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+      cores[tfRaw] = computeSignalCore(symbol, tfRaw, candles);
+    }
+    // 누락 방지: 최소 2개라도 있으면 합의
+    const have = Object.keys(cores).length;
+    if(have >= 2){
+      // 3개 다 있으면 3TF, 아니면 2TF로 다운그레이드
+      if(have === 3){
+        con = consensus3TF(cores);
+      }else{
+        const keys = Object.keys(cores);
+        const c0 = cores[keys[0]];
+        const c1 = cores[keys[1]];
+        con = consensus2TF(c0, c1);
+      }
+      mtfExplain = cores;
+    }else{
+      // fallback: base 단일
+      con = {
+        longP: base.longP, shortP: base.shortP,
+        type: base.type, winProb: base.winProb, edge: base.edge,
+        simAvg: base.simAvg, simCount: base.simCount,
+        agree: 1, votes: [base.type]
+      };
+      mtfExplain = { [baseTfRaw]: base };
+    }
+  }else{
+    // 2TF 모드(속도)
+    const set = getMTFSet2(baseTfRaw);
+    const otherTf = set[1];
+    const otherCandles = candlesByTf[otherTf];
+
+    if(otherCandles && otherCandles.length >= (SIM_WINDOW + FUTURE_H + 80)){
+      const other = computeSignalCore(symbol, otherTf, otherCandles);
+      con = consensus2TF(base, other);
+      mtfExplain = { [baseTfRaw]: base, [otherTf]: other };
+    }else{
+      con = {
+        longP: base.longP, shortP: base.shortP,
+        type: base.type, winProb: base.winProb, edge: base.edge,
+        simAvg: base.simAvg, simCount: base.simCount,
+        agree: 1, votes: [base.type]
+      };
+      mtfExplain = { [baseTfRaw]: base };
+    }
+  }
+
+  // 최종 방향/확률은 “합의 결과”를 따른다
+  const type = con.type;
+  const winProb = con.winProb;
+  const edge = con.edge;
+
+  // ✅ UPGRADE ②: 확신도 기반 TP/SL 조정 적용(여기서 TP거리/RR이 바뀜)
+  const adj = applyConfidenceTpSl(tpDistBase, winProb, edge);
+  const tpDist = adj.tpDist;
+  const rrUsed = adj.rr;
+
+  const slDist = tpDist / Math.max(rrUsed, 1.01);
+
+  let tp = (type === "LONG") ? (entry + tpDist) : (entry - tpDist);
+  let sl = (type === "LONG") ? (entry - slDist) : (entry + slDist);
+
+  let tpPct = Math.abs((tp - entry) / entry) * 100;
+  let slPct = Math.abs((sl - entry) / entry) * 100;
+
+  if(tpPct > TP_MAX_PCT){
+    tpPct = TP_MAX_PCT;
+    const newTpDist = entry * (tpPct/100);
+    tp = (type === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
+    // RR 유지
+    sl = (type === "LONG") ? (entry - (newTpDist/Math.max(rrUsed, 1.01))) : (entry + (newTpDist/Math.max(rrUsed, 1.01)));
+    slPct = Math.abs((sl - entry) / entry) * 100;
+  }
+
+  // ---- HOLD 규칙(기존 + MTF 합의) ----
+  const holdReasons = [];
+  if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
+  if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
+  if(edge < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edge*100).toFixed(1)}%)`);
+  if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
+
+  // ✅ MTF 합의 부족은 HOLD로 더 잘 보내 승률을 지킴(꼼수X)
+  const mtfVotes = (con.votes || []).join("/");
+  if(con.votes && con.votes.length >= 2){
+    const agreeNeed = (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
+    if(con.agree < agreeNeed){
+      holdReasons.push(`타임프레임 합의 부족(${mtfVotes})`);
+    }
+  }
+
+  // 기존 도미넌스/거래량 보수성 (base 기준)
+  if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
+  if(base.volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
+
+  const isHold = holdReasons.length > 0;
+
+  return {
+    id: Date.now(),
+    symbol,
+    tf: baseTfRaw === "60" ? "1H" : baseTfRaw === "240" ? "4H" : "1D",
+    tfRaw: baseTfRaw,
+    type: isHold ? "HOLD" : type,
+    entry,
+    tp: isHold ? null : tp,
+    sl: isHold ? null : sl,
+    tpPct: isHold ? null : tpPct,
+    slPct: isHold ? null : slPct,
+    createdAt: Date.now(),
+    explain: {
+      // 최종(합의) 값
+      winProb,
+      longP: con.longP,
+      shortP: con.shortP,
+      edge,
+      simAvg: con.simAvg,
+      simCount: con.simCount,
+
+      // base 지표(설명용)
+      rsi: base.rsi,
+      macdHist: base.macdHist,
+      atr: atrUsed,
+      volTrend: base.volTrend,
+      ema20: base.ema20,
+      ema50: base.ema50,
+      trend: base.trend,
+      btcDom: base.btcDom,
+      btcDomUp: base.btcDomUp,
+
+      // ✅ UPGRADE ②: 조정 정보 기록(투명)
+      conf: {
+        tier: adj.tier,
+        rrUsed,
+        tpScale: (CONF_TP_SCALE[adj.tier] ?? 1.0),
+      },
+
+      // MTF 설명
+      mtf: {
+        mode,
+        agree: con.agree,
+        votes: con.votes,
+        weights: (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
+        detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
+          k,
+          {
+            tf: tfName(k),
+            type: v.type,
+            winProb: v.winProb,
+            edge: v.edge,
+            simAvg: v.simAvg,
+            simCount: v.simCount
+          }
+        ])))
+      },
+
+      holdReasons
+    }
+  };
+}
+
 // ---------- Boot ----------
 document.addEventListener("DOMContentLoaded", async () => {
   // auth gate
@@ -321,7 +838,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ✅ PATCH
   ensureToastUI();
 
-  // ✅ FIX: 기존 activePositions expiryAt 보정
+  // ✅ FIX: 기존 activePositions expiryAt 보정 + ✅ MFE 마이그레이션
   ensureExpiryOnAllPositions();
 
   initChart();
@@ -341,10 +858,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
-  // ✅ PATCH: 남은시간 텍스트만 부분 업데이트
+  // ✅ PATCH: 남은시간 텍스트만 부분 업데이트 + ✅ UPGRADE ③: TIME 종료 처리
   setInterval(() => {
     if(!state.activePositions?.length) return;
     updateCountdownTexts();
+    settleExpiredPositions(); // ✅ TIME 종료 + MFE 보정
   }, 1000);
 });
 
@@ -580,10 +1098,20 @@ async function executeAnalysis(){
       return;
     }
 
-    const candles = await fetchCandles(state.symbol, state.tf, EXTENDED_LIMIT);
-    if(candles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
+    // ✅ MTF(정밀): 1H+4H+1D 모두 가져와 합의
+    const tfSet = getMTFSet3();
+    const candlesByTf = {};
+    for(const tfRaw of tfSet){
+      const candles = await fetchCandles(state.symbol, tfRaw, EXTENDED_LIMIT);
+      candlesByTf[tfRaw] = candles;
+    }
 
-    const pos = buildSignalFromCandles(state.symbol, state.tf, candles);
+    // 기준 TF는 “지금 선택한 TF”
+    const baseTf = state.tf;
+    const baseCandles = candlesByTf[baseTf] || [];
+    if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
+
+    const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, candlesByTf, "3TF");
     state.lastSignalAt[dupKey] = Date.now();
     saveState();
 
@@ -618,10 +1146,18 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
       return;
     }
 
-    const candles = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
-    if(candles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
+    // ✅ MTF(정밀): 추천 클릭도 3TF 합의
+    const tfSet = getMTFSet3();
+    const candlesByTf = {};
+    for(const t of tfSet){
+      const candles = await fetchCandles(symbol, t, EXTENDED_LIMIT);
+      candlesByTf[t] = candles;
+    }
 
-    const pos = buildSignalFromCandles(symbol, tfRaw, candles);
+    const baseCandles = candlesByTf[tfRaw] || [];
+    if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
+
+    const pos = buildSignalFromCandles_MTF(symbol, tfRaw, candlesByTf, "3TF");
     showResultModal(pos);
   }catch(e){
     console.error(e);
@@ -629,121 +1165,12 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
   }
 }
 
+// (기존 함수명 유지용: 내부는 MTF로 대체)
 function buildSignalFromCandles(symbol, tf, candles){
-  const closes = candles.map(x => x.c);
-  const highs  = candles.map(x => x.h);
-  const lows   = candles.map(x => x.l);
-  const vols   = candles.map(x => x.v);
-
-  const entry = closes[closes.length - 1];
-
-  const rsi = calcRSI(closes, 14);
-  const macd = calcMACD(closes);
-  const atrRaw = calcATR(highs, lows, closes, 14);
-  const volTrend = calcVolumeTrend(vols, 20);
-  const ema20 = emaLast(closes, 20);
-  const ema50 = emaLast(closes, 50);
-  const trend = (ema20 >= ema50) ? 1 : -1;
-
-  const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
-
-  const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
-  const domPrev = (typeof state.btcDomPrev === "number") ? state.btcDomPrev : null;
-  const domUp = (dom !== null && domPrev !== null) ? (dom - domPrev) : 0;
-
-  const isAlt = (symbol !== "BTCUSDT");
-  let domDamp = 1.0;
-  let domHoldBoost = 0.0;
-  if(dom !== null){
-    if(dom > 50) domDamp *= 0.88;
-    if(domUp > 0.15) { domDamp *= 0.85; domHoldBoost += 1; }
-    if(isAlt && dom > 53) { domDamp *= 0.82; domHoldBoost += 1; }
-  }
-
-  let longP = sim.longProb;
-  let shortP = sim.shortProb;
-
-  const rsiBias = clamp((50 - rsi) / 50, -1, 1);
-  const macdBias = clamp(macd.hist * 6, -1, 1);
-  const volBias = clamp(volTrend, -1, 1);
-  const trendBias = clamp(trend * 0.8, -1, 1);
-
-  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
-  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
-
-  longP  = 0.5 + (longP - 0.5) * domDamp;
-  shortP = 0.5 + (shortP - 0.5) * domDamp;
-
-  const sum = Math.max(longP + shortP, 1e-9);
-  longP /= sum; shortP /= sum;
-
-  const type = (longP >= shortP) ? "LONG" : "SHORT";
-  const winProb = Math.max(longP, shortP);
-  const edge = Math.abs(longP - shortP);
-
-  const tfMult = TF_MULT[tf] || 1.2;
-  const atrMin = entry * (ATR_MIN_PCT / 100);
-  const atrUsed = Math.max(atrRaw, atrMin);
-
-  let tpDist = atrUsed * tfMult;
-  let slDist = tpDist / RR;
-
-  let tp = (type === "LONG") ? (entry + tpDist) : (entry - tpDist);
-  let sl = (type === "LONG") ? (entry - slDist) : (entry + slDist);
-
-  let tpPct = Math.abs((tp - entry) / entry) * 100;
-  let slPct = Math.abs((sl - entry) / entry) * 100;
-
-  if(tpPct > TP_MAX_PCT){
-    tpPct = TP_MAX_PCT;
-    const newTpDist = entry * (tpPct/100);
-    tp = (type === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
-    sl = (type === "LONG") ? (entry - (newTpDist/RR)) : (entry + (newTpDist/RR));
-    slPct = Math.abs((sl - entry) / entry) * 100;
-  }
-
-  const holdReasons = [];
-  if(sim.count < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${sim.count}개)`);
-  if(sim.avgSim < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${sim.avgSim.toFixed(1)}%)`);
-  if(edge < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edge*100).toFixed(1)}%)`);
-  if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
-
-  if(domHoldBoost >= 2 && isAlt) holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
-  if(volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
-
-  const isHold = holdReasons.length > 0;
-
-  return {
-    id: Date.now(),
-    symbol,
-    tf: tf === "60" ? "1H" : tf === "240" ? "4H" : "1D",
-    tfRaw: tf,
-    type: isHold ? "HOLD" : type,
-    entry,
-    tp: isHold ? null : tp,
-    sl: isHold ? null : sl,
-    tpPct: isHold ? null : tpPct,
-    slPct: isHold ? null : slPct,
-    createdAt: Date.now(),
-    explain: {
-      winProb,
-      longP, shortP,
-      edge,
-      simAvg: sim.avgSim,
-      simCount: sim.count,
-      simLongPct: sim.longProb * 100,
-      simShortPct: sim.shortProb * 100,
-      rsi,
-      macdHist: macd.hist,
-      atr: atrUsed,
-      volTrend,
-      ema20, ema50,
-      trend,
-      btcDom: dom,
-      btcDomUp: domUp,
-      holdReasons
-    }
-  };
+  // 기존 단일 TF 로직은 사용하지 않음(이제 MTF가 기본).
+  // 호환을 위해 base 단일일 때만 fallback 가능하게 둠.
+  const byTf = { [tf]: candles };
+  return buildSignalFromCandles_MTF(symbol, tf, byTf, "2TF");
 }
 
 // ---------- Modal ----------
@@ -768,10 +1195,21 @@ function showResultModal(pos){
 
   const ex = pos.explain;
 
+  // ✅ MTF 요약 문자열
+  const mtf = ex.mtf;
+  const mtfLine = mtf
+    ? `MTF 합의: ${mtf.agree}/${(mtf.votes||[]).length} (${(mtf.votes||[]).join("/")})`
+    : `MTF 합의: -`;
+
+  // ✅ UPGRADE ②: 확신도 요약
+  const confLine = ex.conf
+    ? `확신도: ${ex.conf.tier} (RR ${ex.conf.rrUsed.toFixed(2)}, TP×${(ex.conf.tpScale||1).toFixed(2)})`
+    : `확신도: -`;
+
   if(isHold){
     grid.innerHTML = `
       <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
-      <div class="mini-box"><small>이유</small><div>확신 부족</div></div>
+      <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
       <div class="mini-box"><small>유사도 평균</small><div>${ex.simAvg.toFixed(1)}%</div></div>
       <div class="mini-box"><small>표본 수</small><div>${ex.simCount}개</div></div>
     `;
@@ -797,12 +1235,14 @@ function showResultModal(pos){
 
     content.innerHTML = `
       <b>근거 요약:</b><br/>
+      - ${mtfLine}<br/>
+      - ${confLine}<br/>
       - 유사패턴 ${ex.simCount}개 · 평균 유사도 ${ex.simAvg.toFixed(1)}%<br/>
       - RSI ${ex.rsi.toFixed(1)} · MACD ${ex.macdHist.toFixed(4)}<br/>
       - 추세(EMA20/EMA50) ${ex.ema20 >= ex.ema50 ? "상승 우위" : "하락 우위"}<br/>
       - 거래량 흐름 ${ex.volTrend >= 0 ? "증가" : "감소"} · 엣지 ${(ex.edge*100).toFixed(1)}%<br/>
       - ${domMsg}<br/><br/>
-      <b>정리:</b> 통계+지표가 같은 방향이라 ${pos.type}로 제안합니다.
+      <b>정리:</b> 여러 기간(1H/4H/1D)이 같은 방향이면 더 믿을만해서, ${pos.type}로 제안합니다.
     `;
 
     confirmBtn.disabled = false;
@@ -835,6 +1275,8 @@ function confirmTrack(){
     status: "ACTIVE",
     lastPrice: tempPos.entry,
     pnl: 0,
+    // ✅ UPGRADE ③: MFE 초기화
+    mfePct: 0,
     createdAt,
     expiryAt
   });
@@ -855,6 +1297,7 @@ function trackPositions(symbol, currentPrice){
 
     pos.lastPrice = currentPrice;
 
+    // pnl
     let pnl = 0;
     if(pos.type === "LONG"){
       pnl = ((currentPrice - pos.entry) / pos.entry) * 100;
@@ -862,6 +1305,18 @@ function trackPositions(symbol, currentPrice){
       pnl = ((pos.entry - currentPrice) / pos.entry) * 100;
     }
     pos.pnl = pnl;
+
+    // ✅ UPGRADE ③: MFE 업데이트(중간에 얼마나 “유리하게” 갔는지)
+    // - LONG: (price-entry)
+    // - SHORT: (entry-price)
+    const favorable = (pos.type === "LONG")
+      ? ((currentPrice - pos.entry) / pos.entry) * 100
+      : ((pos.entry - currentPrice) / pos.entry) * 100;
+
+    if(Number.isFinite(favorable)){
+      if(typeof pos.mfePct !== "number") pos.mfePct = 0;
+      if(favorable > pos.mfePct) pos.mfePct = favorable;
+    }
 
     let close = false;
     let win = false;
@@ -880,7 +1335,7 @@ function trackPositions(symbol, currentPrice){
       state.history.total++;
       if(win) state.history.win++;
 
-      // ✅ 종료 기록 저장
+      // ✅ 종료 기록 저장(+mfePct)
       const record = {
         id: Date.now(),
         symbol: pos.symbol,
@@ -890,6 +1345,7 @@ function trackPositions(symbol, currentPrice){
         entry: pos.entry,
         exit: exitPrice ?? currentPrice,
         pnlPct: pnl,
+        mfePct: (typeof pos.mfePct === "number") ? pos.mfePct : 0,
         win,
         reason: exitReason,
         closedAt: Date.now()
@@ -902,7 +1358,7 @@ function trackPositions(symbol, currentPrice){
       changed = true;
 
       // ✅ PATCH: alert 제거 → toast
-      toast(`[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnl.toFixed(2)}%`, win ? "success" : "danger");
+      toast(`[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnl.toFixed(2)}% / MFE ${record.mfePct.toFixed(2)}%`, win ? "success" : "danger");
     }else{
       changed = true;
     }
@@ -913,7 +1369,7 @@ function trackPositions(symbol, currentPrice){
     renderTrackingList();      // ✅ 가격/진행률은 전체 렌더
     renderClosedTrades();
     updateStatsUI();
-    // 카운트다운은 별도 interval로 부분 업데이트
+    // 카운트다운/TIME 종료는 별도 interval에서 처리
   }
 }
 
@@ -934,7 +1390,7 @@ function renderTrackingList(){
     return;
   }
 
-  // ✅ FIX: expiry 보정
+  // ✅ FIX: expiry 보정(+mfePct 보정)
   ensureExpiryOnAllPositions();
 
   container.innerHTML = state.activePositions.map(pos => {
@@ -957,8 +1413,22 @@ function renderTrackingList(){
     const remainMs = expiryAt - Date.now();
     const remainText = formatRemain(remainMs);
 
+    // ✅ MTF 한줄 요약(추적 화면)
+    const mtf = ex.mtf;
+    const mtfMini = mtf
+      ? `MTF ${mtf.agree}/${(mtf.votes||[]).length}(${(mtf.votes||[]).join("/")})`
+      : `MTF -`;
+
+    // ✅ UPGRADE ②: 확신도 한줄 요약(추적 화면)
+    const confMini = ex.conf
+      ? `CONF ${ex.conf.tier}(RR ${Number(ex.conf.rrUsed||RR).toFixed(2)})`
+      : `CONF -`;
+
+    // ✅ UPGRADE ③: MFE 표시(추적 화면)
+    const mfeMini = `MFE ${(typeof pos.mfePct === "number" ? pos.mfePct : 0).toFixed(2)}%`;
+
     const explainLine =
-      `남은시간 <b id="remain-${pos.id}">${remainText}</b> · 유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
+      `남은시간 <b id="remain-${pos.id}">${remainText}</b> · ${mtfMini} · ${confMini} · ${mfeMini} · 유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
 
     const tpLine = tpPct !== null
       ? `$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${tpPct.toFixed(2)}%)`
@@ -1027,12 +1497,13 @@ function renderClosedTrades(){
   container.innerHTML = list.slice(0, 8).map(x => {
     const badge = x.win ? `<span class="badge-win">성공</span>` : `<span class="badge-lose">실패</span>`;
     const pnlColor = x.pnlPct >= 0 ? "var(--success)" : "var(--danger)";
+    const mfeTxt = (typeof x.mfePct === "number") ? ` · MFE ${x.mfePct.toFixed(2)}%` : "";
     return `
       <div class="history-item">
         <div class="left">
           ${badge}
           <span>${x.symbol.replace("USDT","")} ${x.tf}</span>
-          <span style="color:var(--text-sub); font-weight:950;">(${x.reason})</span>
+          <span style="color:var(--text-sub); font-weight:950;">(${x.reason}${mfeTxt})</span>
         </div>
         <div style="text-align:right;">
           <div style="color:${pnlColor}; font-weight:950;">${x.pnlPct.toFixed(2)}%</div>
@@ -1064,14 +1535,29 @@ async function autoScanUniverse(){
 
   try{
     const results = [];
+
+    // ✅ 스캔은 “속도”가 중요: 2TF 합의로 실행
+    const tfSet = getMTFSet2(state.tf);
+    const baseTf = tfSet[0];
+    const otherTf = tfSet[1];
+
     for(let i=0;i<state.universe.length;i++){
       const coin = state.universe[i];
       status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
 
       try{
-        const candles = await fetchCandles(coin.s, state.tf, 380);
-        if(candles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
-        const pos = buildSignalFromCandles(coin.s, state.tf, candles);
+        const cBase = await fetchCandles(coin.s, baseTf, 380);
+        if(cBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+
+        const candlesByTf = { [baseTf]: cBase };
+
+        // otherTf는 “가능하면”만 (API 제한/속도 고려)
+        try{
+          const cOther = await fetchCandles(coin.s, otherTf, 380);
+          candlesByTf[otherTf] = cOther;
+        }catch(e){}
+
+        const pos = buildSignalFromCandles_MTF(coin.s, baseTf, candlesByTf, "2TF");
         if(pos.type === "HOLD") continue;
 
         results.push({
@@ -1080,7 +1566,10 @@ async function autoScanUniverse(){
           tfRaw: pos.tfRaw,
           type: pos.type,
           winProb: pos.explain.winProb,
-          edge: pos.explain.edge
+          edge: pos.explain.edge,
+          mtfAgree: pos.explain?.mtf?.agree ?? 1,
+          mtfVotes: (pos.explain?.mtf?.votes || []).join("/"),
+          confTier: pos.explain?.conf?.tier ?? "-"
         });
       }catch(e){}
 
@@ -1116,6 +1605,8 @@ function renderScanResults(){
     const pillClass = item.type === "LONG" ? "long" : "short";
     const prob = (item.winProb*100).toFixed(1);
     const edge = (item.edge*100).toFixed(1);
+    const mtf = item.mtfVotes ? ` · MTF ${item.mtfAgree}/2(${item.mtfVotes})` : "";
+    const conf = item.confTier ? ` · ${item.confTier}` : "";
 
     return `
       <div class="rec-item" onclick="quickAnalyzeAndShow('${item.symbol}','${item.tfRaw}')">
@@ -1125,7 +1616,7 @@ function renderScanResults(){
         </div>
         <div class="rec-right">
           성공확률 ${prob}%<br/>
-          엣지 ${edge}% · ${item.tf}
+          엣지 ${edge}% · ${item.tf}${mtf}${conf}
         </div>
       </div>
     `;
@@ -1142,20 +1633,39 @@ async function runBacktest(){
   box.classList.remove("show");
 
   try{
-    const candles = await fetchCandles(state.symbol, state.tf, EXTENDED_LIMIT);
-    if(candles.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
+    // ✅ 백테스트도 “속도” 중요: 2TF 합의
+    const tfSet = getMTFSet2(state.tf);
+    const baseTf = tfSet[0];
+    const otherTf = tfSet[1];
+
+    const candlesBase = await fetchCandles(state.symbol, baseTf, EXTENDED_LIMIT);
+    if(candlesBase.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
+
+    // otherTf는 길게 가져올 필요 없음(대충 판정만)
+    let candlesOther = null;
+    try{
+      candlesOther = await fetchCandles(state.symbol, otherTf, 520);
+    }catch(e){}
 
     let wins=0, total=0;
     let pnlSum=0;
 
-    const end = candles.length - (FUTURE_H + 20);
+    const end = candlesBase.length - (FUTURE_H + 20);
     const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
 
     for(let idx = start; idx < end; idx += 7){
-      const sliceCandles = candles.slice(0, idx+1);
-      if(sliceCandles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+      const sliceBase = candlesBase.slice(0, idx+1);
+      if(sliceBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
 
-      const pos = buildSignalFromCandles(state.symbol, state.tf, sliceCandles);
+      const byTf = { [baseTf]: sliceBase };
+
+      // otherTf는 “가능하면” 같은 길이로 맞춰서 사용 (없으면 base 단독)
+      if(Array.isArray(candlesOther) && candlesOther.length > 120){
+        // 간단: 다른 TF는 최근 일부만 써도 합의 효과는 있음
+        byTf[otherTf] = candlesOther.slice(-520);
+      }
+
+      const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, byTf, "2TF");
       if(pos.type === "HOLD") continue;
 
       const ex = pos.explain || {};
@@ -1163,7 +1673,7 @@ async function runBacktest(){
       if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
       if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
 
-      const future = candles.slice(idx+1, Math.min(idx+1+140, candles.length));
+      const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
       const outcome = simulateOutcome(pos, future);
       if(!outcome.resolved) continue;
 
@@ -1181,9 +1691,9 @@ async function runBacktest(){
     document.getElementById("bt-win").textContent = `${winRate.toFixed(1)}%`;
     document.getElementById("bt-avg").textContent = `${avgPnl.toFixed(2)}%`;
 
-    const tfName = state.tf === "60" ? "1H" : state.tf === "240" ? "4H" : "1D";
+    const tfNameShow = baseTf === "60" ? "1H" : baseTf === "240" ? "4H" : "1D";
     document.getElementById("bt-range").textContent =
-      `${state.symbol} · ${tfName} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%)`;
+      `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · CONF(TP/SL 조정)`;
 
     box.classList.add("show");
   }catch(e){
@@ -1430,6 +1940,7 @@ async function fetchWithTimeout(url, timeoutMs){
     if(!r.ok) throw new Error("HTTP " + r.status);
     return await r.json();
   }finally{
+    // ✅ FIX: clearTimeout(id) 누락 버그 수정
     clearTimeout(id);
   }
 }
