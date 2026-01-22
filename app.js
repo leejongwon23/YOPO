@@ -33,6 +33,9 @@
  * ★ ③ TIME 종료 판정 고도화(MFE 반영)
  * - TIME 종료 시 최종 pnl뿐 아니라, "중간에 얼마나 갔는지(mfePct)" 반영
  * - “중간에 충분히 갔던 신호”를 통계적으로 보정 (조작X: 규칙 공개)
+ *
+ * ✅ ROOT UPGRADE (2026-01-22E)
+ * ★ 근본 업그레이드: 레짐/최근가중/성과보정/변동성필터/트레일링/수수료
  *************************************************************/
 
 // ---------- AUTH ----------
@@ -133,6 +136,40 @@ const EXTENDED_LIMIT = 900;
 const BT_MIN_PROB = 0.58;     // 58% 이상만
 const BT_MIN_EDGE = 0.10;     // 엣지 10% 이상만
 const BT_MIN_SIM  = 60;       // 유사도 평균 60% 이상만
+
+/* ==========================================================
+   ✅ ADD (2026-01-22E) 근본 업그레이드: 레짐/최근가중/실전보정/변동성/트레일링/수수료
+   ========================================================== */
+
+// 1) 레짐(추세) 필터: 추세 강도(EMA거리/ATR)가 낮으면 HOLD
+const REGIME_MIN_STRENGTH_BY_TF = {
+  "60": 0.55,
+  "240": 0.50,
+  "D": 0.45
+};
+
+// 2) 유사도 최근가중치: 오래된 패턴 영향↓
+const SIM_RECENCY_HALFLIFE_STEPS = 140; // 값↓일수록 더 "최근만" 믿음
+
+// 2-추가) 최근 성과 캘리브레이션: winProb 소폭 보정
+const RECENT_CALIB_N = 20;
+const RECENT_CALIB_ALPHA = 0.15;
+
+// 3) 변동성 위험 필터: ATR%가 너무 크면 HOLD
+const VOL_MAX_ATR_PCT_BY_TF = { // 보수적으로: 급변 구간 회피
+  "60": 2.20,
+  "240": 3.10,
+  "D": 4.60
+};
+
+// 4) 브레이크이븐/트레일링
+const BE_TRIGGER_PCT = 0.65;     // MFE가 +0.65% 이상이면 보호 시작
+const BE_OFFSET_PCT  = 0.06;     // SL을 진입가 +0.06%(롱) / -0.06%(숏)로
+const TRAIL_START_PCT = 1.10;    // MFE가 +1.10% 이상이면 트레일링 시작
+const TRAIL_GAP_PCT   = 0.55;    // 최고수익 대비 0.55% 뒤로 SL 따라오기
+
+// 5) 비용(수수료+슬리피지) 반영(보수적으로)
+const FEE_PCT = 0.12;            // % 단위. (원하면 조절)
 
 // ---------- Candidate List (15) ----------
 const DEFAULT_CANDIDATES = [
@@ -258,7 +295,7 @@ function ensureToastUI(){
   wrap.style.display = "flex";
   wrap.style.flexDirection = "column";
   wrap.style.gap = "10px";
-  wrap.style.pointerEvents = "none";
+  wrap.styleE6p.style.pointerEvents = "none";
   document.body.appendChild(wrap);
 }
 function toast(msg, kind="info"){
@@ -333,6 +370,12 @@ function ensureExpiryOnAllPositions(){
       p.mfePct = 0;
       changed = true;
     }
+
+    // ✅ 안정: sl/tp가 숫자가 아니면 트레일링 때 터질 수 있으니 방어
+    if(p.type !== "HOLD"){
+      if(typeof p.sl !== "number" || !Number.isFinite(p.sl)) { p.sl = p.sl ?? p.entry; changed = true; }
+      if(typeof p.tp !== "number" || !Number.isFinite(p.tp)) { p.tp = p.tp ?? p.entry; changed = true; }
+    }
   }
 
   if(changed) saveState();
@@ -354,6 +397,7 @@ function updateCountdownTexts(){
 
 /* ==========================================================
    ✅ UPGRADE ③: TIME 종료 처리(MFE 반영)
+   + ✅ UPGRADE ⑤: 비용(FEE_PCT) 반영(중복 차감 없음: 여기서 "한 번만" 차감)
    ========================================================== */
 function settleExpiredPositions(){
   const list = state.activePositions || [];
@@ -370,18 +414,17 @@ function settleExpiredPositions(){
     // 만료 시점: TP/SL 미도달 → TIME 종료
     const lastPrice = Number.isFinite(pos.lastPrice) ? pos.lastPrice : pos.entry;
 
-    // 최종 pnl
-    let pnl = 0;
+    // 최종 pnl (NET: 비용 반영)
+    let pnlGross = 0;
     if(pos.type === "LONG"){
-      pnl = ((lastPrice - pos.entry) / pos.entry) * 100;
+      pnlGross = ((lastPrice - pos.entry) / pos.entry) * 100;
     }else{
-      pnl = ((pos.entry - lastPrice) / pos.entry) * 100;
+      pnlGross = ((pos.entry - lastPrice) / pos.entry) * 100;
     }
+    const pnl = pnlGross - FEE_PCT; // ✅ 비용 1회 차감(원천)
     pos.pnl = pnl;
 
     // ✅ MFE 기반 보정 승리 조건(공개 규칙)
-    // 1) 최종 pnl>0 이면 성공
-    // 2) 아니면, 중간에 mfePct가 (최소 TIME_MFE_MIN_PCT) AND (TP의 TIME_MFE_TP_RATIO 이상) 도달했으면 성공으로 보정
     const mfe = (typeof pos.mfePct === "number") ? pos.mfePct : 0;
     const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
 
@@ -413,7 +456,7 @@ function settleExpiredPositions(){
       type: pos.type,
       entry: pos.entry,
       exit: lastPrice,
-      pnlPct: pnl,
+      pnlPct: pnl,          // ✅ NET
       mfePct: mfe,
       win,
       reason,
@@ -428,7 +471,7 @@ function settleExpiredPositions(){
     const extra = (reason === "TIME_MFE")
       ? ` / MFE ${mfe.toFixed(2)}% (보정승)`
       : ` / MFE ${mfe.toFixed(2)}%`;
-    toast(`[${pos.symbol} ${pos.tf}] 시간 종료: ${win ? "성공" : "실패"} (${reason}) / 수익률 ${pnl.toFixed(2)}%${extra}`, win ? "success" : "danger");
+    toast(`[${pos.symbol} ${pos.tf}] 시간 종료: ${win ? "성공" : "실패"} (${reason}) / 수익률 ${pnl.toFixed(2)}%${extra} (비용 -${FEE_PCT.toFixed(2)}%)`, win ? "success" : "danger");
   }
 
   if(changed){
@@ -486,6 +529,23 @@ function tfName(tfRaw){
   return tfRaw === "60" ? "1H" : tfRaw === "240" ? "4H" : "1D";
 }
 
+/* ==========================================================
+   ✅ ADD: 최근 성과(winRate) 계산 (symbol+tf별 최근 N개)
+   ========================================================== */
+function getRecentWinRate(symbol, tfRaw, n=20){
+  const list = state.closedTrades || [];
+  let hit = 0, total = 0;
+  for(const x of list){
+    if(x.symbol !== symbol) continue;
+    if(x.tfRaw !== tfRaw) continue;
+    total++;
+    if(x.win) hit++;
+    if(total >= n) break;
+  }
+  if(total <= 0) return 0.5;
+  return clamp(hit / total, 0.0, 1.0);
+}
+
 // “확률/엣지/유사도” 계산을 재사용하기 위한 코어 함수
 function computeSignalCore(symbol, tfRaw, candles){
   const closes = candles.map(x => x.c);
@@ -502,6 +562,12 @@ function computeSignalCore(symbol, tfRaw, candles){
   const ema20 = emaLast(closes, 20);
   const ema50 = emaLast(closes, 50);
   const trend = (ema20 >= ema50) ? 1 : -1;
+
+  // ✅ 근본 1) 레짐(추세강도): |EMA20-EMA50| / ATR
+  const trendStrength = (atrRaw > 0) ? (Math.abs(ema20 - ema50) / atrRaw) : 0;
+
+  // ✅ 근본 3) 변동성(ATR%): ATR/entry*100
+  const atrPct = (entry > 0) ? ((atrRaw / entry) * 100) : 0;
 
   const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
 
@@ -552,10 +618,12 @@ function computeSignalCore(symbol, tfRaw, candles){
     rsi,
     macdHist: macd.hist,
     atrRaw,
+    atrPct,           // ✅ ADD
     volTrend,
     ema20,
     ema50,
     trend,
+    trendStrength,    // ✅ ADD
     btcDom: dom,
     btcDomUp: domUp,
     domHoldBoost
@@ -716,8 +784,12 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   const winProb = con.winProb;
   const edge = con.edge;
 
+  // ✅ 근본 2) 최근 성과로 winProb 소폭 보정
+  const recent = getRecentWinRate(symbol, baseTfRaw, RECENT_CALIB_N);
+  const winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProb + RECENT_CALIB_ALPHA * recent, 0.5, 0.99);
+
   // ✅ UPGRADE ②: 확신도 기반 TP/SL 조정 적용(여기서 TP거리/RR이 바뀜)
-  const adj = applyConfidenceTpSl(tpDistBase, winProb, edge);
+  const adj = applyConfidenceTpSl(tpDistBase, winProbAdj, edge);
   const tpDist = adj.tpDist;
   const rrUsed = adj.rr;
 
@@ -738,7 +810,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
 
-  // ---- HOLD 규칙(기존 + MTF 합의) ----
+  // ---- HOLD 규칙(기존 + MTF 합의 + 근본필터) ----
   const holdReasons = [];
   if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
   if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
@@ -752,6 +824,20 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     if(con.agree < agreeNeed){
       holdReasons.push(`타임프레임 합의 부족(${mtfVotes})`);
     }
+  }
+
+  // ✅ 근본 1) 레짐(추세강도) 필터: 추세 약하면 HOLD
+  const minStrength = REGIME_MIN_STRENGTH_BY_TF[baseTfRaw] ?? 0.5;
+  const ts = base.trendStrength ?? 0;
+  if(ts < minStrength){
+    holdReasons.push(`추세 약함(강도 ${ts.toFixed(2)} < ${minStrength.toFixed(2)})`);
+  }
+
+  // ✅ 근본 3) 변동성 위험 필터: ATR%가 너무 크면 HOLD
+  const maxAtrPct = VOL_MAX_ATR_PCT_BY_TF[baseTfRaw] ?? 3.0;
+  const ap = base.atrPct ?? 0;
+  if(ap > maxAtrPct){
+    holdReasons.push(`급변동 위험(ATR ${ap.toFixed(2)}% > ${maxAtrPct.toFixed(2)}%)`);
   }
 
   // 기존 도미넌스/거래량 보수성 (base 기준)
@@ -774,7 +860,9 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     createdAt: Date.now(),
     explain: {
       // 최종(합의) 값
-      winProb,
+      winProb: winProbAdj,      // ✅ 보정된 확률로 기록
+      winProbRaw: winProb,      // ✅ 원본도 같이 남김(투명)
+      recentWinRate: recent,    // ✅ 최근 성과
       longP: con.longP,
       shortP: con.shortP,
       edge,
@@ -785,10 +873,12 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
       rsi: base.rsi,
       macdHist: base.macdHist,
       atr: atrUsed,
+      atrPct: base.atrPct,              // ✅ 변동성 지표
       volTrend: base.volTrend,
       ema20: base.ema20,
       ema50: base.ema50,
       trend: base.trend,
+      trendStrength: base.trendStrength, // ✅ 레짐 지표
       btcDom: base.btcDom,
       btcDomUp: base.btcDomUp,
 
@@ -813,7 +903,9 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
             winProb: v.winProb,
             edge: v.edge,
             simAvg: v.simAvg,
-            simCount: v.simCount
+            simCount: v.simCount,
+            trendStrength: v.trendStrength,
+            atrPct: v.atrPct
           }
         ])))
       },
@@ -1167,8 +1259,6 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
 
 // (기존 함수명 유지용: 내부는 MTF로 대체)
 function buildSignalFromCandles(symbol, tf, candles){
-  // 기존 단일 TF 로직은 사용하지 않음(이제 MTF가 기본).
-  // 호환을 위해 base 단일일 때만 fallback 가능하게 둠.
   const byTf = { [tf]: candles };
   return buildSignalFromCandles_MTF(symbol, tf, byTf, "2TF");
 }
@@ -1195,16 +1285,18 @@ function showResultModal(pos){
 
   const ex = pos.explain;
 
-  // ✅ MTF 요약 문자열
   const mtf = ex.mtf;
   const mtfLine = mtf
     ? `MTF 합의: ${mtf.agree}/${(mtf.votes||[]).length} (${(mtf.votes||[]).join("/")})`
     : `MTF 합의: -`;
 
-  // ✅ UPGRADE ②: 확신도 요약
   const confLine = ex.conf
     ? `확신도: ${ex.conf.tier} (RR ${ex.conf.rrUsed.toFixed(2)}, TP×${(ex.conf.tpScale||1).toFixed(2)})`
     : `확신도: -`;
+
+  // ✅ 근본 보정 정보(짧게)
+  const calibLine = `최근승률 ${(ex.recentWinRate*100).toFixed(0)}% → winProb ${(ex.winProb*100).toFixed(1)}% (α ${RECENT_CALIB_ALPHA})`;
+  const regimeLine = `추세강도 ${Number(ex.trendStrength||0).toFixed(2)} / ATR ${Number(ex.atrPct||0).toFixed(2)}%`;
 
   if(isHold){
     grid.innerHTML = `
@@ -1217,6 +1309,9 @@ function showResultModal(pos){
     content.innerHTML = `
       <b>이번에는 “보류”가 더 안전해요.</b><br/>
       ${reasons}<br/><br/>
+      <b>추가 정보:</b><br/>
+      - ${calibLine}<br/>
+      - ${regimeLine}<br/><br/>
       <b>정리:</b> 애매할 때 억지로 진입하면 장기 승률이 내려가서, 이번은 패스합니다.
     `;
     confirmBtn.disabled = true;
@@ -1237,6 +1332,8 @@ function showResultModal(pos){
       <b>근거 요약:</b><br/>
       - ${mtfLine}<br/>
       - ${confLine}<br/>
+      - ${calibLine}<br/>
+      - ${regimeLine}<br/>
       - 유사패턴 ${ex.simCount}개 · 평균 유사도 ${ex.simAvg.toFixed(1)}%<br/>
       - RSI ${ex.rsi.toFixed(1)} · MACD ${ex.macdHist.toFixed(4)}<br/>
       - 추세(EMA20/EMA50) ${ex.ema20 >= ex.ema50 ? "상승 우위" : "하락 우위"}<br/>
@@ -1275,7 +1372,6 @@ function confirmTrack(){
     status: "ACTIVE",
     lastPrice: tempPos.entry,
     pnl: 0,
-    // ✅ UPGRADE ③: MFE 초기화
     mfePct: 0,
     createdAt,
     expiryAt
@@ -1297,18 +1393,17 @@ function trackPositions(symbol, currentPrice){
 
     pos.lastPrice = currentPrice;
 
-    // pnl
-    let pnl = 0;
+    // pnl (NET: 비용 반영)
+    let pnlGross = 0;
     if(pos.type === "LONG"){
-      pnl = ((currentPrice - pos.entry) / pos.entry) * 100;
+      pnlGross = ((currentPrice - pos.entry) / pos.entry) * 100;
     }else{
-      pnl = ((pos.entry - currentPrice) / pos.entry) * 100;
+      pnlGross = ((pos.entry - currentPrice) / pos.entry) * 100;
     }
+    const pnl = pnlGross - FEE_PCT;
     pos.pnl = pnl;
 
-    // ✅ UPGRADE ③: MFE 업데이트(중간에 얼마나 “유리하게” 갔는지)
-    // - LONG: (price-entry)
-    // - SHORT: (entry-price)
+    // ✅ UPGRADE ③: MFE 업데이트(중간에 얼마나 “유리하게” 갔는지) (GROSS 기준으로 추적이 자연스러움)
     const favorable = (pos.type === "LONG")
       ? ((currentPrice - pos.entry) / pos.entry) * 100
       : ((pos.entry - currentPrice) / pos.entry) * 100;
@@ -1316,6 +1411,33 @@ function trackPositions(symbol, currentPrice){
     if(Number.isFinite(favorable)){
       if(typeof pos.mfePct !== "number") pos.mfePct = 0;
       if(favorable > pos.mfePct) pos.mfePct = favorable;
+    }
+
+    // ✅ 근본 4) 브레이크이븐 + 트레일링 SL (승률 체감↑)
+    if(Number.isFinite(pos.mfePct) && pos.status === "ACTIVE"){
+      // 브레이크이븐 보호
+      if(pos.mfePct >= BE_TRIGGER_PCT){
+        if(pos.type === "LONG"){
+          const beSL = pos.entry * (1 + (BE_OFFSET_PCT/100));
+          if(typeof pos.sl !== "number" || !Number.isFinite(pos.sl)) pos.sl = pos.entry;
+          if(pos.sl < beSL) pos.sl = beSL;
+        }else{
+          const beSL = pos.entry * (1 - (BE_OFFSET_PCT/100));
+          if(typeof pos.sl !== "number" || !Number.isFinite(pos.sl)) pos.sl = pos.entry;
+          if(pos.sl > beSL) pos.sl = beSL;
+        }
+      }
+
+      // 트레일링
+      if(pos.mfePct >= TRAIL_START_PCT){
+        if(pos.type === "LONG"){
+          const trailSL = pos.entry * (1 + ((pos.mfePct - TRAIL_GAP_PCT)/100));
+          if(pos.sl < trailSL) pos.sl = trailSL;
+        }else{
+          const trailSL = pos.entry * (1 - ((pos.mfePct - TRAIL_GAP_PCT)/100));
+          if(pos.sl > trailSL) pos.sl = trailSL;
+        }
+      }
     }
 
     let close = false;
@@ -1335,7 +1457,16 @@ function trackPositions(symbol, currentPrice){
       state.history.total++;
       if(win) state.history.win++;
 
-      // ✅ 종료 기록 저장(+mfePct)
+      // ✅ 종료 pnl은 "exitPrice 기준 NET"으로 확정 기록(중복 차감 없음)
+      let pnlExitGross = 0;
+      const px = (exitPrice ?? currentPrice);
+      if(pos.type === "LONG"){
+        pnlExitGross = ((px - pos.entry) / pos.entry) * 100;
+      }else{
+        pnlExitGross = ((pos.entry - px) / pos.entry) * 100;
+      }
+      const pnlExit = pnlExitGross - FEE_PCT;
+
       const record = {
         id: Date.now(),
         symbol: pos.symbol,
@@ -1343,8 +1474,8 @@ function trackPositions(symbol, currentPrice){
         tfRaw: pos.tfRaw,
         type: pos.type,
         entry: pos.entry,
-        exit: exitPrice ?? currentPrice,
-        pnlPct: pnl,
+        exit: px,
+        pnlPct: pnlExit, // ✅ NET
         mfePct: (typeof pos.mfePct === "number") ? pos.mfePct : 0,
         win,
         reason: exitReason,
@@ -1357,8 +1488,10 @@ function trackPositions(symbol, currentPrice){
       saveState();
       changed = true;
 
-      // ✅ PATCH: alert 제거 → toast
-      toast(`[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnl.toFixed(2)}% / MFE ${record.mfePct.toFixed(2)}%`, win ? "success" : "danger");
+      toast(
+        `[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnlExit.toFixed(2)}% / MFE ${record.mfePct.toFixed(2)}% (비용 -${FEE_PCT.toFixed(2)}%)`,
+        win ? "success" : "danger"
+      );
     }else{
       changed = true;
     }
@@ -1366,10 +1499,9 @@ function trackPositions(symbol, currentPrice){
 
   if(changed){
     saveState();
-    renderTrackingList();      // ✅ 가격/진행률은 전체 렌더
+    renderTrackingList();
     renderClosedTrades();
     updateStatsUI();
-    // 카운트다운/TIME 종료는 별도 interval에서 처리
   }
 }
 
@@ -1390,7 +1522,6 @@ function renderTrackingList(){
     return;
   }
 
-  // ✅ FIX: expiry 보정(+mfePct 보정)
   ensureExpiryOnAllPositions();
 
   container.innerHTML = state.activePositions.map(pos => {
@@ -1413,22 +1544,26 @@ function renderTrackingList(){
     const remainMs = expiryAt - Date.now();
     const remainText = formatRemain(remainMs);
 
-    // ✅ MTF 한줄 요약(추적 화면)
     const mtf = ex.mtf;
     const mtfMini = mtf
       ? `MTF ${mtf.agree}/${(mtf.votes||[]).length}(${(mtf.votes||[]).join("/")})`
       : `MTF -`;
 
-    // ✅ UPGRADE ②: 확신도 한줄 요약(추적 화면)
     const confMini = ex.conf
       ? `CONF ${ex.conf.tier}(RR ${Number(ex.conf.rrUsed||RR).toFixed(2)})`
       : `CONF -`;
 
-    // ✅ UPGRADE ③: MFE 표시(추적 화면)
     const mfeMini = `MFE ${(typeof pos.mfePct === "number" ? pos.mfePct : 0).toFixed(2)}%`;
 
+    const regimeMini = (typeof ex.trendStrength === "number")
+      ? `TS ${ex.trendStrength.toFixed(2)}`
+      : `TS -`;
+    const volMini = (typeof ex.atrPct === "number")
+      ? `ATR ${ex.atrPct.toFixed(2)}%`
+      : `ATR -`;
+
     const explainLine =
-      `남은시간 <b id="remain-${pos.id}">${remainText}</b> · ${mtfMini} · ${confMini} · ${mfeMini} · 유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
+      `남은시간 <b id="remain-${pos.id}">${remainText}</b> · ${mtfMini} · ${confMini} · ${mfeMini} · ${regimeMini} · ${volMini} · 유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
 
     const tpLine = tpPct !== null
       ? `$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${tpPct.toFixed(2)}%)`
@@ -1455,7 +1590,7 @@ function renderTrackingList(){
 
           <div>
             <div class="progress-text">
-              <span style="color:${color}">수익률 ${pos.pnl.toFixed(2)}%</span>
+              <span style="color:${color}">수익률 ${pos.pnl.toFixed(2)}% <span style="color:var(--text-sub); font-weight:900;">(비용 반영)</span></span>
               <span>목표까지 ${progress.toFixed(1)}%</span>
             </div>
             <div class="progress-track">
@@ -1633,7 +1768,6 @@ async function runBacktest(){
   box.classList.remove("show");
 
   try{
-    // ✅ 백테스트도 “속도” 중요: 2TF 합의
     const tfSet = getMTFSet2(state.tf);
     const baseTf = tfSet[0];
     const otherTf = tfSet[1];
@@ -1641,7 +1775,6 @@ async function runBacktest(){
     const candlesBase = await fetchCandles(state.symbol, baseTf, EXTENDED_LIMIT);
     if(candlesBase.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
 
-    // otherTf는 길게 가져올 필요 없음(대충 판정만)
     let candlesOther = null;
     try{
       candlesOther = await fetchCandles(state.symbol, otherTf, 520);
@@ -1659,9 +1792,7 @@ async function runBacktest(){
 
       const byTf = { [baseTf]: sliceBase };
 
-      // otherTf는 “가능하면” 같은 길이로 맞춰서 사용 (없으면 base 단독)
       if(Array.isArray(candlesOther) && candlesOther.length > 120){
-        // 간단: 다른 TF는 최근 일부만 써도 합의 효과는 있음
         byTf[otherTf] = candlesOther.slice(-520);
       }
 
@@ -1693,7 +1824,7 @@ async function runBacktest(){
 
     const tfNameShow = baseTf === "60" ? "1H" : baseTf === "240" ? "4H" : "1D";
     document.getElementById("bt-range").textContent =
-      `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · CONF(TP/SL 조정)`;
+      `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · CONF(TP/SL 조정) · 비용 -${FEE_PCT.toFixed(2)}% 반영`;
 
     box.classList.add("show");
   }catch(e){
@@ -1710,20 +1841,20 @@ function simulateOutcome(pos, futureCandles){
     const hi = c.h, lo = c.l;
     if(pos.type === "LONG"){
       if(hi >= pos.tp){
-        const pnl = ((pos.tp - pos.entry)/pos.entry)*100;
+        const pnl = ((pos.tp - pos.entry)/pos.entry)*100 - FEE_PCT; // ✅ 비용 반영(원천)
         return { resolved:true, win:true, pnlPct:pnl };
       }
       if(lo <= pos.sl){
-        const pnl = ((pos.sl - pos.entry)/pos.entry)*100;
+        const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
         return { resolved:true, win:false, pnlPct:pnl };
       }
     }else{
       if(lo <= pos.tp){
-        const pnl = ((pos.entry - pos.tp)/pos.entry)*100;
+        const pnl = ((pos.entry - pos.tp)/pos.entry)*100 - FEE_PCT;
         return { resolved:true, win:true, pnlPct:pnl };
       }
       if(hi >= pos.sl){
-        const pnl = ((pos.entry - pos.sl)/pos.entry)*100;
+        const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
         return { resolved:true, win:false, pnlPct:pnl };
       }
     }
@@ -1748,6 +1879,7 @@ async function fetchCandles(symbol, tf, limit){
 }
 
 // ---------- Similarity ----------
+// ✅ 근본 2) 최근가중 유사도 + 가중 확률
 function calcSimilarityStats(closes, winLen, futureH, step, topK){
   const n = closes.length;
   const curStart = n - winLen;
@@ -1756,6 +1888,7 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
 
   const sims = [];
   const lastStart = n - winLen - futureH - 2;
+
   for(let s=0; s<=lastStart; s+=step){
     const seg = closes.slice(s, s + winLen);
     const ret = returns(seg);
@@ -1765,7 +1898,11 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
     const entry = closes[s + winLen - 1];
     const future = closes[s + winLen - 1 + futureH];
     const r = (future - entry) / Math.max(entry, 1e-12);
-    sims.push({ sim, r });
+
+    const ageSteps = (lastStart - s) / Math.max(step, 1);
+    const w = Math.exp(-Math.log(2) * (ageSteps / Math.max(SIM_RECENCY_HALFLIFE_STEPS, 1)));
+
+    sims.push({ sim, r, w });
   }
 
   sims.sort((a,b)=> b.sim - a.sim);
@@ -1776,13 +1913,25 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
     return { longProb: 0.5, shortProb: 0.5, avgSim: 0, count: 0 };
   }
 
-  const up = top.filter(x => x.r >= 0).length;
-  const down = count - up;
+  let wSum = 0, wUp = 0, wDown = 0;
+  for(const x of top){
+    const w = Number.isFinite(x.w) ? x.w : 1;
+    wSum += w;
+    if(x.r >= 0) wUp += w;
+    else wDown += w;
+  }
 
-  const longProb = (up + 1) / (count + 2);
-  const shortProb = (down + 1) / (count + 2);
+  // 라플라스 스무딩
+  const longProb = (wUp + 1) / (wSum + 2);
+  const shortProb = (wDown + 1) / (wSum + 2);
 
-  const avgZ = top.reduce((a,b)=>a+b.sim,0) / count;
+  // 가중 평균 유사도
+  let avgZ = 0;
+  for(const x of top){
+    const w = Number.isFinite(x.w) ? x.w : 1;
+    avgZ += (x.sim * w);
+  }
+  avgZ = avgZ / Math.max(wSum, 1e-9);
   const avgSim = clamp((avgZ + 1) * 50, 0, 100);
 
   return { longProb, shortProb, avgSim, count };
@@ -1940,7 +2089,6 @@ async function fetchWithTimeout(url, timeoutMs){
     if(!r.ok) throw new Error("HTTP " + r.status);
     return await r.json();
   }finally{
-    // ✅ FIX: clearTimeout(id) 누락 버그 수정
     clearTimeout(id);
   }
 }
