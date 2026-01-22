@@ -143,6 +143,107 @@ const TRAIL_GAP_PCT   = 0.55;
 // 5) 비용(수수료+슬리피지)
 const FEE_PCT = 0.12; // % 단위
 
+/* ==========================================================
+   ✅ NEW: 실패 패턴 자동 추출/차단 엔진 (목표: 예측 빈도 크게 줄이지 않고 실패만 줄이기)
+   - state.patternDB에 (signature -> {n, win}) 누적
+   - 충분히 쌓였는데 승률이 낮은 signature는 자동 차단(HOLD)
+   ========================================================== */
+const PATTERN_DB_VERSION = 1;
+const PATTERN_MIN_SAMPLES = 14;       // 이 정도는 쌓여야 “그럴듯한 실패패턴”으로 인정
+const PATTERN_BAD_WINRATE = 0.48;     // 이 이하 승률이면 차단 후보
+const PATTERN_MAX_AVOID = 120;        // 너무 많이 막아서 예측이 사라지는 걸 방지(상한)
+const PATTERN_BIN = {
+  atrPct: 0.50,       // 0.5% 단위
+  trendStrength: 0.10,// 0.1 단위
+  edge: 0.02,         // 0.02 단위
+  simAvg: 5,          // 5% 단위
+  dom: 1.0            // 1%p 단위
+};
+
+function ensurePatternDB(){
+  if(!state.patternDB || typeof state.patternDB !== "object"){
+    state.patternDB = { v: PATTERN_DB_VERSION, stats: {}, avoid: {} };
+    saveState();
+    return;
+  }
+  if(state.patternDB.v !== PATTERN_DB_VERSION){
+    // 버전업 시 필요한 마이그레이션 자리(현재는 단순 리셋)
+    state.patternDB = { v: PATTERN_DB_VERSION, stats: {}, avoid: {} };
+    saveState();
+    return;
+  }
+  if(!state.patternDB.stats || typeof state.patternDB.stats !== "object") state.patternDB.stats = {};
+  if(!state.patternDB.avoid || typeof state.patternDB.avoid !== "object") state.patternDB.avoid = {};
+}
+
+function _bin(x, step){
+  const v = Number.isFinite(x) ? x : 0;
+  const s = Math.max(step, 1e-9);
+  return Math.max(0, Math.floor(v / s));
+}
+
+function buildPatternSignature(symbol, tfRaw, type, ex){
+  // 너무 세분화하면 표본이 안 모이므로 “핵심만” 적당히 binning
+  const atrB = _bin(ex?.atrPct ?? 0, PATTERN_BIN.atrPct);
+  const tsB  = _bin(ex?.trendStrength ?? 0, PATTERN_BIN.trendStrength);
+  const eB   = _bin(ex?.edge ?? 0, PATTERN_BIN.edge);
+  const sB   = _bin(ex?.simAvg ?? 0, PATTERN_BIN.simAvg);
+  const mA   = Number.isFinite(ex?.mtf?.agree) ? ex.mtf.agree : 1;
+  const cT   = (ex?.conf?.tier) ? String(ex.conf.tier) : "NA";
+
+  const dom = (typeof ex?.btcDom === "number") ? ex.btcDom : null;
+  const domB = dom === null ? "X" : String(_bin(dom, PATTERN_BIN.dom));
+  const domUp = (typeof ex?.btcDomUp === "number") ? ex.btcDomUp : 0;
+  const domU = domUp > 0.10 ? "UP" : domUp < -0.10 ? "DN" : "FL";
+
+  // symbol까지 포함하면 너무 쪼개질 수 있어 “옵션”인데, 여기선 일단 포함(실전에서 더 잘 맞음)
+  return `${symbol}|${tfRaw}|${type}|A${atrB}|T${tsB}|E${eB}|S${sB}|M${mA}|C${cT}|D${domB}|U${domU}`;
+}
+
+function recordPatternOutcome(signature, win){
+  ensurePatternDB();
+  if(!signature) return;
+
+  const stats = state.patternDB.stats;
+  const cur = stats[signature] || { n: 0, win: 0 };
+  cur.n += 1;
+  if(win) cur.win += 1;
+  stats[signature] = cur;
+
+  // 가볍게 avoid 갱신(매번 전체 스캔하면 무거우니 “부분적”으로)
+  const wr = cur.n > 0 ? (cur.win / cur.n) : 1;
+  if(cur.n >= PATTERN_MIN_SAMPLES && wr <= PATTERN_BAD_WINRATE){
+    state.patternDB.avoid[signature] = { n: cur.n, wr: wr };
+  }else{
+    // 좋아졌으면 해제
+    if(state.patternDB.avoid[signature]) delete state.patternDB.avoid[signature];
+  }
+
+  // 너무 많이 막히면 상한선 적용(예측이 사라지는 상황 방지)
+  const keys = Object.keys(state.patternDB.avoid);
+  if(keys.length > PATTERN_MAX_AVOID){
+    // 샘플 적은 것부터 제거
+    keys.sort((a,b)=> (state.patternDB.avoid[a]?.n ?? 0) - (state.patternDB.avoid[b]?.n ?? 0));
+    const trim = keys.length - PATTERN_MAX_AVOID;
+    for(let i=0;i<trim;i++){
+      delete state.patternDB.avoid[keys[i]];
+    }
+  }
+
+  saveState();
+}
+
+function shouldAvoidByPattern(signature){
+  ensurePatternDB();
+  if(!signature) return false;
+  return !!state.patternDB.avoid?.[signature];
+}
+
+function getAvoidMeta(signature){
+  ensurePatternDB();
+  return state.patternDB.avoid?.[signature] || null;
+}
+
 /* =========================
    Candidate List (15)
 ========================= */
@@ -183,6 +284,8 @@ let state = loadState() || {
   lastScanResults: [],
   lastPrices: {}
 };
+
+ensurePatternDB();
 
 let tempPos = null; // 모달 임시 포지션(features에서 사용)
 
@@ -314,6 +417,12 @@ function ensureExpiryOnAllPositions(){
     if(p.type !== "HOLD"){
       if(typeof p.sl !== "number" || !Number.isFinite(p.sl)) { p.sl = p.sl ?? p.entry; changed = true; }
       if(typeof p.tp !== "number" || !Number.isFinite(p.tp)) { p.tp = p.tp ?? p.entry; changed = true; }
+    }
+
+    // 패턴 시그니처 마이그레이션(없으면 생성 시도)
+    if(!p.sig && p.explain && p.symbol && p.tfRaw && p.type && p.type !== "HOLD"){
+      p.sig = buildPatternSignature(p.symbol, p.tfRaw, p.type, p.explain);
+      changed = true;
     }
   }
 
@@ -651,66 +760,79 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
   if(base.volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
 
-  const isHold = holdReasons.length > 0;
+  const isHoldByBaseRules = holdReasons.length > 0;
+
+  // explain 먼저 구성
+  const explain = {
+    winProb: winProbAdj,
+    winProbRaw: winProb,
+    recentWinRate: recent,
+    longP: con.longP,
+    shortP: con.shortP,
+    edge,
+    simAvg: con.simAvg,
+    simCount: con.simCount,
+
+    rsi: base.rsi,
+    macdHist: base.macdHist,
+    atr: atrUsed,
+    atrPct: base.atrPct,
+    volTrend: base.volTrend,
+    ema20: base.ema20,
+    ema50: base.ema50,
+    trend: base.trend,
+    trendStrength: base.trendStrength,
+    btcDom: base.btcDom,
+    btcDomUp: base.btcDomUp,
+
+    conf: { tier: adj.tier, rrUsed, tpScale: (CONF_TP_SCALE[adj.tier] ?? 1.0) },
+
+    mtf: {
+      mode,
+      agree: con.agree,
+      votes: con.votes,
+      weights: (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
+      detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
+        k,
+        {
+          tf: tfName(k),
+          type: v.type,
+          winProb: v.winProb,
+          edge: v.edge,
+          simAvg: v.simAvg,
+          simCount: v.simCount,
+          trendStrength: v.trendStrength,
+          atrPct: v.atrPct
+        }
+      ])))
+    },
+
+    holdReasons
+  };
+
+  // ✅ NEW: 실패패턴 차단 (예측을 “줄이는” 게 아니라, “자주 실패하는 조합만 차단”)
+  const sig = buildPatternSignature(symbol, baseTfRaw, type, explain);
+  const avoidMeta = shouldAvoidByPattern(sig) ? getAvoidMeta(sig) : null;
+  if(avoidMeta){
+    holdReasons.push(`실패패턴 차단(n=${avoidMeta.n}, 승률 ${(avoidMeta.wr*100).toFixed(0)}%)`);
+  }
+
+  const finalHold = isHoldByBaseRules || !!avoidMeta;
 
   return {
     id: Date.now(),
     symbol,
     tf: baseTfRaw === "60" ? "1H" : baseTfRaw === "240" ? "4H" : "1D",
     tfRaw: baseTfRaw,
-    type: isHold ? "HOLD" : type,
+    type: finalHold ? "HOLD" : type,
     entry,
-    tp: isHold ? null : tp,
-    sl: isHold ? null : sl,
-    tpPct: isHold ? null : tpPct,
-    slPct: isHold ? null : slPct,
+    tp: finalHold ? null : tp,
+    sl: finalHold ? null : sl,
+    tpPct: finalHold ? null : tpPct,
+    slPct: finalHold ? null : slPct,
     createdAt: Date.now(),
-    explain: {
-      winProb: winProbAdj,
-      winProbRaw: winProb,
-      recentWinRate: recent,
-      longP: con.longP,
-      shortP: con.shortP,
-      edge,
-      simAvg: con.simAvg,
-      simCount: con.simCount,
-
-      rsi: base.rsi,
-      macdHist: base.macdHist,
-      atr: atrUsed,
-      atrPct: base.atrPct,
-      volTrend: base.volTrend,
-      ema20: base.ema20,
-      ema50: base.ema50,
-      trend: base.trend,
-      trendStrength: base.trendStrength,
-      btcDom: base.btcDom,
-      btcDomUp: base.btcDomUp,
-
-      conf: { tier: adj.tier, rrUsed, tpScale: (CONF_TP_SCALE[adj.tier] ?? 1.0) },
-
-      mtf: {
-        mode,
-        agree: con.agree,
-        votes: con.votes,
-        weights: (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
-        detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
-          k,
-          {
-            tf: tfName(k),
-            type: v.type,
-            winProb: v.winProb,
-            edge: v.edge,
-            simAvg: v.simAvg,
-            simCount: v.simCount,
-            trendStrength: v.trendStrength,
-            atrPct: v.atrPct
-          }
-        ])))
-      },
-
-      holdReasons
-    }
+    explain,
+    sig: finalHold ? null : sig   // HOLD는 추적 등록 안 하므로 sig 불필요
   };
 }
 
@@ -944,3 +1066,17 @@ function formatMoney(x){
   if(x >= 1e3)  return (x/1e3).toFixed(2)+"K";
   return String(Math.round(x));
 }
+
+/* ==========================================================
+   ✅ NEW: features.js에서 호출할 “패턴 기록 함수”를 전역으로 제공
+   ========================================================== */
+function recordTradeToPatternDB(pos, win){
+  if(!pos) return;
+  // sig가 없으면 생성 시도 (구버전 포지션 대비)
+  let sig = pos.sig;
+  if(!sig && pos.explain && pos.symbol && pos.tfRaw && pos.type && pos.type !== "HOLD"){
+    sig = buildPatternSignature(pos.symbol, pos.tfRaw, pos.type, pos.explain);
+    pos.sig = sig;
+  }
+  if(sig) recordPatternOutcome(sig, !!win);
+                                                      }
