@@ -11,6 +11,92 @@
  *************************************************************/
 
 /* ==========================================================
+   ✅ NEW (예측 줄이지 않기용)
+   - "실패패턴 차단" 때문에 HOLD가 된 경우:
+     -> 완전 금지(HOLD) 대신 "RISK"로 보여주고,
+        사용자가 원하면 "위험 감안하고 추적 등록" 허용
+   ========================================================== */
+
+function isPatternBlockedHold(pos){
+  if(!pos || pos.type !== "HOLD") return false;
+  const reasons = pos?.explain?.holdReasons || [];
+  return reasons.some(r => String(r).includes("실패패턴 차단"));
+}
+
+function buildForcedTrackFromHold(pos){
+  // core가 HOLD로 만들어 tp/sl이 null이어도, explain 기반으로 복원해서 "추적 등록"을 가능하게 한다.
+  if(!pos || pos.type !== "HOLD") return null;
+
+  const ex = pos.explain || {};
+  const symbol = pos.symbol;
+  const tfRaw = pos.tfRaw;
+
+  // 방향 추정(코어에서 LONG/SHORT였던 방향)
+  const longP = Number(ex.longP ?? 0.5);
+  const shortP = Number(ex.shortP ?? 0.5);
+  const inferredType = (longP >= shortP) ? "LONG" : "SHORT";
+
+  const entry = Number.isFinite(pos.entry) ? pos.entry : null;
+  if(!Number.isFinite(entry) || entry <= 0) return null;
+
+  // core와 동일한 방식으로 tp/sl 산출(가능한 한 동일)
+  const atrUsed = Number(ex.atr ?? 0);
+  const tfMult = TF_MULT[tfRaw] || 1.2;
+
+  const tpScale = Number(ex?.conf?.tpScale ?? 1.0);
+  const rrUsed = Number(ex?.conf?.rrUsed ?? RR);
+
+  let tpDist = atrUsed * tfMult * tpScale;
+  if(!Number.isFinite(tpDist) || tpDist <= 0){
+    // atr 정보가 부족하면 강제추적 불가
+    return null;
+  }
+
+  // TP 최대 제한(TP_MAX_PCT)도 core와 동일 적용
+  let tp = (inferredType === "LONG") ? (entry + tpDist) : (entry - tpDist);
+  let tpPct = Math.abs((tp - entry) / entry) * 100;
+
+  if(tpPct > TP_MAX_PCT){
+    tpPct = TP_MAX_PCT;
+    const newTpDist = entry * (tpPct / 100);
+    tpDist = newTpDist;
+    tp = (inferredType === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
+  }
+
+  const slDist = tpDist / Math.max(rrUsed, 1.01);
+  let sl = (inferredType === "LONG") ? (entry - slDist) : (entry + slDist);
+  let slPct = Math.abs((sl - entry) / entry) * 100;
+
+  // sig 생성 (패턴DB 기록 가능하게)
+  let sig = null;
+  try{
+    sig = buildPatternSignature(symbol, tfRaw, inferredType, ex);
+  }catch(e){}
+
+  // 원본 pos를 "강제추적" 가능한 형태로 반환
+  return {
+    ...pos,
+    type: inferredType,
+    tp,
+    sl,
+    tpPct,
+    slPct,
+    sig,
+    _forceTrack: true,
+    _forceReason: "PATTERN_BLOCK_OVERRIDE"
+  };
+}
+
+function computeScanScore(item){
+  // "예측을 줄이지 않기" 때문에: 패턴 차단은 제외가 아니라 "감점"으로 후순위
+  // 점수 = winProb + edge - penalty
+  const w = Number(item.winProb ?? 0);
+  const e = Number(item.edge ?? 0);
+  const penalty = item.isRisk ? 0.06 : 0.0; // 과격하게 빼지 않음(빈도 유지)
+  return (w * 1.0) + (e * 0.7) - penalty;
+}
+
+/* ==========================================================
    PATCH HELPERS (전략별 카운트 UI)
    ========================================================== */
 function ensureStrategyCountUI(){
@@ -116,8 +202,7 @@ function settleExpiredPositions(){
       }
     }
 
-    // ✅ (1번 업그레이드 핵심) 결과 확정 시: 실패패턴 DB에 누적 기록
-    // - app.core.js에 있는 recordTradeToPatternDB(pos, win)을 사용
+    // ✅ 결과 확정 시: 실패패턴 DB에 누적 기록
     try{ recordTradeToPatternDB(pos, win); }catch(e){}
 
     state.history.total++;
@@ -201,8 +286,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
-  // ✅ FIX: activePositions length로 루프를 막지 않는다.
-  // - 카운트다운이 0인데 정산이 스킵되는 케이스를 원천 차단
   setInterval(() => {
     updateCountdownTexts();
     settleExpiredPositions();
@@ -415,6 +498,13 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
    Modal
    ========================================================== */
 function showResultModal(pos){
+  // ✅ 패턴차단 HOLD라면: "강제추적 가능"한 포지션을 함께 준비
+  let forcePos = null;
+  const blockedByPattern = isPatternBlockedHold(pos);
+  if(blockedByPattern){
+    forcePos = buildForcedTrackFromHold(pos);
+  }
+
   tempPos = pos;
 
   const modal = document.getElementById("result-modal");
@@ -450,24 +540,66 @@ function showResultModal(pos){
   const regimeLine = `추세강도 ${Number(ex.trendStrength||0).toFixed(2)} / ATR ${Number(ex.atrPct||0).toFixed(2)}%`;
 
   if(isHold){
-    grid.innerHTML = `
-      <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
-      <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
-      <div class="mini-box"><small>유사도 평균</small><div>${ex.simAvg.toFixed(1)}%</div></div>
-      <div class="mini-box"><small>표본 수</small><div>${ex.simCount}개</div></div>
-    `;
-    const reasons = ex.holdReasons.map(r => `- ${r}`).join("<br/>");
-    content.innerHTML = `
-      <b>이번에는 “보류”가 더 안전해요.</b><br/>
-      ${reasons}<br/><br/>
-      <b>추가 정보:</b><br/>
-      - ${calibLine}<br/>
-      - ${regimeLine}<br/><br/>
-      <b>정리:</b> 애매할 때 억지로 진입하면 장기 승률이 내려가서, 이번은 패스합니다.
-    `;
-    confirmBtn.disabled = true;
-    confirmBtn.textContent = "보류는 등록하지 않음";
+    // ✅ 패턴차단 HOLD면: "RISK 모드"로 보여주고 강제추적 버튼 활성화
+    const reasons = (ex.holdReasons || []).map(r => `- ${r}`).join("<br/>");
+
+    if(blockedByPattern && forcePos){
+      // 표시용 수치
+      const inferredType = forcePos.type;
+      const tpLine = `$${forcePos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${forcePos.tpPct.toFixed(2)}%)`;
+      const slLine = `$${forcePos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${forcePos.slPct.toFixed(2)}%)`;
+
+      icon.textContent = "⚠️";
+      title.textContent = "RISK (패턴차단 감지)";
+      title.style.color = "var(--danger)";
+
+      grid.innerHTML = `
+        <div class="mini-box"><small>판정</small><div>리스크 경고 (그래도 가능)</div></div>
+        <div class="mini-box"><small>예상 방향</small><div>${inferredType}</div></div>
+        <div class="mini-box"><small>성공확률(추정)</small><div>${(ex.winProb*100).toFixed(1)}%</div></div>
+        <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
+      `;
+
+      content.innerHTML = `
+        <b>현재는 “자주 실패한 패턴”으로 감지되어 기본은 HOLD입니다.</b><br/>
+        하지만 너 요청대로 <b>예측을 줄이지 않기 위해</b> 아래 버튼으로 “위험 감안 추적”을 허용합니다.<br/><br/>
+        <b>복원된 TP/SL(강제추적 기준):</b><br/>
+        - TP ${tpLine}<br/>
+        - SL ${slLine}<br/><br/>
+        <b>HOLD 사유:</b><br/>
+        ${reasons}<br/><br/>
+        <b>추가 정보:</b><br/>
+        - ${calibLine}<br/>
+        - ${regimeLine}<br/><br/>
+        <b>정리:</b> “완전 차단” 대신 “경고 + 감점”으로 운영합니다.
+      `;
+
+      // ✅ 강제추적 버튼 활성화
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "위험 감안하고 추적 등록";
+      confirmBtn.onclick = () => confirmTrack(forcePos); // 강제 포지션으로 등록
+    }else{
+      // 일반 HOLD는 기존대로: 등록 금지
+      grid.innerHTML = `
+        <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
+        <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
+        <div class="mini-box"><small>유사도 평균</small><div>${ex.simAvg.toFixed(1)}%</div></div>
+        <div class="mini-box"><small>표본 수</small><div>${ex.simCount}개</div></div>
+      `;
+      content.innerHTML = `
+        <b>이번에는 “보류”가 더 안전해요.</b><br/>
+        ${reasons}<br/><br/>
+        <b>추가 정보:</b><br/>
+        - ${calibLine}<br/>
+        - ${regimeLine}<br/><br/>
+        <b>정리:</b> 애매할 때 억지로 진입하면 장기 승률이 내려가서, 이번은 패스합니다.
+      `;
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "보류는 등록하지 않음";
+      confirmBtn.onclick = () => {}; // 기본
+    }
   }else{
+    // 일반 LONG/SHORT
     grid.innerHTML = `
       <div class="mini-box"><small>진입가</small><div>$${pos.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
       <div class="mini-box"><small>성공확률(추정)</small><div>${(ex.winProb*100).toFixed(1)}%</div></div>
@@ -495,6 +627,7 @@ function showResultModal(pos){
 
     confirmBtn.disabled = false;
     confirmBtn.textContent = "추적 시스템에 등록";
+    confirmBtn.onclick = () => confirmTrack(); // 기본 tempPos로 등록
   }
 
   modal.style.display = "flex";
@@ -504,34 +637,47 @@ function closeModal(){
   const modal = document.getElementById("result-modal");
   if(modal) modal.style.display = "none";
   tempPos = null;
+
+  // confirmBtn onclick을 원복해도 되지만, 다음 showResultModal에서 다시 세팅한다.
 }
 
-function confirmTrack(){
-  if(!tempPos) return;
-  if(tempPos.type === "HOLD") return;
+function confirmTrack(forcedPos=null){
+  // forcedPos가 있으면 그걸 우선 사용(패턴차단 HOLD override)
+  const posToUse = forcedPos || tempPos;
+  if(!posToUse) return;
 
-  if(hasActivePosition(tempPos.symbol, tempPos.tfRaw)){
+  // 일반 HOLD는 금지, 단 패턴차단 override는 허용
+  if(posToUse.type === "HOLD" && !posToUse._forceTrack){
+    return;
+  }
+
+  if(hasActivePosition(posToUse.symbol, posToUse.tfRaw)){
     toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다.", "warn");
     return;
   }
 
   const createdAt = Date.now();
-  const expiryAt = createdAt + tfToMs(tempPos.tfRaw);
+  const expiryAt = createdAt + tfToMs(posToUse.tfRaw);
 
   state.activePositions.unshift({
-    ...tempPos,
+    ...posToUse,
     status: "ACTIVE",
-    lastPrice: tempPos.entry,
+    lastPrice: posToUse.entry,
     pnl: 0,
     mfePct: 0,
     createdAt,
     expiryAt
   });
+
   saveState();
   closeModal();
   renderTrackingList();
   updateStatsUI();
   updateCountdownTexts();
+
+  if(posToUse._forceTrack){
+    toast(`[${posToUse.symbol} ${posToUse.tf}] RISK 추적 등록 완료 (패턴차단 override)`, "warn");
+  }
 }
 
 /* ==========================================================
@@ -605,7 +751,7 @@ function trackPositions(symbol, currentPrice){
     }
 
     if(close){
-      // ✅ (1번 업그레이드 핵심) 결과 확정 시: 실패패턴 DB에 누적 기록
+      // ✅ 결과 확정 시: 실패패턴 DB에 누적 기록
       try{ recordTradeToPatternDB(pos, win); }catch(e){}
 
       state.history.total++;
@@ -727,11 +873,13 @@ function renderTrackingList(){
       ? `$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${slPct.toFixed(2)}%)`
       : `$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})}`;
 
+    const riskTag = pos._forceTrack ? ` <span style="font-size:11px; font-weight:950; color:var(--danger);">(RISK)</span>` : "";
+
     return `
       <div class="position-card">
         <div class="card-header">
           <div class="card-symbol">
-            ${pos.symbol} <span style="font-size:12px; color:var(--text-sub); font-weight:950;">${pos.tf}</span>
+            ${pos.symbol} <span style="font-size:12px; color:var(--text-sub); font-weight:950;">${pos.tf}</span>${riskTag}
           </div>
           <div class="card-type ${pos.type === "LONG" ? "type-LONG" : "type-SHORT"}">${pos.type}</div>
         </div>
@@ -857,26 +1005,42 @@ async function autoScanUniverse(){
         }catch(e){}
 
         const pos = buildSignalFromCandles_MTF(coin.s, baseTf, candlesByTf, "2TF");
-        if(pos.type === "HOLD") continue;
 
-        results.push({
+        // ✅ 변경: HOLD라도 "패턴차단 HOLD"면 제외하지 않고 RISK로 포함
+        const riskHold = isPatternBlockedHold(pos);
+
+        if(pos.type === "HOLD" && !riskHold) continue;
+
+        // 표시용 타입(리스크 HOLD면 방향 추정)
+        const ex = pos.explain || {};
+        const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
+
+        const item = {
           symbol: pos.symbol,
           tf: pos.tf,
           tfRaw: pos.tfRaw,
-          type: pos.type,
-          winProb: pos.explain.winProb,
-          edge: pos.explain.edge,
-          mtfAgree: pos.explain?.mtf?.agree ?? 1,
-          mtfVotes: (pos.explain?.mtf?.votes || []).join("/"),
-          confTier: pos.explain?.conf?.tier ?? "-"
-        });
+          type: (pos.type === "HOLD") ? inferredType : pos.type,
+          winProb: ex.winProb,
+          edge: ex.edge,
+          mtfAgree: ex?.mtf?.agree ?? 1,
+          mtfVotes: (ex?.mtf?.votes || []).join("/"),
+          confTier: ex?.conf?.tier ?? "-",
+          isRisk: !!riskHold
+        };
+
+        item._score = computeScanScore(item);
+        results.push(item);
       }catch(e){}
 
       await sleep(SCAN_DELAY_MS);
     }
 
-    results.sort((a,b)=> (b.winProb - a.winProb) || (b.edge - a.edge));
-    state.lastScanResults = results.slice(0, 6);
+    // ✅ 변경: score 기반 정렬 (risk는 감점으로 후순위)
+    results.sort((a,b)=> (b._score - a._score));
+    state.lastScanResults = results.slice(0, 6).map(x => {
+      const { _score, ...rest } = x;
+      return rest;
+    });
     state.lastScanAt = Date.now();
     saveState();
 
@@ -911,6 +1075,7 @@ function renderScanResults(){
     const edge = (item.edge*100).toFixed(1);
     const mtf = item.mtfVotes ? ` · MTF ${item.mtfAgree}/2(${item.mtfVotes})` : "";
     const conf = item.confTier ? ` · ${item.confTier}` : "";
+    const risk = item.isRisk ? ` · <span style="color:var(--danger); font-weight:950;">RISK</span>` : "";
 
     return `
       <div class="rec-item" onclick="quickAnalyzeAndShow('${item.symbol}','${item.tfRaw}')">
@@ -920,7 +1085,7 @@ function renderScanResults(){
         </div>
         <div class="rec-right">
           성공확률 ${prob}%<br/>
-          엣지 ${edge}% · ${item.tf}${mtf}${conf}
+          엣지 ${edge}% · ${item.tf}${mtf}${conf}${risk}
         </div>
       </div>
     `;
