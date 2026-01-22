@@ -31,10 +31,10 @@ function tryAuth(){
   const v = String(input.value || "").trim();
   if(v === AUTH_PASSWORD){
     try{ localStorage.setItem(AUTH_KEY, "1"); }catch(e){}
-    err.style.display = "none";
+    if(err) err.style.display = "none";
     hideAuth();
   }else{
-    err.style.display = "block";
+    if(err) err.style.display = "block";
     input.value = "";
     input.focus();
   }
@@ -144,21 +144,25 @@ const TRAIL_GAP_PCT   = 0.55;
 const FEE_PCT = 0.12; // % 단위
 
 /* ==========================================================
-   ✅ NEW: 실패 패턴 자동 추출/차단 엔진 (목표: 예측 빈도 크게 줄이지 않고 실패만 줄이기)
-   - state.patternDB에 (signature -> {n, win}) 누적
-   - 충분히 쌓였는데 승률이 낮은 signature는 자동 차단(HOLD)
+   ✅ NEW: 실패 패턴 엔진 (핵심 변경: "차단" → "패널티")
    ========================================================== */
 const PATTERN_DB_VERSION = 1;
-const PATTERN_MIN_SAMPLES = 14;       // 이 정도는 쌓여야 “그럴듯한 실패패턴”으로 인정
-const PATTERN_BAD_WINRATE = 0.48;     // 이 이하 승률이면 차단 후보
-const PATTERN_MAX_AVOID = 120;        // 너무 많이 막아서 예측이 사라지는 걸 방지(상한)
+const PATTERN_MIN_SAMPLES = 14;       // 통계로 쓸 최소 표본
+const PATTERN_BAD_WINRATE = 0.48;     // 이하면 "나쁜 패턴"
+const PATTERN_MAX_AVOID = 120;        // avoid 리스트 상한
 const PATTERN_BIN = {
-  atrPct: 0.50,       // 0.5% 단위
-  trendStrength: 0.10,// 0.1 단위
-  edge: 0.02,         // 0.02 단위
-  simAvg: 5,          // 5% 단위
-  dom: 1.0            // 1%p 단위
+  atrPct: 0.50,
+  trendStrength: 0.10,
+  edge: 0.02,
+  simAvg: 5,
+  dom: 1.0
 };
+
+// ✅ 핵심: 예측을 줄이지 않기 위한 "감점" 파라미터
+const PATTERN_PENALTY_MAX = 0.12;     // winProb 최대 감점(0~0.12)
+const PATTERN_PENALTY_EDGE_W = 0.70;  // edge 감점 비중
+const PATTERN_HARD_HOLD_WR = 0.34;    // 정말 최악일 때만 HOLD
+const PATTERN_HARD_HOLD_N  = 28;      // 표본도 충분할 때만
 
 function ensurePatternDB(){
   if(!state.patternDB || typeof state.patternDB !== "object"){
@@ -167,7 +171,6 @@ function ensurePatternDB(){
     return;
   }
   if(state.patternDB.v !== PATTERN_DB_VERSION){
-    // 버전업 시 필요한 마이그레이션 자리(현재는 단순 리셋)
     state.patternDB = { v: PATTERN_DB_VERSION, stats: {}, avoid: {} };
     saveState();
     return;
@@ -183,7 +186,6 @@ function _bin(x, step){
 }
 
 function buildPatternSignature(symbol, tfRaw, type, ex){
-  // 너무 세분화하면 표본이 안 모이므로 “핵심만” 적당히 binning
   const atrB = _bin(ex?.atrPct ?? 0, PATTERN_BIN.atrPct);
   const tsB  = _bin(ex?.trendStrength ?? 0, PATTERN_BIN.trendStrength);
   const eB   = _bin(ex?.edge ?? 0, PATTERN_BIN.edge);
@@ -196,7 +198,6 @@ function buildPatternSignature(symbol, tfRaw, type, ex){
   const domUp = (typeof ex?.btcDomUp === "number") ? ex.btcDomUp : 0;
   const domU = domUp > 0.10 ? "UP" : domUp < -0.10 ? "DN" : "FL";
 
-  // symbol까지 포함하면 너무 쪼개질 수 있어 “옵션”인데, 여기선 일단 포함(실전에서 더 잘 맞음)
   return `${symbol}|${tfRaw}|${type}|A${atrB}|T${tsB}|E${eB}|S${sB}|M${mA}|C${cT}|D${domB}|U${domU}`;
 }
 
@@ -210,19 +211,17 @@ function recordPatternOutcome(signature, win){
   if(win) cur.win += 1;
   stats[signature] = cur;
 
-  // 가볍게 avoid 갱신(매번 전체 스캔하면 무거우니 “부분적”으로)
+  // avoid: "통계가 충분하고 승률이 낮으면" 등록 (여기서는 '차단 리스트'로 쓰지 않고 '패널티 메타'로 씀)
   const wr = cur.n > 0 ? (cur.win / cur.n) : 1;
   if(cur.n >= PATTERN_MIN_SAMPLES && wr <= PATTERN_BAD_WINRATE){
     state.patternDB.avoid[signature] = { n: cur.n, wr: wr };
   }else{
-    // 좋아졌으면 해제
     if(state.patternDB.avoid[signature]) delete state.patternDB.avoid[signature];
   }
 
-  // 너무 많이 막히면 상한선 적용(예측이 사라지는 상황 방지)
+  // 상한
   const keys = Object.keys(state.patternDB.avoid);
   if(keys.length > PATTERN_MAX_AVOID){
-    // 샘플 적은 것부터 제거
     keys.sort((a,b)=> (state.patternDB.avoid[a]?.n ?? 0) - (state.patternDB.avoid[b]?.n ?? 0));
     const trim = keys.length - PATTERN_MAX_AVOID;
     for(let i=0;i<trim;i++){
@@ -233,15 +232,30 @@ function recordPatternOutcome(signature, win){
   saveState();
 }
 
-function shouldAvoidByPattern(signature){
-  ensurePatternDB();
-  if(!signature) return false;
-  return !!state.patternDB.avoid?.[signature];
-}
-
 function getAvoidMeta(signature){
   ensurePatternDB();
   return state.patternDB.avoid?.[signature] || null;
+}
+
+// ✅ 핵심: 승률/표본 기반 패널티 계산 (예측을 "줄이지" 않음)
+function computePatternPenalty(meta){
+  if(!meta) return { penalty: 0, hardHold: false };
+
+  const n = Number(meta.n || 0);
+  const wr = Number(meta.wr || 1);
+
+  // 나쁜 정도(0~1): BAD_WINRATE(0.48)보다 얼마나 더 나쁜가
+  const bad = clamp((PATTERN_BAD_WINRATE - wr) / Math.max(PATTERN_BAD_WINRATE, 1e-9), 0, 1);
+
+  // 표본 가중(0~1): 14개부터 서서히 커짐
+  const nW = clamp((n - PATTERN_MIN_SAMPLES) / 30, 0, 1);
+
+  const penalty = clamp(PATTERN_PENALTY_MAX * bad * (0.45 + 0.55 * nW), 0, PATTERN_PENALTY_MAX);
+
+  // 정말 최악일 때만 HOLD (예측 줄이기 목적이 아니라 "반복 폭사 방지")
+  const hardHold = (n >= PATTERN_HARD_HOLD_N && wr <= PATTERN_HARD_HOLD_WR);
+
+  return { penalty, hardHold };
 }
 
 /* =========================
@@ -293,9 +307,9 @@ let tempPos = null; // 모달 임시 포지션(features에서 사용)
    Time helpers (카운트다운)
 ========================= */
 function tfToMs(tfRaw){
-  if(tfRaw === "60") return 60 * 60 * 1000;        // 1H
-  if(tfRaw === "240") return 4 * 60 * 60 * 1000;   // 4H
-  return 24 * 60 * 60 * 1000;                      // 1D
+  if(tfRaw === "60") return 60 * 60 * 1000;
+  if(tfRaw === "240") return 4 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000;
 }
 
 function formatRemain(ms){
@@ -401,25 +415,21 @@ function ensureExpiryOnAllPositions(){
 
     const expected = p.createdAt + tfToMs(p.tfRaw);
 
-    // 5분 이상 차이나면 잘못된 값으로 판단하고 교정
     if(!p.expiryAt || Math.abs(p.expiryAt - expected) > (5 * 60 * 1000)){
       p.expiryAt = expected;
       changed = true;
     }
 
-    // mfePct 마이그레이션
     if(typeof p.mfePct !== "number"){
       p.mfePct = 0;
       changed = true;
     }
 
-    // sl/tp 방어
     if(p.type !== "HOLD"){
       if(typeof p.sl !== "number" || !Number.isFinite(p.sl)) { p.sl = p.sl ?? p.entry; changed = true; }
       if(typeof p.tp !== "number" || !Number.isFinite(p.tp)) { p.tp = p.tp ?? p.entry; changed = true; }
     }
 
-    // 패턴 시그니처 마이그레이션(없으면 생성 시도)
     if(!p.sig && p.explain && p.symbol && p.tfRaw && p.type && p.type !== "HOLD"){
       p.sig = buildPatternSignature(p.symbol, p.tfRaw, p.type, p.explain);
       changed = true;
@@ -480,10 +490,7 @@ function computeSignalCore(symbol, tfRaw, candles){
   const ema50 = emaLast(closes, 50);
   const trend = (ema20 >= ema50) ? 1 : -1;
 
-  // 레짐: |EMA20-EMA50| / ATR
   const trendStrength = (atrRaw > 0) ? (Math.abs(ema20 - ema50) / atrRaw) : 0;
-
-  // ATR%
   const atrPct = (entry > 0) ? ((atrRaw / entry) * 100) : 0;
 
   const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
@@ -701,17 +708,102 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   }
 
   const type = con.type;
-  const winProb = con.winProb;
-  const edge = con.edge;
 
-  // 최근 성과 보정
+  // 기본 확률/엣지
+  const winProbRaw = con.winProb;
+  let winProbAdj = winProbRaw;
+  let edgeAdj = con.edge;
+
+  // 최근 성과 보정(기존)
   const recent = getRecentWinRate(symbol, baseTfRaw, RECENT_CALIB_N);
-  const winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProb + RECENT_CALIB_ALPHA * recent, 0.5, 0.99);
+  winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProbAdj + RECENT_CALIB_ALPHA * recent, 0.5, 0.99);
 
-  // 확신도 기반 TP/SL
-  const adj = applyConfidenceTpSl(tpDistBase, winProbAdj, edge);
+  // --- explain(초안) ---
+  const holdReasons = [];
+  const mtfVotes = (con.votes || []).join("/");
+
+  const explainBase = {
+    winProb: winProbAdj,      // 이후 패턴 패널티 반영으로 갱신됨
+    winProbRaw: winProbRaw,
+    recentWinRate: recent,
+    longP: con.longP,
+    shortP: con.shortP,
+    edge: edgeAdj,            // 이후 패턴 패널티 반영으로 갱신됨
+    simAvg: con.simAvg,
+    simCount: con.simCount,
+
+    rsi: base.rsi,
+    macdHist: base.macdHist,
+    atr: Math.max(atrUsed, 1e-9),
+    atrPct: base.atrPct,
+    volTrend: base.volTrend,
+    ema20: base.ema20,
+    ema50: base.ema50,
+    trend: base.trend,
+    trendStrength: base.trendStrength,
+    btcDom: base.btcDom,
+    btcDomUp: base.btcDomUp,
+
+    conf: null, // 아래에서 채움
+    mtf: {
+      mode,
+      agree: con.agree,
+      votes: con.votes,
+      weights: (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
+      detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
+        k,
+        {
+          tf: tfName(k),
+          type: v.type,
+          winProb: v.winProb,
+          edge: v.edge,
+          simAvg: v.simAvg,
+          simCount: v.simCount,
+          trendStrength: v.trendStrength,
+          atrPct: v.atrPct
+        }
+      ])))
+    },
+
+    holdReasons,
+    pattern: null // 아래에서 채움
+  };
+
+  // ✅ NEW: 실패패턴 "감점" 적용 (예측을 줄이지 않음)
+  const sigForPenalty = buildPatternSignature(symbol, baseTfRaw, type, explainBase);
+  const avoidMeta = getAvoidMeta(sigForPenalty);
+  const pp = computePatternPenalty(avoidMeta);
+
+  if(avoidMeta && pp.penalty > 0){
+    // winProb, edge 감점 (최저 0.50 유지)
+    winProbAdj = clamp(winProbAdj - pp.penalty, 0.50, 0.99);
+    edgeAdj = Math.max(0, edgeAdj - (pp.penalty * PATTERN_PENALTY_EDGE_W));
+  }
+
+  // 패턴 메타 기록
+  explainBase.pattern = avoidMeta ? {
+    sig: sigForPenalty,
+    n: Number(avoidMeta.n || 0),
+    wr: Number(avoidMeta.wr || 0),
+    penalty: pp.penalty,
+    hardHold: pp.hardHold
+  } : {
+    sig: sigForPenalty,
+    n: 0,
+    wr: null,
+    penalty: 0,
+    hardHold: false
+  };
+
+  // explain에 갱신 반영
+  explainBase.winProb = winProbAdj;
+  explainBase.edge = edgeAdj;
+
+  // 확신도 기반 TP/SL (패널티 반영된 winProb/edge로 결정)
+  const adj = applyConfidenceTpSl(tpDistBase, winProbAdj, edgeAdj);
   const tpDist = adj.tpDist;
   const rrUsed = adj.rr;
+  explainBase.conf = { tier: adj.tier, rrUsed, tpScale: (CONF_TP_SCALE[adj.tier] ?? 1.0) };
 
   const slDist = tpDist / Math.max(rrUsed, 1.01);
 
@@ -731,13 +823,12 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
 
-  const holdReasons = [];
+  // HOLD 룰(기존) — 여기서는 "예측 줄이기" 목적이 아니라 "애매한 신호" 방어
   if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
   if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
-  if(edge < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edge*100).toFixed(1)}%)`);
+  if(edgeAdj < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
   if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
 
-  const mtfVotes = (con.votes || []).join("/");
   if(con.votes && con.votes.length >= 2){
     const agreeNeed = (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
     if(con.agree < agreeNeed){
@@ -760,64 +851,23 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
   if(base.volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
 
-  const isHoldByBaseRules = holdReasons.length > 0;
-
-  // explain 먼저 구성
-  const explain = {
-    winProb: winProbAdj,
-    winProbRaw: winProb,
-    recentWinRate: recent,
-    longP: con.longP,
-    shortP: con.shortP,
-    edge,
-    simAvg: con.simAvg,
-    simCount: con.simCount,
-
-    rsi: base.rsi,
-    macdHist: base.macdHist,
-    atr: atrUsed,
-    atrPct: base.atrPct,
-    volTrend: base.volTrend,
-    ema20: base.ema20,
-    ema50: base.ema50,
-    trend: base.trend,
-    trendStrength: base.trendStrength,
-    btcDom: base.btcDom,
-    btcDomUp: base.btcDomUp,
-
-    conf: { tier: adj.tier, rrUsed, tpScale: (CONF_TP_SCALE[adj.tier] ?? 1.0) },
-
-    mtf: {
-      mode,
-      agree: con.agree,
-      votes: con.votes,
-      weights: (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
-      detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
-        k,
-        {
-          tf: tfName(k),
-          type: v.type,
-          winProb: v.winProb,
-          edge: v.edge,
-          simAvg: v.simAvg,
-          simCount: v.simCount,
-          trendStrength: v.trendStrength,
-          atrPct: v.atrPct
-        }
-      ])))
-    },
-
-    holdReasons
-  };
-
-  // ✅ NEW: 실패패턴 차단 (예측을 “줄이는” 게 아니라, “자주 실패하는 조합만 차단”)
-  const sig = buildPatternSignature(symbol, baseTfRaw, type, explain);
-  const avoidMeta = shouldAvoidByPattern(sig) ? getAvoidMeta(sig) : null;
-  if(avoidMeta){
-    holdReasons.push(`실패패턴 차단(n=${avoidMeta.n}, 승률 ${(avoidMeta.wr*100).toFixed(0)}%)`);
+  // ✅ NEW: 패턴 패널티는 "HOLD 사유"로 넣지 않는다(예측 줄이기 싫으니까)
+  // 대신 화면에서만 보이게, 설명에만 남김
+  if(avoidMeta && pp.penalty > 0){
+    // UI에 보여주고 싶으면 holdReasons에 넣을 수도 있지만,
+    // HOLD로 만들지 않기 위해 "주의" 성격 문구로만 추가
+    holdReasons.push(`(패턴 감점 적용: -${(pp.penalty*100).toFixed(1)}%p, n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%)`);
   }
 
-  const finalHold = isHoldByBaseRules || !!avoidMeta;
+  const isHoldByBaseRules = holdReasons.some(r => !String(r).startsWith("(패턴 감점 적용"));
+
+  // ✅ 정말 최악일 때만 HOLD (반복 폭사 방지)
+  const hardHold = !!(avoidMeta && pp.hardHold);
+  if(hardHold){
+    holdReasons.push(`실패패턴 극악(강제 HOLD): n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%`);
+  }
+
+  const finalHold = isHoldByBaseRules || hardHold;
 
   return {
     id: Date.now(),
@@ -831,8 +881,9 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     tpPct: finalHold ? null : tpPct,
     slPct: finalHold ? null : slPct,
     createdAt: Date.now(),
-    explain,
-    sig: finalHold ? null : sig   // HOLD는 추적 등록 안 하므로 sig 불필요
+    explain: explainBase,
+    // ✅ HOLD면 추적 등록 안 하므로 sig null, 아니면 패턴 sig 유지(기록용)
+    sig: finalHold ? null : sigForPenalty
   };
 }
 
@@ -1072,6 +1123,7 @@ function formatMoney(x){
    ========================================================== */
 function recordTradeToPatternDB(pos, win){
   if(!pos) return;
+
   // sig가 없으면 생성 시도 (구버전 포지션 대비)
   let sig = pos.sig;
   if(!sig && pos.explain && pos.symbol && pos.tfRaw && pos.type && pos.type !== "HOLD"){
@@ -1079,4 +1131,4 @@ function recordTradeToPatternDB(pos, win){
     pos.sig = sig;
   }
   if(sig) recordPatternOutcome(sig, !!win);
-                                                      }
+     }
