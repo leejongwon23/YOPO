@@ -295,7 +295,7 @@ function ensureToastUI(){
   wrap.style.display = "flex";
   wrap.style.flexDirection = "column";
   wrap.style.gap = "10px";
-  wrap.styleE6p.style.pointerEvents = "none";
+  wrap.style.pointerEvents = "none";
   document.body.appendChild(wrap);
 }
 function toast(msg, kind="info"){
