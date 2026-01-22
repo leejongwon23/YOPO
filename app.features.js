@@ -915,8 +915,48 @@ function renderScanResults(){
 }
 
 /* ==========================================================
-   Backtest
+   Backtest (수정 핵심)
+   - ✅ other TF 데이터 누수 방지: idx 시점까지만 잘라 사용
+   - ✅ 진입가 룰 현실화: "다음 캔들 시가"로 진입(실전 보정)
+   - ✅ outcome 판정: 같은 캔들에서 TP/SL 동시 도달 시 보수적으로 SL 우선
    ========================================================== */
+
+// idx 시점(기준 timestamp)까지의 캔들만 사용(룩어헤드 방지)
+function sliceCandlesUpToTime(candles, t){
+  if(!Array.isArray(candles) || !candles.length) return [];
+  // candles는 오름차순 정렬이 이미 되어있음(fetchCandles)
+  // 마지막이 이미 <=t면 그대로
+  if(candles[candles.length-1].t <= t) return candles.slice();
+  // 뒤에서부터 줄이는 방식(빠름)
+  let j = candles.length - 1;
+  while(j >= 0 && candles[j].t > t) j--;
+  return candles.slice(0, Math.max(0, j+1));
+}
+
+// pos를 "다음 캔들 시가" 진입으로 보정 (TP/SL도 같이 이동)
+function shiftPosEntryTo(pos, newEntry){
+  if(!pos || !Number.isFinite(newEntry)) return pos;
+  const oldEntry = pos.entry;
+  if(!Number.isFinite(oldEntry) || oldEntry <= 0) return pos;
+
+  const d = newEntry - oldEntry;
+  pos.entry = newEntry;
+
+  if(pos.type !== "HOLD"){
+    if(Number.isFinite(pos.tp)) pos.tp += d;
+    if(Number.isFinite(pos.sl)) pos.sl += d;
+
+    // 퍼센트는 entry 기준이라 재계산
+    if(Number.isFinite(pos.tp)){
+      pos.tpPct = Math.abs((pos.tp - pos.entry) / pos.entry) * 100;
+    }
+    if(Number.isFinite(pos.sl)){
+      pos.slPct = Math.abs((pos.sl - pos.entry) / pos.entry) * 100;
+    }
+  }
+  return pos;
+}
+
 async function runBacktest(){
   const btBtn = document.getElementById("bt-btn");
   if(btBtn){
@@ -937,7 +977,8 @@ async function runBacktest(){
 
     let candlesOther = null;
     try{
-      candlesOther = await fetchCandles(state.symbol, otherTf, 520);
+      // other도 넉넉히 받아두고, idx 시점에 맞춰 잘라 씀(누수 방지)
+      candlesOther = await fetchCandles(state.symbol, otherTf, EXTENDED_LIMIT);
     }catch(e){}
 
     let wins=0, total=0;
@@ -952,10 +993,16 @@ async function runBacktest(){
 
       const byTf = { [baseTf]: sliceBase };
 
+      // ✅ other TF는 "현재 idx 시점까지"로 자르기(미래 누수 제거)
       if(Array.isArray(candlesOther) && candlesOther.length > 120){
-        byTf[otherTf] = candlesOther.slice(-520);
+        const tRef = sliceBase[sliceBase.length-1].t;
+        const sliceOther = sliceCandlesUpToTime(candlesOther, tRef);
+        if(sliceOther.length >= (SIM_WINDOW + FUTURE_H + 80)){
+          byTf[otherTf] = sliceOther;
+        }
       }
 
+      // 신호 생성
       const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, byTf, "2TF");
       if(pos.type === "HOLD") continue;
 
@@ -964,6 +1011,12 @@ async function runBacktest(){
       if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
       if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
 
+      // ✅ 실전 보정: 다음 캔들 시가로 진입(가능할 때만)
+      const entryCandle = candlesBase[idx+1];
+      if(!entryCandle || !Number.isFinite(entryCandle.o)) continue;
+      shiftPosEntryTo(pos, entryCandle.o);
+
+      // ✅ entryCandle(진입 캔들)부터 outcome 판정 포함
       const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
       const outcome = simulateOutcome(pos, future);
       if(!outcome.resolved) continue;
@@ -989,7 +1042,7 @@ async function runBacktest(){
     const tfNameShow = baseTf === "60" ? "1H" : baseTf === "240" ? "4H" : "1D";
     if(rEl){
       rEl.textContent =
-        `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · CONF(TP/SL 조정) · 비용 -${FEE_PCT.toFixed(2)}% 반영`;
+        `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · ✅otherTF누수방지 · ✅다음시가진입 · ✅동봉캔들보수판정 · 비용 -${FEE_PCT.toFixed(2)}% 반영`;
     }
 
     if(box) box.classList.add("show");
@@ -1005,29 +1058,46 @@ async function runBacktest(){
 }
 
 function simulateOutcome(pos, futureCandles){
+  // ✅ 보수 규칙:
+  // 한 캔들에서 TP와 SL이 모두 닿으면 "SL 먼저"로 간주(현실에서 흔히 불리하게 체결될 수 있음)
   for(const c of futureCandles){
     const hi = c.h, lo = c.l;
+
     if(pos.type === "LONG"){
-      if(hi >= pos.tp){
-        const pnl = ((pos.tp - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:true, pnlPct:pnl };
-      }
-      if(lo <= pos.sl){
+      const hitTP = (hi >= pos.tp);
+      const hitSL = (lo <= pos.sl);
+
+      if(hitTP && hitSL){
         const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl };
+        return { resolved:true, win:false, pnlPct:pnl, reason:"BOTH_SL" };
+      }
+      if(hitTP){
+        const pnl = ((pos.tp - pos.entry)/pos.entry)*100 - FEE_PCT;
+        return { resolved:true, win:true, pnlPct:pnl, reason:"TP" };
+      }
+      if(hitSL){
+        const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
+        return { resolved:true, win:false, pnlPct:pnl, reason:"SL" };
       }
     }else{
-      if(lo <= pos.tp){
-        const pnl = ((pos.entry - pos.tp)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:true, pnlPct:pnl };
-      }
-      if(hi >= pos.sl){
+      const hitTP = (lo <= pos.tp);
+      const hitSL = (hi >= pos.sl);
+
+      if(hitTP && hitSL){
         const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl };
+        return { resolved:true, win:false, pnlPct:pnl, reason:"BOTH_SL" };
+      }
+      if(hitTP){
+        const pnl = ((pos.entry - pos.tp)/pos.entry)*100 - FEE_PCT;
+        return { resolved:true, win:true, pnlPct:pnl, reason:"TP" };
+      }
+      if(hitSL){
+        const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
+        return { resolved:true, win:false, pnlPct:pnl, reason:"SL" };
       }
     }
   }
-  return { resolved:false, win:false, pnlPct:0 };
+  return { resolved:false, win:false, pnlPct:0, reason:"NO_HIT" };
 }
 
 /* ==========================================================
