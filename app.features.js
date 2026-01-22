@@ -11,6 +11,37 @@
  *************************************************************/
 
 /* ==========================================================
+   ✅ BUGFIX HELPERS
+   - pos.id 누락 방지: 카운트다운/부분업데이트가 id 기반이라
+     activePositions에 들어가는 순간 id가 반드시 필요함.
+   ========================================================== */
+function genPosId(){
+  // 충분히 유니크한 id (시간 + 랜덤)
+  return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function ensurePosId(pos){
+  if(!pos) return pos;
+  if(!pos.id || typeof pos.id !== "string" || !pos.id.trim()){
+    pos.id = genPosId();
+  }
+  return pos;
+}
+
+function ensureIdsOnAllPositions(){
+  if(!state) return;
+  if(Array.isArray(state.activePositions)){
+    for(const p of state.activePositions) ensurePosId(p);
+  }
+  // closedTrades는 id가 있긴 하지만, 안전하게
+  if(Array.isArray(state.closedTrades)){
+    for(const r of state.closedTrades){
+      if(!r.id) r.id = Date.now() + Math.floor(Math.random() * 1000);
+    }
+  }
+}
+
+/* ==========================================================
    ✅ NEW (예측 줄이지 않기용)
    - "실패패턴 차단" 때문에 HOLD가 된 경우:
      -> 완전 금지(HOLD) 대신 "RISK"로 보여주고,
@@ -39,12 +70,17 @@ function buildForcedTrackFromHold(pos){
   const entry = Number.isFinite(pos.entry) ? pos.entry : null;
   if(!Number.isFinite(entry) || entry <= 0) return null;
 
+  // ✅ core 상수/테이블이 없을 수 있으니 방어
+  const TF_MULT_SAFE = (typeof TF_MULT === "object" && TF_MULT) ? TF_MULT : { "60":1.0, "240":1.15, "D":1.3 };
+  const RR_SAFE = (typeof RR === "number" && Number.isFinite(RR)) ? RR : 1.6;
+  const TP_MAX_PCT_SAFE = (typeof TP_MAX_PCT === "number" && Number.isFinite(TP_MAX_PCT)) ? TP_MAX_PCT : 6.0;
+
   // core와 동일한 방식으로 tp/sl 산출(가능한 한 동일)
   const atrUsed = Number(ex.atr ?? 0);
-  const tfMult = TF_MULT[tfRaw] || 1.2;
+  const tfMult = TF_MULT_SAFE[tfRaw] || 1.2;
 
   const tpScale = Number(ex?.conf?.tpScale ?? 1.0);
-  const rrUsed = Number(ex?.conf?.rrUsed ?? RR);
+  const rrUsed = Number(ex?.conf?.rrUsed ?? RR_SAFE);
 
   let tpDist = atrUsed * tfMult * tpScale;
   if(!Number.isFinite(tpDist) || tpDist <= 0){
@@ -56,8 +92,8 @@ function buildForcedTrackFromHold(pos){
   let tp = (inferredType === "LONG") ? (entry + tpDist) : (entry - tpDist);
   let tpPct = Math.abs((tp - entry) / entry) * 100;
 
-  if(tpPct > TP_MAX_PCT){
-    tpPct = TP_MAX_PCT;
+  if(tpPct > TP_MAX_PCT_SAFE){
+    tpPct = TP_MAX_PCT_SAFE;
     const newTpDist = entry * (tpPct / 100);
     tpDist = newTpDist;
     tp = (inferredType === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
@@ -70,8 +106,13 @@ function buildForcedTrackFromHold(pos){
   // sig 생성 (패턴DB 기록 가능하게)
   let sig = null;
   try{
-    sig = buildPatternSignature(symbol, tfRaw, inferredType, ex);
+    if(typeof buildPatternSignature === "function"){
+      sig = buildPatternSignature(symbol, tfRaw, inferredType, ex);
+    }
   }catch(e){}
+
+  // ✅ id 보장 (카운트다운/부분업데이트 필수)
+  ensurePosId(pos);
 
   // 원본 pos를 "강제추적" 가능한 형태로 반환
   return {
@@ -141,6 +182,9 @@ function updateCountdownTexts(){
   if(!list.length) return;
 
   for(const pos of list){
+    // ✅ id 보장
+    ensurePosId(pos);
+
     const el = document.getElementById(`remain-${pos.id}`);
     if(!el) continue;
 
@@ -165,6 +209,7 @@ function settleExpiredPositions(){
 
   for(let i = list.length - 1; i >= 0; i--){
     const pos = list[i];
+    ensurePosId(pos);
 
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
     if(now < (expiryAt - DRIFT_MS)) continue;
@@ -269,6 +314,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // 마이그레이션(만료/슬tp/mfe)
   ensureExpiryOnAllPositions();
+
+  // ✅ BUGFIX: id 누락 방지 (카운트다운/부분업데이트 안정화)
+  ensureIdsOnAllPositions();
+  saveState();
 
   initChart();
   renderUniverseList();
@@ -646,6 +695,9 @@ function confirmTrack(forcedPos=null){
   const posToUse = forcedPos || tempPos;
   if(!posToUse) return;
 
+  // ✅ id 보장
+  ensurePosId(posToUse);
+
   // 일반 HOLD는 금지, 단 패턴차단 override는 허용
   if(posToUse.type === "HOLD" && !posToUse._forceTrack){
     return;
@@ -661,6 +713,7 @@ function confirmTrack(forcedPos=null){
 
   state.activePositions.unshift({
     ...posToUse,
+    id: posToUse.id, // ✅ 확실히 유지
     status: "ACTIVE",
     lastPrice: posToUse.entry,
     pnl: 0,
@@ -688,6 +741,8 @@ function trackPositions(symbol, currentPrice){
 
   for(let i = state.activePositions.length - 1; i >= 0; i--){
     const pos = state.activePositions[i];
+    ensurePosId(pos);
+
     if(pos.symbol !== symbol) continue;
 
     pos.lastPrice = currentPrice;
@@ -824,7 +879,12 @@ function renderTrackingList(){
 
   ensureExpiryOnAllPositions();
 
+  // ✅ BUGFIX: 렌더 전에 id 보장
+  ensureIdsOnAllPositions();
+
   container.innerHTML = state.activePositions.map(pos => {
+    ensurePosId(pos);
+
     const isUp = pos.pnl >= 0;
     const color = isUp ? "var(--success)" : "var(--danger)";
 
