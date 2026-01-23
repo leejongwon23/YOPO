@@ -17,7 +17,9 @@ async function refreshUniverseAndGlobals(){
     if(typeof dom === "number"){
       state.btcDomPrev = (typeof state.btcDom === "number") ? state.btcDom : null;
       state.btcDom = dom;
-      document.getElementById("btc-dom-pill").innerText = `BTC DOM: ${dom.toFixed(1)}%`;
+
+      const pill = document.getElementById("btc-dom-pill");
+      if(pill) pill.innerText = `BTC DOM: ${dom.toFixed(1)}%`;
     }
 
     const markets = await fetchJSON(CG_MARKETS, { timeoutMs: 7000, retry: 1 });
@@ -39,7 +41,9 @@ async function refreshUniverseAndGlobals(){
     state.lastApiHealth = "ok";
     saveState();
 
-    document.getElementById("universe-ts").innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+    const tsEl = document.getElementById("universe-ts");
+    if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+
     if(apiDot) apiDot.className = "status-dot ok";
 
     // UI 렌더는 features에 있을 수 있음(호출 시점에 존재하면 OK)
@@ -95,7 +99,9 @@ async function fallbackUniverseFromBybit(){
     state.lastUniverseAt = Date.now();
     saveState();
 
-    document.getElementById("universe-ts").innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+    const tsEl = document.getElementById("universe-ts");
+    if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+
     if(typeof renderUniverseList === "function") renderUniverseList();
   }catch(e){
     console.error("Bybit fallback universe failed:", e);
@@ -107,25 +113,43 @@ async function fallbackUniverseFromBybit(){
 ========================= */
 async function marketTick(){
   try{
+    // ✅ 방어: lastPrices 없으면 초기화
+    if(!state.lastPrices || typeof state.lastPrices !== "object"){
+      state.lastPrices = {};
+    }
+
     const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
     const tickers = json?.result?.list || [];
-    const symbols = new Set(state.universe.map(x => x.s));
+
+    const uni = Array.isArray(state.universe) ? state.universe : [];
+    const symbols = new Set(uni.map(x => x.s));
+
+    // ✅ 핵심 최적화: "실제로 추적 중인 심볼"만 trackPositions 호출
+    const active = Array.isArray(state.activePositions) ? state.activePositions : [];
+    const activeSymbols = new Set(active.map(p => p?.symbol).filter(Boolean));
 
     for(const t of tickers){
       if(!symbols.has(t.symbol)) continue;
+
       const price = parseFloat(t.lastPrice || "0");
       const chg = parseFloat(t.price24hPcnt || "0") * 100;
+
       if(price > 0){
         // updateCoinRow / trackPositions는 features에 있어도 OK
         if(typeof updateCoinRow === "function") updateCoinRow(t.symbol, price, chg);
         state.lastPrices[t.symbol] = { price, chg, ts: Date.now() };
       }
-      if(price > 0 && typeof trackPositions === "function") trackPositions(t.symbol, price);
+
+      // ✅ 유니버스 전체가 아니라 "활성 추적 심볼"만 추적 업데이트
+      if(price > 0 && activeSymbols.has(t.symbol) && typeof trackPositions === "function"){
+        trackPositions(t.symbol, price);
+      }
     }
+
     saveState();
 
-    if(!symbols.has(state.symbol) && state.universe[0]){
-      if(typeof switchCoin === "function") switchCoin(state.universe[0].s);
+    if(!symbols.has(state.symbol) && uni[0]){
+      if(typeof switchCoin === "function") switchCoin(uni[0].s);
     }
   }catch(e){
     console.error("Market tick error:", e);
