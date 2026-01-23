@@ -74,6 +74,72 @@ function sleepCancelable(ms, token){
    ✅ SAFETY: formatMoney 폴백 (부트 중 renderUniverseList가 터지면
    setInterval이 아예 안 걸려서 "정산/통계/추적 갱신 멈춤" 현상이 생김)
    ========================================================== */
+function getTradingViewSymbol(sym){
+  ensureRuntimeState();
+
+  const preferRaw = String(state?.settings?.chartExchange || "AUTO").toUpperCase();
+  const prefer = (preferRaw === "BYBIT" || preferRaw === "BINANCE") ? preferRaw : "AUTO";
+  const usePerp = (state?.settings?.chartPerp !== false);
+  const suffix = usePerp ? ".P" : "";
+
+  const norm = String(sym || "").toUpperCase();
+  const no1000 = norm.replace(/^1000/, "");
+
+  const candidates = [];
+  const push = (ex, s, withSuffix=true) => {
+    if(!s) return;
+    const key = `${ex}:${s}${withSuffix ? suffix : ""}`;
+    if(!candidates.includes(key)) candidates.push(key);
+  };
+
+  if(prefer === "AUTO"){
+    // ✅ AUTO: 차트는 가능한 한 '안 깨지게' 표시하는 것이 목표
+    // - 숫자 프리픽스(1000...)는 BYBIT에서 더 자주 존재
+    // - 일반 심볼은 BINANCE에서 더 자주 존재
+    if(/^\d/.test(norm)){
+      push("BYBIT", norm, true);
+      push("BYBIT", norm, false);
+      push("BINANCE", norm, true);
+      push("BINANCE", norm, false);
+      if(no1000 !== norm){
+        push("BINANCE", no1000, true);
+        push("BINANCE", no1000, false);
+        push("BYBIT", no1000, true);
+        push("BYBIT", no1000, false);
+      }
+    }else{
+      push("BINANCE", norm, true);
+      push("BINANCE", norm, false);
+      push("BYBIT", norm, true);
+      push("BYBIT", norm, false);
+      if(no1000 !== norm){
+        push("BINANCE", no1000, true);
+        push("BYBIT", no1000, true);
+      }
+    }
+  }else{
+    // ✅ 강제 선택(BYBIT/BINANCE)
+    const other = (prefer === "BYBIT") ? "BINANCE" : "BYBIT";
+    push(prefer, norm, true);
+    push(prefer, norm, false);
+    push(other, norm, true);
+    push(other, norm, false);
+
+    if(no1000 !== norm){
+      push(prefer, no1000, true);
+      push(other, no1000, true);
+      push(prefer, no1000, false);
+      push(other, no1000, false);
+    }
+  }
+
+  // ✅ 검증(Invalid symbol) 여부는 위젯이 내부에서 처리하므로 여기서 감지 불가.
+  // 대신, 후보군을 저장해 두고 '차트 소스 변경' 버튼으로 사용자가 즉시 교체 가능.
+  state._lastChartCandidates = candidates;
+  return candidates[0] || `BYBIT:${norm}${suffix}`;
+}
+
+
 function formatMoney(n){
   const v = Number(n);
   if(!Number.isFinite(v)) return "-";
@@ -428,7 +494,7 @@ function settleExpiredPositions(){
     };
 
     state.closedTrades.unshift(record);
-    state.closedTrades = state.closedTrades.slice(0, 30);
+    state.closedTrades = state.closedTrades.slice(0, 300);
 
     list.splice(i, 1);
     changed = true;
@@ -563,7 +629,7 @@ function initChart(){
   wrap.innerHTML = "";
   new TradingView.widget({
     autosize:true,
-    symbol:"BYBIT:" + state.symbol,
+    symbol:getTradingViewSymbol(state.symbol),
     interval:state.tf,
     timezone:"Asia/Seoul",
     theme:"light",
@@ -1171,6 +1237,349 @@ function confirmTrack(forcedPos=null){
   }
 }
 
+
+/* ==========================================================
+   ✅ UI: 성공률 우선 모드 / 완성 캔들만 사용 / 화면 확장
+   ========================================================== */
+function setMiniToggleText(){
+  const strictBtn = document.getElementById("strict-mode-btn");
+  const closedBtn = document.getElementById("closed-candle-btn");
+
+  const chartExBtn = document.getElementById("chart-ex-btn");
+  const chartPerpBtn = document.getElementById("chart-perp-btn");
+
+  if(strictBtn){
+    const on = !!state?.settings?.strictMode;
+    strictBtn.classList.toggle("off", !on);
+    strictBtn.textContent = `성공률 우선 모드: ${on ? "ON" : "OFF"}`;
+  }
+  if(closedBtn){
+    const on = !!state?.settings?.closedCandleOnly;
+    closedBtn.classList.toggle("off", !on);
+    closedBtn.textContent = `종가(완성캔들)만 사용: ${on ? "ON" : "OFF"}`;
+  }
+
+  if(chartExBtn){
+    const ex = String(state?.settings?.chartExchange || "AUTO").toUpperCase();
+    chartExBtn.classList.toggle("off", false);
+    chartExBtn.textContent = `차트 소스: ${ex}`;
+  }
+  if(chartPerpBtn){
+    const on = (state?.settings?.chartPerp !== false);
+    chartPerpBtn.classList.toggle("off", !on);
+    chartPerpBtn.textContent = `차트 선물(.P): ${on ? "ON" : "OFF"}`;
+  }
+}
+
+function toggleStrictMode(){
+  ensureRuntimeState();
+  state.settings = state.settings || {};
+  state.settings.strictMode = !state.settings.strictMode;
+  saveState();
+  setMiniToggleText();
+  toast(`성공률 우선 모드: ${state.settings.strictMode ? "ON(보수적)" : "OFF(적극적)"}`);
+}
+
+function toggleClosedCandle(){
+  ensureRuntimeState();
+  state.settings = state.settings || {};
+  state.settings.closedCandleOnly = !state.settings.closedCandleOnly;
+  saveState();
+  setMiniToggleText();
+  toast(`완성 캔들만 사용: ${state.settings.closedCandleOnly ? "ON" : "OFF"}`);
+}
+
+function cycleChartExchange(){
+  ensureRuntimeState();
+  state.settings = state.settings || {};
+  const cur = String(state.settings.chartExchange || "AUTO").toUpperCase();
+  const order = ["AUTO","BINANCE","BYBIT"];
+  const i = order.indexOf(cur);
+  const next = order[(i >= 0 ? i+1 : 0) % order.length];
+  state.settings.chartExchange = next;
+  saveState();
+  setMiniToggleText();
+  initChart();
+  toast(`차트 소스: ${next}`);
+}
+
+function toggleChartPerp(){
+  ensureRuntimeState();
+  state.settings = state.settings || {};
+  state.settings.chartPerp = !(state.settings.chartPerp !== false);
+  saveState();
+  setMiniToggleText();
+  initChart();
+  toast(`차트 선물(.P): ${state.settings.chartPerp ? "ON" : "OFF"}`);
+}
+
+function toggleSidebar(){
+  document.body.classList.toggle("sidebar-collapsed");
+}
+
+/* ==========================================================
+   ✅ Drawer Modal (코인목록/스캔목록/누적기록)
+   ========================================================== */
+let __drawerMode = null;
+let __drawerFilter = "ALL";
+
+function closeDrawer(){
+  const ov = document.getElementById("drawer-overlay");
+  if(ov) ov.style.display = "none";
+  __drawerMode = null;
+}
+
+function openDrawer(mode){
+  ensureRuntimeState();
+  __drawerMode = mode;
+  __drawerFilter = "ALL";
+
+  const ov = document.getElementById("drawer-overlay");
+  const title = document.getElementById("drawer-title");
+  const sub = document.getElementById("drawer-sub");
+  const body = document.getElementById("drawer-body");
+  const search = document.getElementById("drawer-search");
+
+  if(!ov || !title || !sub || !body || !search){
+    toast("Drawer UI를 찾지 못했습니다.");
+    return;
+  }
+
+  search.value = "";
+  search.oninput = () => drawerRefresh();
+
+  ov.style.display = "flex";
+
+  if(mode === "COINS"){
+    title.textContent = "코인목록 (60)";
+    sub.textContent = "원하는 코인을 선택하면 닫히고, 바로 예측도 실행할 수 있습니다.";
+    renderDrawerFilters(["ALL","TOP"], ["전체","상위"]);
+    renderCoinDrawer("");
+  }else if(mode === "SCAN"){
+    title.textContent = "자동 스캔 결과";
+    const tfLabel = tfLabelFromRaw(state.tf);
+    sub.textContent = `현재 기준 TF: ${tfLabel} | 전체 60을 스캔하고, 점수 순으로 정렬합니다.`;
+    renderDrawerFilters(["ALL","ACTION","HOLD"], ["전체","예측가능","HOLD"]);
+    renderScanDrawer("");
+  }else if(mode === "HISTORY"){
+    title.textContent = "누적 기록 (성공/실패)";
+    sub.textContent = "종료된 포지션(누적) 전체 목록입니다.";
+    renderDrawerFilters(["ALL","WIN","LOSS"], ["전체","성공","실패"]);
+    renderHistoryDrawer("");
+  }else{
+    title.textContent = "목록";
+    sub.textContent = "--";
+    renderDrawerFilters(["ALL"], ["전체"]);
+    body.innerHTML = "<div class='muted'>데이터 없음</div>";
+  }
+}
+
+function drawerRefresh(){
+  const search = document.getElementById("drawer-search");
+  const q = (search?.value || "").trim().toUpperCase();
+
+  if(__drawerMode === "COINS") renderCoinDrawer(q);
+  if(__drawerMode === "SCAN") renderScanDrawer(q);
+  if(__drawerMode === "HISTORY") renderHistoryDrawer(q);
+}
+
+function renderDrawerFilters(values, labels){
+  const box = document.getElementById("drawer-filters");
+  if(!box) return;
+
+  const chips = values.map((v, i) => {
+    const label = labels[i] || v;
+    const active = (__drawerFilter === v) ? "active" : "";
+    return `<button class="drawer-filter ${active}" onclick="setDrawerFilter('${v}')">${label}</button>`;
+  }).join("");
+  box.innerHTML = chips;
+}
+
+function setDrawerFilter(v){
+  __drawerFilter = v;
+  drawerRefresh();
+  // re-render chips to show active
+  if(__drawerMode === "COINS") renderDrawerFilters(["ALL","TOP"], ["전체","상위"]);
+  if(__drawerMode === "SCAN") renderDrawerFilters(["ALL","ACTION","HOLD"], ["전체","예측가능","HOLD"]);
+  if(__drawerMode === "HISTORY") renderDrawerFilters(["ALL","WIN","LOSS"], ["전체","성공","실패"]);
+}
+
+/* ===== COIN DRAWER ===== */
+function openCoinModal(){ openDrawer("COINS"); }
+function openScanModal(){ openDrawer("SCAN"); }
+function openHistoryModal(){ openDrawer("HISTORY"); }
+
+function renderCoinDrawer(q){
+  const body = document.getElementById("drawer-body");
+  if(!body) return;
+
+  const list = (state.universe || []).slice();
+  const filtered = list.filter(c => {
+    const sym = String(c.s || "").toUpperCase();
+    const name = String(c.n || "").toUpperCase();
+    if(q && !(sym.includes(q) || name.includes(q))) return false;
+
+    if(__drawerFilter === "TOP"){
+      return ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","LINKUSDT","SUIUSDT","INJUSDT"].includes(sym);
+    }
+    return true;
+  });
+
+  const rows = filtered.map(c => {
+    const sym = c.s;
+    const name = c.n || "--";
+    const p = state.lastPrices?.[sym]?.p;
+    const ch = state.lastPrices?.[sym]?.c;
+    const pTxt = (p != null) ? formatMoney(p) : "--";
+    const cTxt = (ch != null) ? `${Number(ch).toFixed(2)}%` : "--";
+    return `
+      <div class="drawer-row">
+        <div class="drawer-left">
+          <div class="drawer-sym">${sym}</div>
+          <div class="drawer-name">${name}</div>
+        </div>
+        <div class="drawer-right">
+          <div class="drawer-metrics">
+            <div class="p">${pTxt}</div>
+            <div class="c">${cTxt}</div>
+          </div>
+          <div class="drawer-actions2">
+            <button class="drawer-btn secondary" onclick="drawerPickCoin('${sym}')">선택</button>
+            <button class="drawer-btn primary" onclick="drawerPredictCoin('${sym}')">예측</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  body.innerHTML = `<div class="drawer-list">${rows || "<div class='muted'>검색 결과가 없습니다.</div>"}</div>`;
+}
+
+function drawerPickCoin(sym){
+  switchCoin(sym);
+  closeDrawer();
+  toast(`${sym} 선택 완료`);
+}
+function drawerPredictCoin(sym){
+  switchCoin(sym);
+  closeDrawer();
+  quickAnalyzeAllAndShow(sym);
+}
+
+/* ===== SCAN DRAWER ===== */
+function renderScanDrawer(q){
+  const body = document.getElementById("drawer-body");
+  if(!body) return;
+
+  const data = state.lastFullScanResults || [];
+  if(!data.length){
+    body.innerHTML = `
+      <div class="muted" style="margin-bottom:10px;">아직 전체 스캔 데이터가 없습니다.</div>
+      <button class="action-btn primary" onclick="autoScanUniverse?.(true)">60개 전체 스캔 시작</button>
+      <div class="muted" style="margin-top:8px;">(완료 후 이 화면에 60개 결과가 표시됩니다)</div>
+    `;
+    return;
+  }
+
+  const filtered = data.filter(x => {
+    const sym = String(x.symbol || "").toUpperCase();
+    if(q && !sym.includes(q)) return false;
+
+    if(__drawerFilter === "ACTION") return x.type !== "HOLD";
+    if(__drawerFilter === "HOLD") return x.type === "HOLD";
+    return true;
+  });
+
+  const rows = filtered.map(x => {
+    const badge = x.type === "LONG" ? "long" : (x.type === "SHORT" ? "short" : "hold");
+    const typeTxt = x.type || "HOLD";
+    const tfTxt = x.tfLabel || tfLabelFromRaw(state.tf);
+    const prob = (x.winProb != null) ? `${(x.winProb*100).toFixed(1)}%` : "--";
+    const edge = (x.edge != null) ? `${(x.edge*100).toFixed(1)}%` : "--";
+    const sim = (x.simAvg != null) ? `${Number(x.simAvg).toFixed(1)}%` : "--";
+    const score = (x.score != null) ? `${Number(x.score).toFixed(3)}` : "--";
+
+    return `
+      <tr>
+        <td>${x.symbol}</td>
+        <td><span class="drawer-badge ${badge}">${typeTxt}</span></td>
+        <td>${tfTxt}</td>
+        <td>${prob}</td>
+        <td>${edge}</td>
+        <td>${sim}</td>
+        <td>${score}</td>
+        <td style="width:170px;">
+          <button class="drawer-btn secondary" onclick="drawerPickCoin('${x.symbol}')">선택</button>
+          <button class="drawer-btn primary" onclick="quickAnalyzeAllAndShow('${x.symbol}')">정밀추적</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  body.innerHTML = `
+    <table class="drawer-table">
+      <thead>
+        <tr>
+          <th>심볼</th><th>신호</th><th>TF</th><th>승률</th><th>엣지</th><th>유사도</th><th>점수</th><th>동작</th>
+        </tr>
+      </thead>
+      <tbody>${rows || ""}</tbody>
+    </table>
+  `;
+}
+
+/* ===== HISTORY DRAWER ===== */
+function renderHistoryDrawer(q){
+  const body = document.getElementById("drawer-body");
+  if(!body) return;
+
+  const data = (state.closedTrades || []).slice();
+  if(!data.length){
+    body.innerHTML = "<div class='muted'>아직 종료 기록이 없습니다.</div>";
+    return;
+  }
+
+  const filtered = data.filter(x => {
+    const sym = String(x.symbol || "").toUpperCase();
+    if(q && !sym.includes(q)) return false;
+
+    if(__drawerFilter === "WIN") return x.result === "WIN";
+    if(__drawerFilter === "LOSS") return x.result === "LOSS";
+    return true;
+  });
+
+  const rows = filtered.map(x => {
+    const badge = x.type === "LONG" ? "long" : (x.type === "SHORT" ? "short" : "hold");
+    const resBadge = x.result === "WIN" ? "long" : "short";
+    const pnl = (x.pnlPct != null) ? `${x.pnlPct.toFixed(2)}%` : "--";
+    const when = x.time ? new Date(x.time).toLocaleString() : "--";
+    const tf = x.tf || "--";
+    return `
+      <tr>
+        <td>${when}</td>
+        <td>${x.symbol}</td>
+        <td><span class="drawer-badge ${badge}">${x.type}</span></td>
+        <td>${tf}</td>
+        <td>${pnl}</td>
+        <td><span class="drawer-badge ${resBadge}">${x.result}</span></td>
+        <td style="width:150px;">
+          <button class="drawer-btn secondary" onclick="drawerPickCoin('${x.symbol}')">차트</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  body.innerHTML = `
+    <table class="drawer-table">
+      <thead>
+        <tr>
+          <th>시간</th><th>심볼</th><th>타입</th><th>TF</th><th>PnL</th><th>결과</th><th>동작</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
 /* ==========================================================
    Tracking
    ========================================================== */
@@ -1273,7 +1682,7 @@ function trackPositions(symbol, currentPrice){
         closedAt: Date.now()
       };
       state.closedTrades.unshift(record);
-      state.closedTrades = state.closedTrades.slice(0, 30);
+      state.closedTrades = state.closedTrades.slice(0, 300);
 
       state.activePositions.splice(i, 1);
       saveState();
@@ -1475,6 +1884,126 @@ function updateStatsUI(){
 }
 
 /* ==========================================================
+   ✅ 자동 스캔 (60/현재 TF)
+   - state.universe(60)를 전부 스캔하고, 결과(60개)를 Drawer에서 보기 좋게 표시
+   - strictMode=true 이면 더 보수적으로 필터링(승률↑, 빈도↓)
+   ========================================================== */
+async function autoScanUniverse(openAfter = true){
+  ensureRuntimeState();
+
+  const opToken = beginOperation("SCAN_60");
+
+  const scanBtn = document.getElementById("scan-btn");
+  const status = document.getElementById("scan-status");
+  if(scanBtn) scanBtn.disabled = true;
+  if(status) status.textContent = "스캔 준비중...";
+
+  try{
+    const tuning = (typeof getTuning === "function") ? getTuning() : { BT_MIN_PROB: 0.58, BT_MIN_EDGE: 0.10, BT_MIN_SIM: 60 };
+    const baseTfRaw = state.tf || "60";
+    const tfLabel = tfLabelFromRaw(baseTfRaw);
+
+    // dom/btcSlope는 한번만 준비
+    let dom = null;
+    try{ dom = await fetchBTCDominance(); }catch(_e){ dom = null; }
+    let btcSlope = 0;
+    try{
+      const btcCandles = await fetchCandles("BTCUSDT", baseTfRaw, 420);
+      btcSlope = getBTCTrendSlope(btcCandles);
+    }catch(_e){ btcSlope = 0; }
+
+    const otherTfRaw = (baseTfRaw === "60") ? "240" : (baseTfRaw === "240" ? "D" : "240");
+
+    const results = [];
+    for(let i=0;i<state.universe.length;i++){
+      checkCanceled(opToken);
+
+      const coin = state.universe[i];
+      if(status) status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
+
+      try{
+        const baseCandles = await fetchCandles(coin.s, baseTfRaw, 380);
+        const otherCandles = await fetchCandles(coin.s, otherTfRaw, 380);
+
+        if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)){
+          results.push({ symbol: coin.s, name: coin.n, type: "HOLD", tfLabel, winProb: 0, edge: 0, simAvg: 0, score: 0, reason: "데이터 부족" });
+          continue;
+        }
+
+        const pos = buildSignalFromCandles_MTF(coin.s, baseTfRaw, { [baseTfRaw]: baseCandles, [otherTfRaw]: otherCandles }, "2TF", dom, btcSlope);
+
+        const weak = (pos.winProb < tuning.BT_MIN_PROB) || (pos.edge < tuning.BT_MIN_EDGE) || (pos.simAvg < tuning.BT_MIN_SIM);
+        const type = (state.settings?.strictMode && weak) ? "HOLD" : (pos.type || "HOLD");
+
+        const score = scanScore({ ...pos, type });
+
+        results.push({
+          symbol: coin.s,
+          name: coin.n,
+          type,
+          tfLabel,
+          winProb: Number(pos.winProb || 0),
+          edge: Number(pos.edge || 0),
+          simAvg: Number(pos.simAvg || 0),
+          score
+        });
+
+      }catch(_e){
+        results.push({ symbol: coin.s, name: coin.n, type: "HOLD", tfLabel, winProb: 0, edge: 0, simAvg: 0, score: 0, reason: "오류" });
+      }
+    }
+
+    results.sort((a,b)=> (b.score||0) - (a.score||0));
+
+    state.lastFullScanResults = results;
+    state.lastFullScanAt = Date.now();
+    state.lastFullScanTf = baseTfRaw;
+    saveState();
+
+    if(status) status.textContent = `완료 (${tfLabel})`;
+    toast(`스캔 완료: ${state.universe.length}개 (${tfLabel})`);
+
+    // 추천 TOP 박스: 상위 10개(예측가능 우선)
+    renderRecommendFromFullScan();
+
+    if(openAfter) openScanModal();
+
+  }finally{
+    if(scanBtn) scanBtn.disabled = false;
+  }
+
+  function renderRecommendFromFullScan(){
+    const box = document.getElementById("rec-container");
+    if(!box) return;
+
+    const picks = (state.lastFullScanResults || []).filter(x => x.type !== "HOLD").slice(0, 10);
+    if(!picks.length){
+      box.innerHTML = `<div class="muted">현재 조건에서 예측 가능한 코인이 없습니다. (HOLD 우세)</div>`;
+      return;
+    }
+    box.innerHTML = picks.map(x => `
+      <div class="rec-item" onclick="quickAnalyzeAllAndShow('${x.symbol}')">
+        <div>
+          <div class="rec-sym">${x.symbol}</div>
+          <div class="rec-meta">${x.type} · 승률 ${(x.winProb*100).toFixed(1)}% · 유사 ${Number(x.simAvg).toFixed(0)}%</div>
+        </div>
+        <div class="rec-badge ${x.type === 'LONG' ? 'long' : 'short'}">${x.type}</div>
+      </div>
+    `).join("");
+  }
+}
+
+function executeAnalysis(){
+  // ✅ index.html 호환(기존 버튼): 현재 코인에서 통합 분석 모달 호출
+  ensureRuntimeState();
+  quickAnalyzeAllAndShow(state.symbol);
+}
+
+function openScanViewer(){ openScanModal(); }
+function openCoinPicker(){ openCoinModal(); }
+function openHistoryViewer(){ openHistoryModal(); }
+
+/* ==========================================================
    ✅ 통합 자동 스캔 (단/중/장 한 번에)
    - 결과 클릭 시: 통합 예측 모달(선택형)으로 연결
    ========================================================== */
@@ -1512,7 +2041,8 @@ async function autoScanUniverseAll(){
           const pos = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "3TF");
 
           const riskHold = isPatternBlockedHold(pos);
-          if(pos.type === "HOLD" && !riskHold) continue;
+          const weak = (pos.winProb < tuning.BT_MIN_PROB) || (pos.edge < tuning.BT_MIN_EDGE) || (pos.simAvg < tuning.BT_MIN_SIM);
+          if((pos.type === "HOLD" || weak) && !riskHold) continue;
 
           const ex = pos.explain || {};
           const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
@@ -1805,15 +2335,34 @@ function simulateOutcome(pos, futureCandles){
 window.tryAuth = tryAuth;
 window.setTF = setTF;
 
+// UI 토글/화면
+window.toggleStrictMode = toggleStrictMode;
+window.toggleClosedCandle = toggleClosedCandle;
+window.toggleSidebar = toggleSidebar;
+
+// 차트 소스
+window.cycleChartExchange = cycleChartExchange;
+window.toggleChartPerp = toggleChartPerp;
+
+// Drawer(코인목록/스캔/누적)
+window.openCoinModal = openCoinModal;
+window.openScanModal = openScanModal;
+window.openHistoryModal = openHistoryModal;
+window.closeDrawer = closeDrawer;
+window.drawerRefresh = drawerRefresh;
+window.drawerPickCoin = drawerPickCoin;
+
 
 // 통합(단/중/장)
 window.executeAnalysisAll = executeAnalysisAll;
+window.executeAnalysis = executeAnalysis;
 window.quickAnalyzeAllAndShow = quickAnalyzeAllAndShow;
 window.selectMultiTf = selectMultiTf;
 window.confirmTrackSelected = confirmTrackSelected;
 
 // 스캔
 window.autoScanUniverseAll = autoScanUniverseAll;
+window.autoScanUniverse = autoScanUniverse;
 
 // 백테스트/모달
 window.runBacktest = runBacktest;
