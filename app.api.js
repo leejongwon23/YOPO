@@ -7,6 +7,18 @@
  *************************************************************/
 
 /* =========================
+   ✅ Safety helpers (폴백)
+   - safeLog10이 없으면 유니버스/스코어 계산이 터짐 → 전체 갱신 멈춤 원인
+========================= */
+const safeLog10 = (typeof window !== "undefined" && typeof window.safeLog10 === "function")
+  ? window.safeLog10
+  : function(x){
+      const v = Number(x);
+      if(!Number.isFinite(v) || v <= 0) return 0;
+      return Math.log10(v);
+    };
+
+/* =========================
    Universe + Dominance
 ========================= */
 async function refreshUniverseAndGlobals(){
@@ -145,6 +157,12 @@ async function marketTick(){
         trackPositions(t.symbol, price);
       }
     }
+
+    // ✅ 핵심 안정장치:
+    // - 카운트다운이 0이 되어도 TIME 정산이 안 돌면 통계/히스토리/추적수가 갱신 안 됨
+    // - marketTick은 "확실한 주기"이므로 여기서 한 번 더 정산/통계 갱신을 보장
+    if(typeof settleExpiredPositions === "function") settleExpiredPositions();
+    if(typeof updateStatsUI === "function") updateStatsUI();
 
     saveState();
 
