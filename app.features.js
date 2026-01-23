@@ -674,70 +674,6 @@ function _showMultiArea(){
 }
 
 /* ==========================================================
-   Core Analysis (단일)
-   ========================================================== */
-async function executeAnalysis(){
-  ensureRuntimeState();
-
-  const opToken = beginOperation("ANALYSIS");
-
-  const btn = document.getElementById("predict-btn");
-  if(btn){
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 분석 중...';
-  }
-
-  try{
-    const dupKey = `${state.symbol}|${state.tf}`;
-
-    if(hasActivePosition(state.symbol, state.tf)){
-      toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)", "warn");
-      return;
-    }
-
-    if(isInCooldown(dupKey, state.tf)){
-      toast("너무 자주 신호를 내면 승률이 내려갈 수 있어요. 지금은 쿨다운입니다.", "warn");
-      return;
-    }
-
-    checkCanceled(opToken);
-
-    const tfSet = getMTFSet3();
-    const candlesByTf = {};
-    for(const tfRaw of tfSet){
-      checkCanceled(opToken);
-      const candles = await fetchCandles(state.symbol, tfRaw, EXTENDED_LIMIT);
-      candlesByTf[tfRaw] = candles;
-    }
-
-    checkCanceled(opToken);
-
-    const baseTf = state.tf;
-    const baseCandles = candlesByTf[baseTf] || [];
-    if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
-
-    const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, candlesByTf, "3TF");
-    state.lastSignalAt[dupKey] = Date.now();
-    saveState();
-
-    showResultModal(pos);
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("진행 중 작업이 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("분석 중 오류가 발생했습니다. (API 지연/제한 가능)", "danger");
-  }finally{
-    endOperation(opToken);
-    if(btn){
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석';
-    }
-  }
-}
-
-/* ==========================================================
    ✅ 통합 예측 (단/중/장 한번에) + 선택/등록
    ========================================================== */
 async function executeAnalysisAll(){
@@ -795,55 +731,6 @@ async function executeAnalysisAll(){
       btn.disabled = false;
       btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행';
     }
-  }
-}
-
-async function quickAnalyzeAndShow(symbol, tfRaw){
-  ensureRuntimeState();
-
-  const opToken = beginOperation("ANALYSIS");
-
-  try{
-    const btns = document.querySelectorAll(".tf-btn");
-    btns.forEach(b => b.classList.remove("active"));
-    if(tfRaw === "60") btns[0]?.classList.add("active");
-    else if(tfRaw === "240") btns[1]?.classList.add("active");
-    else btns[2]?.classList.add("active");
-    state.tf = tfRaw;
-
-    switchCoin(symbol);
-    saveState();
-    initChart();
-
-    if(hasActivePosition(symbol, tfRaw)){
-      toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)", "warn");
-      return;
-    }
-
-    checkCanceled(opToken);
-
-    const tfSet = getMTFSet3();
-    const candlesByTf = {};
-    for(const t of tfSet){
-      checkCanceled(opToken);
-      const candles = await fetchCandles(symbol, t, EXTENDED_LIMIT);
-      candlesByTf[t] = candles;
-    }
-
-    const baseCandles = candlesByTf[tfRaw] || [];
-    if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)) throw new Error("캔들 데이터가 부족합니다.");
-
-    const pos = buildSignalFromCandles_MTF(symbol, tfRaw, candlesByTf, "3TF");
-    showResultModal(pos);
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("진행 중 작업이 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("추천 분석 중 오류가 발생했습니다.", "danger");
-  }finally{
-    endOperation(opToken);
   }
 }
 
@@ -1423,7 +1310,7 @@ function renderTrackingList(){
       <div style="text-align:center; padding:50px; color:var(--text-sub); font-weight:950;">
         <i class="fa-solid fa-radar" style="font-size:44px; opacity:.18;"></i><br><br>
         현재 추적 중인 포지션이 없습니다.<br/>
-        왼쪽에서 코인을 고르고 “AI 분석”을 눌러보세요.
+        왼쪽에서 코인을 고르고 “통합 예측(단·중·장)”을 눌러보세요.
       </div>
     `;
     return;
@@ -1588,103 +1475,6 @@ function updateStatsUI(){
 }
 
 /* ==========================================================
-   Auto Scan (기존)
-   ========================================================== */
-async function autoScanUniverse(){
-  ensureRuntimeState();
-
-  const opToken = beginOperation("SCAN");
-
-  const scanBtn = document.getElementById("scan-btn");
-  const status = document.getElementById("scan-status");
-  if(scanBtn) scanBtn.disabled = true;
-  if(status) status.textContent = "스캔 중...";
-
-  try{
-    const results = [];
-
-    const tfSet = getMTFSet2(state.tf);
-    const baseTf = tfSet[0];
-    const otherTf = tfSet[1];
-
-    for(let i=0;i<state.universe.length;i++){
-      checkCanceled(opToken);
-
-      const coin = state.universe[i];
-      if(status) status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
-
-      try{
-        const cBase = await fetchCandles(coin.s, baseTf, 380);
-        if(cBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
-
-        const candlesByTf = { [baseTf]: cBase };
-
-        try{
-          const cOther = await fetchCandles(coin.s, otherTf, 380);
-          candlesByTf[otherTf] = cOther;
-        }catch(e){}
-
-        const pos = buildSignalFromCandles_MTF(coin.s, baseTf, candlesByTf, "2TF");
-
-        const riskHold = isPatternBlockedHold(pos);
-        if(pos.type === "HOLD" && !riskHold) continue;
-
-        const ex = pos.explain || {};
-        const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
-
-        const item = {
-          symbol: pos.symbol,
-          tf: pos.tf,
-          tfRaw: pos.tfRaw,
-          type: (pos.type === "HOLD") ? inferredType : pos.type,
-          winProb: ex.winProb,
-          edge: ex.edge,
-          mtfAgree: ex?.mtf?.agree ?? 1,
-          mtfVotes: (ex?.mtf?.votes || []).join("/"),
-          confTier: ex?.conf?.tier ?? "-",
-          isRisk: !!riskHold,
-          multi: false
-        };
-
-        item._score = computeScanScore(item);
-        results.push(item);
-      }catch(e){}
-
-      try{
-        await sleepCancelable(SCAN_DELAY_MS, opToken);
-      }catch(e){
-        throw e;
-      }
-    }
-
-    results.sort((a,b)=> (b._score - a._score));
-    state.lastScanResults = results.slice(0, 6).map(x => {
-      const { _score, ...rest } = x;
-      return rest;
-    });
-    state.lastScanAt = Date.now();
-    saveState();
-
-    renderScanResults();
-    if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("자동 스캔이 취소되었습니다.", "warn");
-      if(status) status.textContent = "취소됨";
-      return;
-    }
-    throw e;
-  }finally{
-    endOperation(opToken);
-    if(scanBtn) scanBtn.disabled = false;
-    setTimeout(()=>{
-      const el = document.getElementById("scan-status");
-      if(el) el.textContent = "대기";
-    }, 1500);
-  }
-}
-
-/* ==========================================================
    ✅ 통합 자동 스캔 (단/중/장 한 번에)
    - 결과 클릭 시: 통합 예측 모달(선택형)으로 연결
    ========================================================== */
@@ -1810,9 +1600,7 @@ function renderScanResults(){
     const risk = item.isRisk ? ` · <span style="color:var(--danger); font-weight:950;">RISK</span>` : "";
     const tfTag = item.tf ? ` · ${item.tf}` : "";
 
-    const click = item.multi
-      ? `quickAnalyzeAllAndShow('${item.symbol}')`
-      : `quickAnalyzeAndShow('${item.symbol}','${item.tfRaw}')`;
+    const click = `quickAnalyzeAllAndShow('${item.symbol}')`;
 
     return `
       <div class="rec-item" onclick="${click}">
@@ -2017,9 +1805,6 @@ function simulateOutcome(pos, futureCandles){
 window.tryAuth = tryAuth;
 window.setTF = setTF;
 
-// 단일(고급)
-window.executeAnalysis = executeAnalysis;
-window.quickAnalyzeAndShow = quickAnalyzeAndShow;
 
 // 통합(단/중/장)
 window.executeAnalysisAll = executeAnalysisAll;
@@ -2028,7 +1813,6 @@ window.selectMultiTf = selectMultiTf;
 window.confirmTrackSelected = confirmTrackSelected;
 
 // 스캔
-window.autoScanUniverse = autoScanUniverse;
 window.autoScanUniverseAll = autoScanUniverseAll;
 
 // 백테스트/모달
