@@ -383,7 +383,7 @@ const DEFAULT_CANDIDATES = [
   { s: "ATOMUSDT", n: "코스모스" },
 
   /* ✅ 추가 30개(기본 60 구성) — cg 매핑 불확실은 생략 */
-  { s: "NEARUSDT", n: "니어" },
+  { s: "ALGOUSDT", n: "알고랜드" },
   { s: "XLMUSDT", n: "스텔라루멘" },
   { s: "VETUSDT", n: "비체인" },
   { s: "HBARUSDT", n: "헤데라" },

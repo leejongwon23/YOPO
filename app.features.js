@@ -151,11 +151,32 @@ function formatMoney(n){
   return v.toFixed(0);
 }
 
+
+/* ==========================================================
+   ✅ Drawer 스캔 진행상태 업데이트(사용자 체감 '무반응' 방지)
+   ========================================================== */
+function updateDrawerScanProgress(text){
+  try{
+    const el = document.getElementById("drawer-scan-progress");
+    if(el) el.textContent = text;
+  }catch(_e){}
+}
+function setDrawerScanStartEnabled(enabled){
+  try{
+    const btn = document.getElementById("drawer-scan-start-btn");
+    if(btn) btn.disabled = !enabled;
+  }catch(_e){}
+}
 /* ==========================================================
    ✅ RUNTIME SAFETY (핵심)
    ========================================================== */
 function ensureRuntimeState(){
+  // ✅ 핵심: localStorage에 잘못 저장된 빈 state 때문에
+  // 코인목록/스캔/정산 루프가 통째로 멈추는 것을 방지한다.
   if(typeof state !== "object" || !state) return;
+
+  // core의 마이그레이션/누락 보정이 있으면 우선 호출
+  try{ if(typeof ensureCoreStateShape === "function") ensureCoreStateShape(); }catch(_e){}
 
   if(!Array.isArray(state.activePositions)) state.activePositions = [];
   if(!Array.isArray(state.closedTrades)) state.closedTrades = [];
@@ -163,12 +184,36 @@ function ensureRuntimeState(){
   if(typeof state.history !== "object" || !state.history){
     state.history = { total: 0, win: 0 };
   }
-
   if(!Number.isFinite(state.history.total)) state.history.total = 0;
   if(!Number.isFinite(state.history.win)) state.history.win = 0;
 
-  if(!Array.isArray(state.universe)) state.universe = [];
+  // ✅ 코인 60 유니버스 보정 (비어있으면 기본 후보군으로 복구)
+  if(!Array.isArray(state.universe) || state.universe.length < 10){
+    try{
+      if(typeof DEFAULT_CANDIDATES !== "undefined" && Array.isArray(DEFAULT_CANDIDATES) && DEFAULT_CANDIDATES.length){
+        state.universe = DEFAULT_CANDIDATES.map(x => ({...x}));
+      }else{
+        state.universe = [];
+      }
+    }catch(_e){
+      state.universe = [];
+    }
+    try{ saveState(); }catch(_e){}
+  }
+
+  // 가격 캐시
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
+
+  // ✅ 스캔 결과 호환(구버전 필드 → 신버전 필드)
+  if(!Array.isArray(state.lastFullScanResults)){
+    state.lastFullScanResults = Array.isArray(state.lastScanResults) ? state.lastScanResults : [];
+  }
+  if(!Number.isFinite(state.lastFullScanAt)){
+    state.lastFullScanAt = Number.isFinite(state.lastScanAt) ? state.lastScanAt : 0;
+  }
+  if(typeof state.lastFullScanTf !== "string"){
+    state.lastFullScanTf = (typeof state.tf === "string") ? state.tf : "60";
+  }
 }
 
 /* ==========================================================
@@ -1475,8 +1520,14 @@ function renderScanDrawer(q){
   if(!data.length){
     body.innerHTML = `
       <div class="muted" style="margin-bottom:10px;">아직 전체 스캔 데이터가 없습니다.</div>
-      <button class="action-btn primary" onclick="autoScanUniverse?.(true)">60개 전체 스캔 시작</button>
-      <div class="muted" style="margin-top:8px;">(완료 후 이 화면에 60개 결과가 표시됩니다)</div>
+
+      <div id="drawer-scan-progress" class="muted" style="margin:8px 0 10px 0;">대기</div>
+
+      <button class="action-btn primary" id="drawer-scan-start-btn" onclick="autoScanUniverse(true)">
+        60개 전체 스캔 시작
+      </button>
+
+      <div class="muted" style="margin-top:8px;">(진행상황은 위에 표시됩니다. 완료 후 이 화면에 60개 결과가 뜹니다)</div>
     `;
     return;
   }
@@ -1897,6 +1948,8 @@ async function autoScanUniverse(openAfter = true){
   const status = document.getElementById("scan-status");
   if(scanBtn) scanBtn.disabled = true;
   if(status) status.textContent = "스캔 준비중...";
+  updateDrawerScanProgress("스캔 준비중...");
+  setDrawerScanStartEnabled(false);
 
   try{
     const tuning = (typeof getTuning === "function") ? getTuning() : { BT_MIN_PROB: 0.58, BT_MIN_EDGE: 0.10, BT_MIN_SIM: 60 };
@@ -1920,6 +1973,7 @@ async function autoScanUniverse(openAfter = true){
 
       const coin = state.universe[i];
       if(status) status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
+      updateDrawerScanProgress(`스캔 중... (${i+1}/${state.universe.length})`);
 
       try{
         const baseCandles = await fetchCandles(coin.s, baseTfRaw, 380);
@@ -1961,6 +2015,8 @@ async function autoScanUniverse(openAfter = true){
     saveState();
 
     if(status) status.textContent = `완료 (${tfLabel})`;
+    updateDrawerScanProgress(`완료 (${tfLabel})`);
+    setDrawerScanStartEnabled(true);
     toast(`스캔 완료: ${state.universe.length}개 (${tfLabel})`);
 
     // 추천 TOP 박스: 상위 10개(예측가능 우선)
@@ -1969,7 +2025,9 @@ async function autoScanUniverse(openAfter = true){
     if(openAfter) openScanModal();
 
   }finally{
+    endOperation(opToken);
     if(scanBtn) scanBtn.disabled = false;
+    setDrawerScanStartEnabled(true);
   }
 
   function renderRecommendFromFullScan(){
@@ -2016,8 +2074,11 @@ async function autoScanUniverseAll(){
   const status = document.getElementById("scan-status");
   if(scanBtn) scanBtn.disabled = true;
   if(status) status.textContent = "통합 스캔 중...";
+  updateDrawerScanProgress("통합 스캔 준비중...");
+  setDrawerScanStartEnabled(false);
 
   try{
+    const tuning = (typeof getTuning === "function") ? getTuning() : { BT_MIN_PROB: 0.58, BT_MIN_EDGE: 0.10, BT_MIN_SIM: 60 };
     const perTf = { "60": [], "240": [], "D": [] };
 
     for(let i=0;i<state.universe.length;i++){
@@ -2025,6 +2086,7 @@ async function autoScanUniverseAll(){
 
       const coin = state.universe[i];
       if(status) status.textContent = `통합 스캔 중... (${i+1}/${state.universe.length})`;
+      updateDrawerScanProgress(`통합 스캔 중... (${i+1}/${state.universe.length})`);
 
       try{
         // 3TF를 한번에 받아서, 단/중/장 각각 점수화

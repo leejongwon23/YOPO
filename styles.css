@@ -881,6 +881,16 @@ body{
   flex:0 0 auto;
 }
 
+/* ✅ 컨트롤이 코인목록/누적을 가리지 않도록: PC에서 컨트롤 영역은 '내부 스크롤' */
+@media (min-width: 901px){
+  .analysis-controls{
+    max-height:42vh;
+    overflow:auto;
+    padding-right:6px;
+  }
+  .sidebar-scroll{ min-height:180px; }
+}
+
 /* ✅ 내부(중첩) 스크롤 제거 → 목록을 크게 보여주고, 스크롤은 sidebar-scroll 한 번만 */
 .market-list{ max-height:none; overflow:visible; }
 #market-list-container{ max-height:none; overflow:visible; }
