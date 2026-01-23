@@ -1,5 +1,5 @@
 /*************************************************************
- * YOPO AI PRO — app.api.js (분할 v1)
+ * YOPO AI PRO — app.api.js (분할 v1)  ✅ UPDATED
  * 역할: 외부 API 통신 + 데이터 로딩(유니버스/도미넌스/티커/캔들)
  * 주의:
  * - UI 업데이트 함수(updateCoinRow/renderUniverseList/trackPositions/switchCoin 등)는
@@ -18,12 +18,25 @@ const safeLog10 = (typeof window !== "undefined" && typeof window.safeLog10 === 
       return Math.log10(v);
     };
 
+function _isBadUniverseSymbol(sym){
+  const s = String(sym || "").toUpperCase();
+  // 스테이블/래핑/미러/레버리지 등 잡음 최소 필터(가벼운 수준)
+  if(!s.endsWith("USDT")) return true;
+  if(s.includes("USD") && !s.endsWith("USDT")) return true;
+  if(s.includes("USDC") || s.includes("TUSD") || s.includes("BUSD") || s.includes("DAI")) return true;
+  if(s.includes("3L") || s.includes("3S") || s.includes("5L") || s.includes("5S")) return true;
+  if(s.includes("BULL") || s.includes("BEAR")) return true;
+  return false;
+}
+
 /* =========================
    Universe + Dominance
 ========================= */
 async function refreshUniverseAndGlobals(){
   const apiDot = document.getElementById("api-dot");
+
   try{
+    // 1) BTC 도미넌스
     const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 1 });
     const dom = g?.data?.market_cap_percentage?.btc;
     if(typeof dom === "number"){
@@ -34,32 +47,68 @@ async function refreshUniverseAndGlobals(){
       if(pill) pill.innerText = `BTC DOM: ${dom.toFixed(1)}%`;
     }
 
+    // 2) Bybit 심볼 목록(교차 검증용)
+    const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    const tickers = by?.result?.list || [];
+    const bybitSet = new Set(
+      tickers
+        .map(t => String(t.symbol || "").toUpperCase())
+        .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
+    );
+
+    // 3) CoinGecko 마켓(상위 200)
     const markets = await fetchJSON(CG_MARKETS, { timeoutMs: 7000, retry: 1 });
 
-    const enriched = DEFAULT_CANDIDATES.map(c => {
-      const m = Array.isArray(markets) ? markets.find(x => x.id === c.cg) : null;
-      const mc = m?.market_cap ?? 0;
-      const vol = m?.total_volume ?? 0;
-      const chg = m?.price_change_percentage_24h ?? 0;
-      const score =
-        safeLog10(mc) * 0.45 +
-        safeLog10(vol) * 0.45 +
-        Math.min(Math.abs(chg), 20) * 0.10;
-      return { ...c, mc, vol, chg, score };
-    }).sort((a,b)=> b.score - a.score);
+    // 점수 산정: 시총 + 거래량 + 변동성(24h) 가벼운 가중치
+    const scored = (Array.isArray(markets) ? markets : [])
+      .map(m => {
+        const mc = m?.market_cap ?? 0;
+        const vol = m?.total_volume ?? 0;
+        const chg = m?.price_change_percentage_24h ?? 0;
 
-    state.universe = enriched.slice(0, 15);
-    state.lastUniverseAt = Date.now();
-    state.lastApiHealth = "ok";
-    saveState();
+        const cgSym = String(m?.symbol || "").toUpperCase();
+        const sym = cgSym ? (cgSym + "USDT") : "";
 
-    const tsEl = document.getElementById("universe-ts");
-    if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+        // Bybit에서 실제로 거래 가능한 것만
+        if(!sym || !bybitSet.has(sym)) return null;
+        if(_isBadUniverseSymbol(sym)) return null;
 
-    if(apiDot) apiDot.className = "status-dot ok";
+        const score =
+          safeLog10(mc) * 0.48 +
+          safeLog10(vol) * 0.42 +
+          Math.min(Math.abs(chg), 20) * 0.10;
 
-    // UI 렌더는 features에 있을 수 있음(호출 시점에 존재하면 OK)
-    if(typeof renderUniverseList === "function") renderUniverseList();
+        return {
+          s: sym,
+          n: m?.name || cgSym || sym.replace("USDT",""),
+          cg: m?.id || null,
+          mc, vol, chg,
+          score
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=> b.score - a.score);
+
+    // ✅ 30개 자동 선정
+    const picked = scored.slice(0, 30);
+
+    // 예외: 교차검증 결과가 너무 적으면(예: 제한/장애) 기존 후보 + Bybit fallback로 보강
+    if(picked.length < 18){
+      console.warn("CG/Bybit cross universe too small -> fallback merge");
+      await fallbackUniverseFromBybit(); // 여기서 state.universe 세팅
+    }else{
+      state.universe = picked;
+      state.lastUniverseAt = Date.now();
+      state.lastApiHealth = "ok";
+      saveState();
+
+      const tsEl = document.getElementById("universe-ts");
+      if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+
+      if(apiDot) apiDot.className = "status-dot ok";
+
+      if(typeof renderUniverseList === "function") renderUniverseList();
+    }
   }catch(e){
     console.warn("CoinGecko unavailable -> fallback to Bybit universe", e);
     if(apiDot) apiDot.className = "status-dot warn";
@@ -76,7 +125,7 @@ async function fallbackUniverseFromBybit(){
 
     const rows = tickers
       .map(t => {
-        const symbol = t.symbol;
+        const symbol = String(t.symbol || "").toUpperCase();
         const last = parseFloat(t.lastPrice || "0");
         const chg = parseFloat(t.price24hPcnt || "0") * 100;
         const turn =
@@ -86,28 +135,27 @@ async function fallbackUniverseFromBybit(){
           parseFloat(t.volume || "0") || 0;
         return { symbol, last, chg, turn };
       })
-      .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0);
+      .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
 
     rows.sort((a,b)=> (b.turn - a.turn));
-    const top = rows.slice(0, 60);
+    const top = rows.slice(0, 120);
 
-    const baseSet = new Set(DEFAULT_CANDIDATES.map(x=>x.s));
+    // ✅ 30개로 확대
     const picked = [];
-
     for(const r of top){
-      if(picked.length >= 15) break;
-      if(baseSet.has(r.symbol)){
-        const base = DEFAULT_CANDIDATES.find(x=>x.s===r.symbol);
-        picked.push({ ...base, chg: r.chg, turn: r.turn, score: safeLog10(r.turn) });
-      }
-    }
-    for(const r of top){
-      if(picked.length >= 15) break;
+      if(picked.length >= 30) break;
       if(picked.some(x=>x.s===r.symbol)) continue;
-      picked.push({ s: r.symbol, n: r.symbol.replace("USDT",""), cg: null, chg: r.chg, turn: r.turn, score: safeLog10(r.turn) });
+      picked.push({
+        s: r.symbol,
+        n: r.symbol.replace("USDT",""),
+        cg: null,
+        chg: r.chg,
+        turn: r.turn,
+        score: safeLog10(r.turn)
+      });
     }
 
-    state.universe = picked.slice(0, 15);
+    state.universe = picked.slice(0, 30);
     state.lastUniverseAt = Date.now();
     saveState();
 
@@ -141,26 +189,23 @@ async function marketTick(){
     const activeSymbols = new Set(active.map(p => p?.symbol).filter(Boolean));
 
     for(const t of tickers){
-      if(!symbols.has(t.symbol)) continue;
+      if(!symbols.has(String(t.symbol || "").toUpperCase())) continue;
 
+      const sym = String(t.symbol || "").toUpperCase();
       const price = parseFloat(t.lastPrice || "0");
       const chg = parseFloat(t.price24hPcnt || "0") * 100;
 
       if(price > 0){
-        // updateCoinRow / trackPositions는 features에 있어도 OK
-        if(typeof updateCoinRow === "function") updateCoinRow(t.symbol, price, chg);
-        state.lastPrices[t.symbol] = { price, chg, ts: Date.now() };
+        if(typeof updateCoinRow === "function") updateCoinRow(sym, price, chg);
+        state.lastPrices[sym] = { price, chg, ts: Date.now() };
       }
 
-      // ✅ 유니버스 전체가 아니라 "활성 추적 심볼"만 추적 업데이트
-      if(price > 0 && activeSymbols.has(t.symbol) && typeof trackPositions === "function"){
-        trackPositions(t.symbol, price);
+      if(price > 0 && activeSymbols.has(sym) && typeof trackPositions === "function"){
+        trackPositions(sym, price);
       }
     }
 
-    // ✅ 핵심 안정장치:
-    // - 카운트다운이 0이 되어도 TIME 정산이 안 돌면 통계/히스토리/추적수가 갱신 안 됨
-    // - marketTick은 "확실한 주기"이므로 여기서 한 번 더 정산/통계 갱신을 보장
+    // ✅ 안정장치: TIME 정산/통계 갱신 보장
     if(typeof settleExpiredPositions === "function") settleExpiredPositions();
     if(typeof updateStatsUI === "function") updateStatsUI();
 
