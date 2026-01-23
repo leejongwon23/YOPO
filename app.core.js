@@ -1,9 +1,9 @@
 /*************************************************************
- * YOPO AI PRO — app.core.js (분할 v1)
+ * YOPO AI PRO — app.core.js (분할 v1+)
  * 역할: 공용 상수/전역상태(state)/저장/유틸/토스트/시간계산/지표/유사도/신호코어
  * 주의:
  * - index.html onclick 바인딩(window.xxx=...)은 app.features.js에서 최종 처리
- * - 이 파일은 “공용 기반”만 제공한다.
+ * - 이 파일은 “공용 기반(상태/규칙/초기화/계산)”을 제공한다.
  *************************************************************/
 
 /* =========================
@@ -252,9 +252,6 @@ function computePatternPenalty(meta){
 
 /* ==========================================================
    ✅ NEW: "통합예측(단/중/장)" 합의 규칙
-   - 3개 결과 중 LONG/SHORT가 2개 이상 같아야 "최종 방향" 인정
-   - 그렇지 않으면 HOLD
-   - HOLD는 "방향표"로 취급하지 않음(=기권)
    ========================================================== */
 function consensusAll3Signals(sig60, sig240, sigD){
   const sigs = [
@@ -274,7 +271,7 @@ function consensusAll3Signals(sig60, sig240, sigD){
   let finalType = "HOLD";
   if(longN >= 2) finalType = "LONG";
   else if(shortN >= 2) finalType = "SHORT";
-  else finalType = "HOLD"; // 2개 이상 동일이 아니면 HOLD
+  else finalType = "HOLD";
 
   // 통합 확률/엣지(간단 평균 + 합의 가중)
   let wp = 0, ed = 0, cnt = 0;
@@ -288,7 +285,6 @@ function consensusAll3Signals(sig60, sig240, sigD){
   wp = cnt ? (wp / cnt) : 0.5;
   ed = cnt ? (ed / cnt) : 0;
 
-  // 합의가 깔끔하면 살짝 보너스(정렬용)
   const agree = Math.max(longN, shortN); // 0~3
   const wpAdj = clamp(wp + (agree >= 2 ? 0.01 : 0), 0.5, 0.99);
 
@@ -308,17 +304,16 @@ function consensusAll3Signals(sig60, sig240, sigD){
 }
 
 function scoreUnifiedSignal(unified){
-  // 통합 스캔 정렬 점수: 확률 + 엣지 (간단/직관)
   const w = Number(unified?.winProbAvg ?? 0);
   const e = Number(unified?.edgeAvg ?? 0);
   const agree = Number(unified?.agree ?? 0);
-  // 합의 2 이상이면 살짝 가산
   const bonus = (agree >= 2) ? 0.02 : 0;
   return (w * 1.0) + (e * 0.7) + bonus;
 }
 
 /* =========================
-   Candidate List (15)
+   Candidate List (30)
+   - cg는 확실한 것만 유지 (불확실한 매핑은 생략)
 ========================= */
 const DEFAULT_CANDIDATES = [
   { s: "BTCUSDT", n: "비트코인", cg: "bitcoin" },
@@ -335,7 +330,24 @@ const DEFAULT_CANDIDATES = [
   { s: "BCHUSDT", n: "비트코인캐시", cg: "bitcoin-cash" },
   { s: "NEARUSDT", n: "니어프로토콜", cg: "near" },
   { s: "LTCUSDT", n: "라이트코인", cg: "litecoin" },
-  { s: "APTUSDT", n: "앱토스", cg: "aptos" }
+  { s: "APTUSDT", n: "앱토스", cg: "aptos" },
+
+  /* ✅ 추가 15개(기본 30 구성) — cg 매핑 불확실은 생략 */
+  { s: "BNBUSDT", n: "바이낸스코인" },
+  { s: "TONUSDT", n: "톤코인" },
+  { s: "SHIBUSDT", n: "시바이누" },
+  { s: "SUIUSDT", n: "수이" },
+  { s: "ARBUSDT", n: "아비트럼" },
+  { s: "OPUSDT", n: "옵티미즘" },
+  { s: "INJUSDT", n: "인젝티브" },
+  { s: "RNDRUSDT", n: "렌더" },
+  { s: "SEIUSDT", n: "세이" },
+  { s: "IMXUSDT", n: "이뮤터블" },
+  { s: "AAVEUSDT", n: "에이브" },
+  { s: "UNIUSDT", n: "유니스왑" },
+  { s: "ETCUSDT", n: "이더리움클래식" },
+  { s: "FILUSDT", n: "파일코인" },
+  { s: "ATOMUSDT", n: "코스모스" }
 ];
 
 /* =========================
@@ -355,12 +367,122 @@ let state = loadState() || {
   lastSignalAt: {},
   lastScanAt: 0,
   lastScanResults: [],
-  lastPrices: {}
+  lastPrices: {},
+
+  /* ✅ NEW: 공통 작업 취소 플래그/토큰 */
+  op: { cancel: false, token: 0 }
 };
 
 ensurePatternDB();
 
 let tempPos = null; // 모달 임시 포지션(features에서 사용)
+
+/* =========================
+   ✅ State shape guard (마이그레이션/누락 보정)
+========================= */
+function ensureCoreStateShape(){
+  let changed = false;
+
+  if(!state || typeof state !== "object"){
+    state = {
+      symbol: "BTCUSDT",
+      tf: "60",
+      universe: DEFAULT_CANDIDATES.map(x => ({...x})),
+      activePositions: [],
+      history: { total: 0, win: 0 },
+      closedTrades: [],
+      lastUniverseAt: 0,
+      btcDom: null,
+      btcDomPrev: null,
+      lastApiHealth: "warn",
+      lastSignalAt: {},
+      lastScanAt: 0,
+      lastScanResults: [],
+      lastPrices: {},
+      op: { cancel: false, token: 0 }
+    };
+    changed = true;
+  }
+
+  if(!Array.isArray(state.universe) || state.universe.length < 10){
+    state.universe = DEFAULT_CANDIDATES.map(x => ({...x}));
+    changed = true;
+  }
+
+  if(!Array.isArray(state.activePositions)){ state.activePositions = []; changed = true; }
+  if(!state.history || typeof state.history !== "object"){ state.history = { total: 0, win: 0 }; changed = true; }
+  if(!Number.isFinite(state.history.total)) { state.history.total = 0; changed = true; }
+  if(!Number.isFinite(state.history.win))   { state.history.win = 0; changed = true; }
+
+  if(!Array.isArray(state.closedTrades)){ state.closedTrades = []; changed = true; }
+  if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){ state.lastSignalAt = {}; changed = true; }
+  if(!Array.isArray(state.lastScanResults)){ state.lastScanResults = []; changed = true; }
+  if(!state.lastPrices || typeof state.lastPrices !== "object"){ state.lastPrices = {}; changed = true; }
+
+  if(!state.op || typeof state.op !== "object"){
+    state.op = { cancel: false, token: 0 };
+    changed = true;
+  }else{
+    if(typeof state.op.cancel !== "boolean"){ state.op.cancel = false; changed = true; }
+    if(!Number.isFinite(state.op.token)){ state.op.token = 0; changed = true; }
+  }
+
+  if(changed) saveState();
+}
+
+/* =========================
+   ✅ 공통 초기화/취소 API (요구사항 1 핵심)
+   - UI 갱신은 features에서 처리
+========================= */
+function requestCancelOperation(){
+  // “다음 단계부터 즉시 멈춤”용
+  ensureCoreStateShape();
+  state.op.cancel = true;
+  state.op.token = (state.op.token || 0) + 1;
+  saveState();
+  return state.op.token;
+}
+function clearCancelOperation(){
+  ensureCoreStateShape();
+  state.op.cancel = false;
+  saveState();
+}
+function isOperationCancelled(token){
+  // token 기반으로 “취소 이후 단계”를 구분 가능
+  const t = Number(token || 0);
+  const cur = Number(state?.op?.token || 0);
+  return !!state?.op?.cancel || (t > 0 && cur >= t);
+}
+
+function resetStatsData(){
+  // 누적 분석/성공률 초기화 (요구 1)
+  ensureCoreStateShape();
+  state.history = { total: 0, win: 0 };
+  state.closedTrades = [];
+  saveState();
+}
+
+function cancelAllTrackingData(){
+  // 정밀추적(추적중) 전부 취소 (요구 1)
+  ensureCoreStateShape();
+  state.activePositions = [];
+  tempPos = null;
+  saveState();
+}
+
+function resetAllData(){
+  // 누적 + 추적 + 스캔/작업 상태까지 초기화 (요구 1 강화)
+  ensureCoreStateShape();
+  requestCancelOperation();
+  state.history = { total: 0, win: 0 };
+  state.closedTrades = [];
+  state.activePositions = [];
+  state.lastSignalAt = {};
+  state.lastScanAt = 0;
+  state.lastScanResults = [];
+  tempPos = null;
+  saveState();
+}
 
 /* =========================
    Time helpers (카운트다운)
@@ -1187,6 +1309,10 @@ async function fetchJSON(url, opt={}){
    Core bootstrap (가벼운 초기화)
 ========================= */
 (function coreBoot(){
+  try{
+    ensureCoreStateShape();
+  }catch(e){}
+
   try{
     ensureExpiryOnAllPositions();
   }catch(e){}
