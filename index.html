@@ -60,17 +60,17 @@
 
       <!-- ✅ 운영 버튼(리셋/전체취소/전체초기화) -->
       <div class="btn-row" style="margin-top:10px;">
-        <button class="action-btn secondary" id="reset-stats-btn" onclick="resetStatsUIAndData()">
+        <button class="action-btn secondary" id="reset-stats-btn" onclick="window.resetStatsUIAndData && window.resetStatsUIAndData()">
           <i class="fa-solid fa-rotate-left"></i> 누적 리셋
         </button>
-        <button class="action-btn secondary" id="cancel-all-btn" onclick="cancelAllTracking()">
+        <button class="action-btn secondary" id="cancel-all-btn" onclick="window.cancelAllTracking && window.cancelAllTracking()">
           <i class="fa-solid fa-ban"></i> 추적 전체취소
         </button>
       </div>
 
-      <!-- ✅ 전체 초기화(누적+추적+진행취소 한번에) -->
+      <!-- ✅ NEW: 전체 초기화(누적+추적+진행취소 한번에) -->
       <div class="btn-row" style="margin-top:8px;">
-        <button class="action-btn secondary" id="reset-all-btn" onclick="resetAll()">
+        <button class="action-btn secondary" id="reset-all-btn" onclick="window.resetAll && window.resetAll()">
           <i class="fa-solid fa-broom"></i> 전체 초기화(누적+추적+진행)
         </button>
       </div>
@@ -90,7 +90,7 @@
 
       <div class="market-list">
         <div class="section-title">
-          <span>유망 코인 60 (자동+AI 추천)</span>
+          <span>유망 코인 30 (자동 선정)</span>
           <span class="right">
             <span class="status-dot" id="api-dot"></span>
             <span id="universe-ts">업데이트: --</span>
@@ -115,7 +115,7 @@
       </div>
 
       <div class="analysis-controls">
-        <!-- ✅ 차트용 TF 선택은 유지 -->
+        <!-- ✅ 차트용 TF 선택은 유지 (차트 표시/수동 분석 기준 TF로도 사용 가능) -->
         <div class="tf-selector">
           <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
           <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
@@ -123,12 +123,12 @@
         </div>
 
         <!-- ✅ 통합 예측(단/중/장 한번에) -->
-        <button class="action-btn" id="predict-all-btn" onclick="executeAnalysisAll()">
+        <button class="action-btn" id="predict-all-btn" onclick="window.executeAnalysisAll && window.executeAnalysisAll()">
           <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행
         </button>
 
         <!-- ✅ 진행 취소(분석/스캔/백테스트 공통) -->
-        <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation()">
+        <button class="action-btn secondary" id="op-cancel-btn" onclick="window.cancelOperation && window.cancelOperation()">
           <i class="fa-solid fa-hand"></i> 진행 취소(분석/스캔/백테스트)
         </button>
 
@@ -138,10 +138,11 @@
 
         <div class="btn-row">
           <!-- ✅ 통합 자동스캔(단/중/장 모두) -->
-          <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll()">
+          <button class="action-btn secondary" id="scan-all-btn" onclick="window.autoScanUniverseAll && window.autoScanUniverseAll()">
             <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
           </button>
 
+          <!-- 기존 -->
           <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
             <i class="fa-solid fa-flask"></i> 백테스트
           </button>
@@ -194,7 +195,7 @@
           <p id="modal-subtitle" style="margin:6px 0 0; color:var(--text-sub); font-weight:900;">BTCUSDT | 1H</p>
         </div>
 
-        <!-- ✅ 통합(단/중/장) 결과 영역 (features에서 채움) -->
+        <!-- ✅ NEW: 통합(단/중/장) 결과 영역 (features에서 채움) -->
         <div id="multi-results" style="display:none;">
           <div style="font-weight:950; margin:10px 0 6px; color:var(--text-main);">
             전략별 결과(단·중·장) — 하나를 선택하세요
@@ -209,7 +210,7 @@
           </div>
 
           <!-- 선택 확정 버튼(선택 후 추적등록 흐름) -->
-          <button class="modal-btn" id="multi-choose" onclick="confirmTrackSelected()">
+          <button class="modal-btn" id="multi-choose" onclick="window.confirmTrackSelected && window.confirmTrackSelected()">
             선택한 전략으로 추적 등록
           </button>
 
