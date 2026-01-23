@@ -1,5 +1,5 @@
 /*************************************************************
- * YOPO AI PRO — app.features.js (분할 v1)
+ * YOPO AI PRO — app.features.js (분할 v1) ✅ UPDATED (CANCEL 통합)
  * 역할: 화면/동작 전부(부트, 차트, 렌더, 분석/스캔/백테스트, 추적/만료, 모달)
  * 의존:
  * - app.core.js: state, tempPos, 유틸/신호코어/토스트/저장/마이그레이션 등
@@ -11,41 +11,71 @@
  *************************************************************/
 
 /* ==========================================================
-   ✅ OPERATION CANCEL ENGINE (NEW)
-   - 분석/스캔/백테스트 "진행중 취소"를 위한 공통 엔진
-   - index.html 에서 버튼으로 window.cancelOperation() 호출하면 됨
+   ✅ OPERATION CANCEL ENGINE (FIXED: state.op 통합)
+   - app.api.js가 state.op + isOperationCancelled(token)을 사용함
+   - 이제 ANALYSIS/SCAN/BACKTEST + API tick/refresh가 "같은 취소"로 멈춤
    ========================================================== */
-const __op = {
-  running: false,
-  kind: null,          // "ANALYSIS" | "SCAN" | "BACKTEST" | ...
-  token: 0,
-  canceled: false
-};
+function ensureOpState(){
+  if(typeof state !== "object" || !state) return;
+  if(!state.op || typeof state.op !== "object"){
+    state.op = { cancel:false, token:0, running:false, kind:null };
+    try{ saveState(); }catch(e){}
+  }
+  if(typeof state.op.cancel !== "boolean") state.op.cancel = false;
+  if(!Number.isFinite(state.op.token)) state.op.token = 0;
+  if(typeof state.op.running !== "boolean") state.op.running = false;
+  if(typeof state.op.kind !== "string" && state.op.kind !== null) state.op.kind = null;
+}
 
 function beginOperation(kind){
-  __op.token++;
-  __op.running = true;
-  __op.kind = kind || "OP";
-  __op.canceled = false;
-  return __op.token;
+  ensureOpState();
+  state.op.token = (Number(state.op.token) || 0) + 1;
+  state.op.running = true;
+  state.op.kind = kind || "OP";
+  state.op.cancel = false;
+  try{ saveState(); }catch(e){}
+  return state.op.token;
+}
+
+function requestCancelOperation(){
+  ensureOpState();
+  // ✅ 토큰도 같이 올려서 "즉시 무효화" (진행중 루프가 바로 멈춤)
+  state.op.cancel = true;
+  state.op.token = (Number(state.op.token) || 0) + 1;
+  state.op.running = false;
+  state.op.kind = null;
+  try{ saveState(); }catch(e){}
 }
 
 function cancelOperation(){
-  if(!__op.running) return;
-  __op.canceled = true;
+  // index.html 버튼 호환용 별칭
+  requestCancelOperation();
 }
 
 function endOperation(token){
-  // 토큰이 다르면(새 작업 시작됨) 종료시키지 않음
-  if(token !== __op.token) return;
-  __op.running = false;
-  __op.kind = null;
-  __op.canceled = false;
+  ensureOpState();
+  // 토큰이 다르면(이미 새 작업 시작됨) 건드리지 않음
+  if(token !== state.op.token) return;
+  state.op.running = false;
+  state.op.kind = null;
+  state.op.cancel = false;
+  try{ saveState(); }catch(e){}
+}
+
+function isOperationCancelled(token){
+  try{
+    ensureOpState();
+    if(!Number.isFinite(token)) return false;
+    if(state.op.cancel) return true;
+    if(token !== state.op.token) return true;
+    return false;
+  }catch(e){
+    return false;
+  }
 }
 
 function checkCanceled(token){
-  if(token !== __op.token) throw new Error("CANCELLED");
-  if(__op.canceled) throw new Error("CANCELLED");
+  if(isOperationCancelled(token)) throw new Error("CANCELLED");
 }
 
 function sleepCancelable(ms, token){
@@ -65,8 +95,7 @@ function sleepCancelable(ms, token){
 }
 
 /* ==========================================================
-   ✅ SAFETY: formatMoney 폴백 (부트 중 renderUniverseList가 터지면
-   setInterval이 아예 안 걸려서 "정산/통계/추적 갱신 멈춤" 현상이 생김)
+   ✅ SAFETY: formatMoney 폴백
    ========================================================== */
 function formatMoney(n){
   const v = Number(n);
@@ -84,6 +113,8 @@ function formatMoney(n){
    ========================================================== */
 function ensureRuntimeState(){
   if(typeof state !== "object" || !state) return;
+
+  ensureOpState();
 
   if(!Array.isArray(state.activePositions)) state.activePositions = [];
   if(!Array.isArray(state.closedTrades)) state.closedTrades = [];
@@ -1207,12 +1238,7 @@ async function autoScanUniverse(){
         results.push(item);
       }catch(e){}
 
-      // ✅ 취소 가능 sleep
-      try{
-        await sleepCancelable(SCAN_DELAY_MS, opToken);
-      }catch(e){
-        throw e;
-      }
+      await sleepCancelable(SCAN_DELAY_MS, opToken);
     }
 
     results.sort((a,b)=> (b._score - a._score));
@@ -1231,7 +1257,8 @@ async function autoScanUniverse(){
       if(status) status.textContent = "취소됨";
       return;
     }
-    throw e;
+    console.error(e);
+    toast("자동 스캔 중 오류가 발생했습니다.", "danger");
   }finally{
     endOperation(opToken);
     if(scanBtn) scanBtn.disabled = false;
@@ -1477,3 +1504,7 @@ window.quickAnalyzeAndShow = quickAnalyzeAndShow;
 
 // ✅ NEW: 진행중 취소 (index.html에서 버튼으로 연결)
 window.cancelOperation = cancelOperation;
+window.requestCancelOperation = requestCancelOperation;
+
+// ✅ app.api.js가 참조하는 취소 체크 함수
+window.isOperationCancelled = isOperationCancelled;
