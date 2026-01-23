@@ -45,15 +45,15 @@
         </div>
 
         <div class="stats-dashboard">
-          <div class="stat-card">
+          <div class="stat-card" onclick="openHistoryModal?.()">
             <span class="stat-label">누적 분석</span>
             <span class="stat-value" id="total-stat">0</span>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" onclick="openHistoryModal?.()">
             <span class="stat-label">성공률</span>
             <span class="stat-value" id="win-stat">0%</span>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" onclick="openHistoryModal?.()">
             <span class="stat-label">추적 중</span>
             <span class="stat-value" id="active-stat">0</span>
           </div>
@@ -83,7 +83,11 @@
   <div class="history-box" id="history-box">
           <div class="history-title">
             <span>최근 종료 기록</span>
-            <span style="font-weight:950; color:var(--text-sub);" id="history-count">0</span>
+            <span class="history-actions">
+              <button class="mini-btn" onclick="openHistoryModal?.()">전체보기</button>
+              <button class="mini-btn danger" onclick="resetStatsUIAndData?.()">누적 리셋</button>
+              <span style="font-weight:950; color:var(--text-sub);" id="history-count">0</span>
+            </span>
           </div>
           <div id="history-container">
             <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:4px 2px;">
@@ -94,8 +98,10 @@
 
         <div class="market-list">
           <div class="section-title">
-            <span>유망 코인 30 (자동 선정)</span>
+            <span id="universe-title">유망 코인 <b id="universe-count">60</b> (자동 + AI)</span>
             <span class="right">
+              <button class="mini-btn" onclick="openCoinModal?.()">코인목록</button>
+              <button class="mini-btn" onclick="toggleSidebar?.()">화면확장</button>
               <span class="status-dot" id="api-dot"></span>
               <span id="universe-ts">업데이트: --</span>
             </span>
@@ -105,7 +111,10 @@
           <div class="recommend-box">
             <div class="recommend-title">
               <span>추천 TOP (자동 스캔 결과)</span>
-              <span id="scan-status" style="font-weight:950;">대기</span>
+              <span class="rec-actions">
+                <button class="mini-btn" onclick="openScanModal?.()">스캔목록</button>
+                <span id="scan-status" style="font-weight:950;">대기</span>
+              </span>
             </div>
             <div id="rec-container">
               <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
@@ -127,6 +136,13 @@
             <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
             <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
             <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
+          </div>
+
+          <div class="control-row">
+            <button class="mini-toggle" id="strict-mode-btn" onclick="toggleStrictMode?.()">성공률 우선 모드: ON</button>
+            <button class="mini-toggle" id="closed-candle-btn" onclick="toggleClosedCandle?.()">종가(완성캔들)만 사용: ON</button>
+            <button class="mini-toggle" id="chart-ex-btn" onclick="cycleChartExchange?.()">차트 소스: AUTO</button>
+            <button class="mini-toggle" id="chart-perp-btn" onclick="toggleChartPerp?.()">차트 선물(.P): ON</button>
           </div>
 
           <!-- ✅ 통합 예측(단/중/장 한번에) -->
@@ -154,9 +170,13 @@
               <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
             </button>
 
+            <button class="action-btn secondary" id="scan-view-btn" onclick="openScanModal?.()">
+              <i class="fa-solid fa-list-check"></i> 스캔 결과 열기
+            </button>
+
             <!-- 기존 -->
-            <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse()">
-              <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(기존)
+            <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse?.()">
+              <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(60/현재TF)
             </button>
             <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
               <i class="fa-solid fa-flask"></i> 백테스트
@@ -244,6 +264,31 @@
       </div>
     </div>
   </div>
+
+
+  <!-- ✅ Drawer/FullScreen Modal (코인목록/스캔목록/누적기록) -->
+  <div class="drawer-overlay" id="drawer-overlay" style="display:none;">
+    <div class="drawer-card">
+      <div class="drawer-head">
+        <div class="drawer-title-wrap">
+          <h3 id="drawer-title" class="drawer-title">목록</h3>
+          <div id="drawer-sub" class="drawer-sub">--</div>
+        </div>
+        <div class="drawer-actions">
+          <button class="mini-btn" id="drawer-refresh-btn" onclick="drawerRefresh?.()">새로고침</button>
+          <button class="mini-btn danger" onclick="closeDrawer?.()">닫기</button>
+        </div>
+      </div>
+
+      <div class="drawer-toolbar">
+        <input id="drawer-search" class="drawer-search" placeholder="검색: BTC, SOL, FLOKI..." />
+        <div id="drawer-filters" class="drawer-filters"></div>
+      </div>
+
+      <div id="drawer-body" class="drawer-body"></div>
+    </div>
+  </div>
+
 
   <!-- TradingView (전역 위젯) -->
   <script src="https://s3.tradingview.com/tv.js"></script>
