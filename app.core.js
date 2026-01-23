@@ -823,7 +823,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
 
-  // HOLD 룰(기존) — 여기서는 "예측 줄이기" 목적이 아니라 "애매한 신호" 방어
+  // HOLD 룰(기존)
   if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
   if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
   if(edgeAdj < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
@@ -851,17 +851,13 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
   if(base.volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
 
-  // ✅ NEW: 패턴 패널티는 "HOLD 사유"로 넣지 않는다(예측 줄이기 싫으니까)
-  // 대신 화면에서만 보이게, 설명에만 남김
+  // 패턴 감점은 설명용 문구만 추가
   if(avoidMeta && pp.penalty > 0){
-    // UI에 보여주고 싶으면 holdReasons에 넣을 수도 있지만,
-    // HOLD로 만들지 않기 위해 "주의" 성격 문구로만 추가
     holdReasons.push(`(패턴 감점 적용: -${(pp.penalty*100).toFixed(1)}%p, n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%)`);
   }
 
   const isHoldByBaseRules = holdReasons.some(r => !String(r).startsWith("(패턴 감점 적용"));
 
-  // ✅ 정말 최악일 때만 HOLD (반복 폭사 방지)
   const hardHold = !!(avoidMeta && pp.hardHold);
   if(hardHold){
     holdReasons.push(`실패패턴 극악(강제 HOLD): n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%`);
@@ -882,7 +878,6 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct: finalHold ? null : slPct,
     createdAt: Date.now(),
     explain: explainBase,
-    // ✅ HOLD면 추적 등록 안 하므로 sig null, 아니면 패턴 sig 유지(기록용)
     sig: finalHold ? null : sigForPenalty
   };
 }
@@ -1065,9 +1060,10 @@ function hasActivePosition(symbol, tfRaw){
   return state.activePositions.some(p => p.symbol === symbol && p.tfRaw === tfRaw);
 }
 
-function isInCooldown(key){
+// ✅ FIX: tfRaw를 인자로 받아 COOLDOWN 기준이 깨지지 않게 함
+function isInCooldown(key, tfRaw = state.tf){
   const last = state.lastSignalAt?.[key] || 0;
-  const cd = COOLDOWN_MS[state.tf] || (10*60*1000);
+  const cd = COOLDOWN_MS[tfRaw] || (10*60*1000);
   return (Date.now() - last) < cd;
 }
 
@@ -1082,53 +1078,3 @@ async function fetchJSON(url, opt={}){
   for(let i=0;i<=retry;i++){
     try{
       const data = await fetchWithTimeout(url, timeoutMs);
-      return data;
-    }catch(e){
-      lastErr = e;
-      await sleep(350 * (i+1));
-    }
-  }
-  throw lastErr;
-}
-
-async function fetchWithTimeout(url, timeoutMs){
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try{
-    const r = await fetch(url, { cache:"no-store", signal: controller.signal });
-    if(!r.ok) throw new Error("HTTP " + r.status);
-    return await r.json();
-  }finally{
-    clearTimeout(id);
-  }
-}
-
-function sleep(ms){ return new Promise(res => setTimeout(res, ms)); }
-
-/* =========================
-   Utils
-========================= */
-function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
-function safeLog10(x){ return Math.log10(Math.max(x, 1)); }
-function formatMoney(x){
-  if(x >= 1e12) return (x/1e12).toFixed(2)+"T";
-  if(x >= 1e9)  return (x/1e9).toFixed(2)+"B";
-  if(x >= 1e6)  return (x/1e6).toFixed(2)+"M";
-  if(x >= 1e3)  return (x/1e3).toFixed(2)+"K";
-  return String(Math.round(x));
-}
-
-/* ==========================================================
-   ✅ NEW: features.js에서 호출할 “패턴 기록 함수”를 전역으로 제공
-   ========================================================== */
-function recordTradeToPatternDB(pos, win){
-  if(!pos) return;
-
-  // sig가 없으면 생성 시도 (구버전 포지션 대비)
-  let sig = pos.sig;
-  if(!sig && pos.explain && pos.symbol && pos.tfRaw && pos.type && pos.type !== "HOLD"){
-    sig = buildPatternSignature(pos.symbol, pos.tfRaw, pos.type, pos.explain);
-    pos.sig = sig;
-  }
-  if(sig) recordPatternOutcome(sig, !!win);
-     }
