@@ -474,7 +474,9 @@ async function executeAnalysis(){
       toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다. (중복 방지)", "warn");
       return;
     }
-    if(isInCooldown(dupKey)){
+
+    // ✅ FIX: 쿨다운은 "현재 분석 TF"를 기준으로 해야 함
+    if(isInCooldown(dupKey, state.tf)){
       toast("너무 자주 신호를 내면 승률이 내려갈 수 있어요. 지금은 쿨다운입니다.", "warn");
       return;
     }
