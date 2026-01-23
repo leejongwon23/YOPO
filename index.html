@@ -58,6 +58,16 @@
         </div>
       </div>
 
+      <!-- ✅ NEW: 운영 버튼(리셋/전체취소) -->
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="action-btn secondary" id="reset-stats-btn" onclick="resetStatsUIAndData?.()">
+          <i class="fa-solid fa-rotate-left"></i> 누적 리셋
+        </button>
+        <button class="action-btn secondary" id="cancel-all-btn" onclick="cancelAllTracking?.()">
+          <i class="fa-solid fa-ban"></i> 추적 전체취소
+        </button>
+      </div>
+
       <!-- 최근 종료 기록 -->
       <div class="history-box" id="history-box">
         <div class="history-title">
@@ -73,7 +83,8 @@
 
       <div class="market-list">
         <div class="section-title">
-          <span>유망 코인 15 (자동 선정)</span>
+          <!-- ✅ 문구는 30으로 바꿔둠 (실제 30 자동선정은 app.api.js 수정 필요) -->
+          <span>유망 코인 30 (자동 선정)</span>
           <span class="right">
             <span class="status-dot" id="api-dot"></span>
             <span id="universe-ts">업데이트: --</span>
@@ -88,7 +99,7 @@
           </div>
           <div id="rec-container">
             <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
-              “자동 스캔”을 누르면 15개 코인을 분석해서 HOLD 아닌 것만 골라줍니다.<br/>
+              “자동 스캔”을 누르면 코인들을 분석해서 HOLD 아닌 것만 골라줍니다.<br/>
               추천을 <b>클릭하면 즉시 분석</b> 후, 결과창에서 <b>추적 등록</b>할 수 있습니다.
             </div>
           </div>
@@ -98,19 +109,32 @@
       </div>
 
       <div class="analysis-controls">
+        <!-- ✅ 차트용 TF 선택은 유지 (차트 표시/수동 분석 기준 TF로도 사용 가능) -->
         <div class="tf-selector">
           <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
           <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
           <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
         </div>
 
-        <button class="action-btn" id="predict-btn" onclick="executeAnalysis()">
-          <i class="fa-solid fa-microchip"></i> AI 분석 및 예측 실행
+        <!-- ✅ NEW: 통합 예측(단/중/장 한번에) -->
+        <button class="action-btn" id="predict-all-btn" onclick="executeAnalysisAll?.()">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행
+        </button>
+
+        <!-- ✅ 기존 단일 TF 분석 버튼은 “고급”으로 남겨둠(원하면 제거 가능) -->
+        <button class="action-btn secondary" id="predict-btn" onclick="executeAnalysis()">
+          <i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석
         </button>
 
         <div class="btn-row">
+          <!-- ✅ NEW: 통합 자동스캔(단/중/장 합의 기반) -->
+          <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll?.()">
+            <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
+          </button>
+
+          <!-- 기존 -->
           <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse()">
-            <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔
+            <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(기존)
           </button>
           <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
             <i class="fa-solid fa-flask"></i> 백테스트
