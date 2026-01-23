@@ -30,9 +30,15 @@ function beginOperation(kind){
   return __op.token;
 }
 
+/* ✅ FIX: 취소 버튼 누를 때 UX + 안전(작업 없어도 안내) */
 function cancelOperation(){
-  if(!__op.running) return;
+  // 작업이 없어도 UX상 안내는 해주는게 좋음
+  if(!__op.running){
+    try{ toast("진행중인 작업이 없습니다.", "warn"); }catch(e){}
+    return;
+  }
   __op.canceled = true;
+  try{ toast("진행 취소 요청 완료(다음 단계부터 중단).", "warn"); }catch(e){}
 }
 
 function endOperation(token){
@@ -487,9 +493,26 @@ document.addEventListener("DOMContentLoaded", async () => {
   try{ await refreshUniverseAndGlobals(); }catch(e){}
   try{ await marketTick(); }catch(e){}
 
-  setInterval(marketTick, 2000);
-  setInterval(refreshUniverseAndGlobals, 60000);
+  /* ✅ FIX: app.api.js 로드 실패/순서 꼬임으로 marketTick/refresh...가 없으면
+     기존 setInterval(marketTick, ...)에서 ReferenceError로 부트가 중단되어
+     "카운트다운/정산/통계" 루프가 안 걸릴 수 있음 → 반드시 가드 */
+  if(typeof marketTick === "function"){
+    setInterval(() => {
+      try{ marketTick(); }catch(e){ console.error("marketTick interval error:", e); }
+    }, 2000);
+  }else{
+    console.warn("marketTick() not found. (app.api.js 로드/순서 문제 가능) — 가격추적은 꺼지지만, 카운트다운/정산은 유지됩니다.");
+  }
 
+  if(typeof refreshUniverseAndGlobals === "function"){
+    setInterval(() => {
+      try{ refreshUniverseAndGlobals(); }catch(e){ console.error("refreshUniverseAndGlobals interval error:", e); }
+    }, 60000);
+  }else{
+    console.warn("refreshUniverseAndGlobals() not found. (app.api.js 로드/순서 문제 가능)");
+  }
+
+  // ✅ 이 루프는 어떤 상황에서도 반드시 살아 있어야 함
   setInterval(() => {
     try{ ensureRuntimeState(); }catch(e){}
     try{ updateCountdownTexts(); }catch(e){}
