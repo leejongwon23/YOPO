@@ -323,10 +323,24 @@ function formatRemain(ms){
   return `${totalMin}분 ${ss}초`;
 }
 
-// ✅ FIX: “전략 자체 시간”을 만료로 사용
+// ✅ FIX (핵심): expiryAt 우선 사용 + 없으면 생성하여 불일치 방지
 function getPosExpiryAt(pos){
+  if(!pos) return Date.now();
+
   const start = pos.createdAt || Date.now();
-  return start + tfToMs(pos.tfRaw);
+  const tfRaw = pos.tfRaw || state.tf || "60";
+  const expected = start + tfToMs(tfRaw);
+
+  // 1순위: 저장된 expiryAt이 있으면 그걸 사용
+  if(Number.isFinite(pos.expiryAt) && pos.expiryAt > 0){
+    return pos.expiryAt;
+  }
+
+  // 없으면 생성(동기화)
+  pos.createdAt = start;
+  pos.expiryAt = expected;
+  try{ saveState(); }catch(e){}
+  return expected;
 }
 
 /* =========================
@@ -1037,7 +1051,7 @@ function avg(arr){
    Protections (공용)
 ========================= */
 function hasActivePosition(symbol, tfRaw){
-  return state.activePositions.some(p => p.symbol === symbol && p.tfRaw === tfRaw);
+  return (state.activePositions || []).some(p => p.symbol === symbol && p.tfRaw === tfRaw);
 }
 
 function isInCooldown(key, tfRaw = state.tf){
