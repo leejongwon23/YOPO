@@ -11,6 +11,60 @@
  *************************************************************/
 
 /* ==========================================================
+   ✅ OPERATION CANCEL ENGINE (NEW)
+   - 분석/스캔/백테스트 "진행중 취소"를 위한 공통 엔진
+   - index.html 에서 버튼으로 window.cancelOperation() 호출하면 됨
+   ========================================================== */
+const __op = {
+  running: false,
+  kind: null,          // "ANALYSIS" | "SCAN" | "BACKTEST" | ...
+  token: 0,
+  canceled: false
+};
+
+function beginOperation(kind){
+  __op.token++;
+  __op.running = true;
+  __op.kind = kind || "OP";
+  __op.canceled = false;
+  return __op.token;
+}
+
+function cancelOperation(){
+  if(!__op.running) return;
+  __op.canceled = true;
+}
+
+function endOperation(token){
+  // 토큰이 다르면(새 작업 시작됨) 종료시키지 않음
+  if(token !== __op.token) return;
+  __op.running = false;
+  __op.kind = null;
+  __op.canceled = false;
+}
+
+function checkCanceled(token){
+  if(token !== __op.token) throw new Error("CANCELLED");
+  if(__op.canceled) throw new Error("CANCELLED");
+}
+
+function sleepCancelable(ms, token){
+  return new Promise((resolve, reject)=>{
+    const t = setTimeout(()=>resolve(), ms);
+    const tick = () => {
+      try{
+        checkCanceled(token);
+        setTimeout(tick, 80);
+      }catch(e){
+        clearTimeout(t);
+        reject(e);
+      }
+    };
+    setTimeout(tick, 0);
+  });
+}
+
+/* ==========================================================
    ✅ SAFETY: formatMoney 폴백 (부트 중 renderUniverseList가 터지면
    setInterval이 아예 안 걸려서 "정산/통계/추적 갱신 멈춤" 현상이 생김)
    ========================================================== */
@@ -27,10 +81,6 @@ function formatMoney(n){
 
 /* ==========================================================
    ✅ RUNTIME SAFETY (핵심)
-   - 정산/통계가 "조용히" 멈추는 대부분의 원인:
-     state.history / state.closedTrades / state.activePositions가 undefined,
-     혹은 숫자가 아닌 값으로 들어간 케이스.
-   - interval try/catch가 삼켜버리면 UI만 멀쩡하고 통계만 안 바뀜.
    ========================================================== */
 function ensureRuntimeState(){
   if(typeof state !== "object" || !state) return;
@@ -42,22 +92,17 @@ function ensureRuntimeState(){
     state.history = { total: 0, win: 0 };
   }
 
-  // 숫자 방어
   if(!Number.isFinite(state.history.total)) state.history.total = 0;
   if(!Number.isFinite(state.history.win)) state.history.win = 0;
 
-  // universe / lastPrices도 안전망(부트 타이밍에 가끔 undefined)
   if(!Array.isArray(state.universe)) state.universe = [];
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
 }
 
 /* ==========================================================
    ✅ BUGFIX HELPERS
-   - pos.id 누락 방지: 카운트다운/부분업데이트가 id 기반이라
-     activePositions에 들어가는 순간 id가 반드시 필요함.
    ========================================================== */
 function genPosId(){
-  // 충분히 유니크한 id (시간 + 랜덤)
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
@@ -74,7 +119,6 @@ function ensureIdsOnAllPositions(){
   if(Array.isArray(state.activePositions)){
     for(const p of state.activePositions) ensurePosId(p);
   }
-  // closedTrades는 id가 있긴 하지만, 안전하게
   if(Array.isArray(state.closedTrades)){
     for(const r of state.closedTrades){
       if(!r.id) r.id = Date.now() + Math.floor(Math.random() * 1000);
@@ -84,33 +128,25 @@ function ensureIdsOnAllPositions(){
 
 /* ==========================================================
    ✅ NEW (예측 줄이지 않기용)
-   - "실패패턴 차단" 때문에 HOLD가 된 경우:
-     -> 완전 금지(HOLD) 대신 "RISK"로 보여주고,
-        사용자가 원하면 "위험 감안하고 추적 등록" 허용
    ========================================================== */
-
-// ✅ FIX: core가 문구를 "패턴 감점 적용" / "실패패턴 극악(강제 HOLD)"로 쓰므로
-// 기존 "실패패턴 차단"만 찾으면 거의 안 걸림 → RISK 로직이 죽음
 function isPatternBlockedHold(pos){
   if(!pos || pos.type !== "HOLD") return false;
   const reasons = pos?.explain?.holdReasons || [];
   const text = reasons.map(x=>String(x)).join(" | ");
   return (
-    text.includes("실패패턴") ||          // "실패패턴 극악(강제 HOLD)" 등
-    text.includes("패턴 감점 적용") ||     // "(패턴 감점 적용: -x%p ...)"
-    text.includes("강제 HOLD")            // "강제 HOLD" 직접
+    text.includes("실패패턴") ||
+    text.includes("패턴 감점 적용") ||
+    text.includes("강제 HOLD")
   );
 }
 
 function buildForcedTrackFromHold(pos){
-  // core가 HOLD로 만들어 tp/sl이 null이어도, explain 기반으로 복원해서 "추적 등록"을 가능하게 한다.
   if(!pos || pos.type !== "HOLD") return null;
 
   const ex = pos.explain || {};
   const symbol = pos.symbol;
   const tfRaw = pos.tfRaw;
 
-  // 방향 추정(코어에서 LONG/SHORT였던 방향)
   const longP = Number(ex.longP ?? 0.5);
   const shortP = Number(ex.shortP ?? 0.5);
   const inferredType = (longP >= shortP) ? "LONG" : "SHORT";
@@ -118,12 +154,10 @@ function buildForcedTrackFromHold(pos){
   const entry = Number.isFinite(pos.entry) ? pos.entry : null;
   if(!Number.isFinite(entry) || entry <= 0) return null;
 
-  // ✅ core 상수/테이블이 없을 수 있으니 방어
   const TF_MULT_SAFE = (typeof TF_MULT === "object" && TF_MULT) ? TF_MULT : { "60":1.0, "240":1.15, "D":1.3 };
   const RR_SAFE = (typeof RR === "number" && Number.isFinite(RR)) ? RR : 1.6;
   const TP_MAX_PCT_SAFE = (typeof TP_MAX_PCT === "number" && Number.isFinite(TP_MAX_PCT)) ? TP_MAX_PCT : 6.0;
 
-  // core와 동일한 방식으로 tp/sl 산출(가능한 한 동일)
   const atrUsed = Number(ex.atr ?? 0);
   const tfMult = TF_MULT_SAFE[tfRaw] || 1.2;
 
@@ -132,11 +166,9 @@ function buildForcedTrackFromHold(pos){
 
   let tpDist = atrUsed * tfMult * tpScale;
   if(!Number.isFinite(tpDist) || tpDist <= 0){
-    // atr 정보가 부족하면 강제추적 불가
     return null;
   }
 
-  // TP 최대 제한(TP_MAX_PCT)도 core와 동일 적용
   let tp = (inferredType === "LONG") ? (entry + tpDist) : (entry - tpDist);
   let tpPct = Math.abs((tp - entry) / entry) * 100;
 
@@ -151,7 +183,6 @@ function buildForcedTrackFromHold(pos){
   let sl = (inferredType === "LONG") ? (entry - slDist) : (entry + slDist);
   let slPct = Math.abs((sl - entry) / entry) * 100;
 
-  // sig 생성 (패턴DB 기록 가능하게)
   let sig = null;
   try{
     if(typeof buildPatternSignature === "function"){
@@ -159,10 +190,8 @@ function buildForcedTrackFromHold(pos){
     }
   }catch(e){}
 
-  // ✅ id 보장 (카운트다운/부분업데이트 필수)
   ensurePosId(pos);
 
-  // 원본 pos를 "강제추적" 가능한 형태로 반환
   return {
     ...pos,
     type: inferredType,
@@ -177,11 +206,9 @@ function buildForcedTrackFromHold(pos){
 }
 
 function computeScanScore(item){
-  // "예측을 줄이지 않기" 때문에: 패턴 차단은 제외가 아니라 "감점"으로 후순위
-  // 점수 = winProb + edge - penalty
   const w = Number(item.winProb ?? 0);
   const e = Number(item.edge ?? 0);
-  const penalty = item.isRisk ? 0.06 : 0.0; // 과격하게 빼지 않음(빈도 유지)
+  const penalty = item.isRisk ? 0.06 : 0.0;
   return (w * 1.0) + (e * 0.7) - penalty;
 }
 
@@ -232,7 +259,6 @@ function updateCountdownTexts(){
   if(!list.length) return;
 
   for(const pos of list){
-    // ✅ id 보장
     ensurePosId(pos);
 
     const el = document.getElementById(`remain-${pos.id}`);
@@ -256,10 +282,8 @@ function settleExpiredPositions(){
   const now = Date.now();
   let changed = false;
 
-  // ✅ 드리프트 보정(0초인데 정산이 안 되는 케이스 방지)
   const DRIFT_MS = 500;
 
-  // ✅ 상수 미정의 방어(정산이 예외로 죽으면 통계 갱신이 멈춤)
   const FEE_SAFE = (typeof FEE_PCT === "number" && Number.isFinite(FEE_PCT)) ? FEE_PCT : 0;
   const TIME_MFE_MIN_SAFE = (typeof TIME_MFE_MIN_PCT === "number" && Number.isFinite(TIME_MFE_MIN_PCT)) ? TIME_MFE_MIN_PCT : 0;
   const TIME_MFE_RATIO_SAFE = (typeof TIME_MFE_TP_RATIO === "number" && Number.isFinite(TIME_MFE_TP_RATIO)) ? TIME_MFE_TP_RATIO : 0;
@@ -270,14 +294,12 @@ function settleExpiredPositions(){
 
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
 
-    // expiryAt이 NaN이면 즉시 정산(카운트다운 0인데 안 빠지는 케이스 방지)
     if(Number.isFinite(expiryAt)){
       if(now < (expiryAt - DRIFT_MS)) continue;
     }
 
     const lastPrice = Number.isFinite(pos.lastPrice) ? pos.lastPrice : pos.entry;
 
-    // 최종 pnl (NET)
     let pnlGross = 0;
     if(pos.type === "LONG"){
       pnlGross = ((lastPrice - pos.entry) / pos.entry) * 100;
@@ -308,10 +330,8 @@ function settleExpiredPositions(){
       }
     }
 
-    // ✅ 결과 확정 시: 실패패턴 DB에 누적 기록
     try{ recordTradeToPatternDB(pos, win); }catch(e){}
 
-    // ✅ history 안전 보장
     state.history.total++;
     if(win) state.history.win++;
 
@@ -348,8 +368,6 @@ function settleExpiredPositions(){
 
   if(changed){
     saveState();
-
-    // ✅ UI 갱신 확실화
     renderTrackingList();
     renderClosedTrades();
     updateStatsUI();
@@ -366,12 +384,10 @@ function settleExpiredPositions(){
 document.addEventListener("DOMContentLoaded", async () => {
   ensureRuntimeState();
 
-  // ✅ 안전: lastSignalAt 없으면 생성
   if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){
     state.lastSignalAt = {};
   }
 
-  // auth gate
   try{
     if(!isAuthed()) showAuth();
     else hideAuth();
@@ -382,11 +398,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   try{ ensureToastUI(); }catch(e){}
 
-  // 마이그레이션(만료/슬tp/mfe)
   try{ ensureExpiryOnAllPositions(); }catch(e){}
   try{ ensureIdsOnAllPositions(); saveState(); }catch(e){}
 
-  // ✅ 부트 중 어떤 렌더가 터져도 "인터벌"은 반드시 걸리게 분리
   try{ initChart(); }catch(e){}
   try{ renderUniverseList(); }catch(e){ console.error("renderUniverseList boot error:", e); }
   try{ renderTrackingList(); }catch(e){}
@@ -405,7 +419,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
-  // ✅ 핵심: 이게 살아있어야 "시간 종료 → 통계/히스토리 갱신"이 된다
   setInterval(() => {
     try{ ensureRuntimeState(); }catch(e){}
     try{ updateCountdownTexts(); }catch(e){}
@@ -416,8 +429,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 /* ==========================================================
    UI 기본 (TF/코인)
    ========================================================== */
-
-// ✅ 호환 강화: btn이 없어도 동작
 function setTF(tf, btn){
   ensureRuntimeState();
 
@@ -541,6 +552,8 @@ function updateCoinRow(symbol, price, changePct, silent=false){
 async function executeAnalysis(){
   ensureRuntimeState();
 
+  const opToken = beginOperation("ANALYSIS");
+
   const btn = document.getElementById("predict-btn");
   if(btn){
     btn.disabled = true;
@@ -555,18 +568,22 @@ async function executeAnalysis(){
       return;
     }
 
-    // ✅ FIX: 쿨다운은 "현재 분석 TF"를 기준으로 해야 함
     if(isInCooldown(dupKey, state.tf)){
       toast("너무 자주 신호를 내면 승률이 내려갈 수 있어요. 지금은 쿨다운입니다.", "warn");
       return;
     }
 
+    checkCanceled(opToken);
+
     const tfSet = getMTFSet3();
     const candlesByTf = {};
     for(const tfRaw of tfSet){
+      checkCanceled(opToken);
       const candles = await fetchCandles(state.symbol, tfRaw, EXTENDED_LIMIT);
       candlesByTf[tfRaw] = candles;
     }
+
+    checkCanceled(opToken);
 
     const baseTf = state.tf;
     const baseCandles = candlesByTf[baseTf] || [];
@@ -578,9 +595,14 @@ async function executeAnalysis(){
 
     showResultModal(pos);
   }catch(e){
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("진행 중 작업이 취소되었습니다.", "warn");
+      return;
+    }
     console.error(e);
     toast("분석 중 오류가 발생했습니다. (API 지연/제한 가능)", "danger");
   }finally{
+    endOperation(opToken);
     if(btn){
       btn.disabled = false;
       btn.innerHTML = '<i class="fa-solid fa-microchip"></i> AI 분석 및 예측 실행';
@@ -588,9 +610,10 @@ async function executeAnalysis(){
   }
 }
 
-// 추천 클릭 → 즉시 분석
 async function quickAnalyzeAndShow(symbol, tfRaw){
   ensureRuntimeState();
+
+  const opToken = beginOperation("ANALYSIS");
 
   try{
     const btns = document.querySelectorAll(".tf-btn");
@@ -609,9 +632,12 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
       return;
     }
 
+    checkCanceled(opToken);
+
     const tfSet = getMTFSet3();
     const candlesByTf = {};
     for(const t of tfSet){
+      checkCanceled(opToken);
       const candles = await fetchCandles(symbol, t, EXTENDED_LIMIT);
       candlesByTf[t] = candles;
     }
@@ -622,8 +648,14 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
     const pos = buildSignalFromCandles_MTF(symbol, tfRaw, candlesByTf, "3TF");
     showResultModal(pos);
   }catch(e){
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("진행 중 작업이 취소되었습니다.", "warn");
+      return;
+    }
     console.error(e);
     toast("추천 분석 중 오류가 발생했습니다.", "danger");
+  }finally{
+    endOperation(opToken);
   }
 }
 
@@ -633,7 +665,6 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
 function showResultModal(pos){
   ensureRuntimeState();
 
-  // ✅ 패턴차단 HOLD라면: "강제추적 가능"한 포지션을 함께 준비
   let forcePos = null;
   const blockedByPattern = isPatternBlockedHold(pos);
   if(blockedByPattern){
@@ -675,11 +706,9 @@ function showResultModal(pos){
   const regimeLine = `추세강도 ${Number(ex.trendStrength||0).toFixed(2)} / ATR ${Number(ex.atrPct||0).toFixed(2)}%`;
 
   if(isHold){
-    // ✅ 패턴차단 HOLD면: "RISK 모드"로 보여주고 강제추적 버튼 활성화
     const reasons = (ex.holdReasons || []).map(r => `- ${r}`).join("<br/>");
 
     if(blockedByPattern && forcePos){
-      // 표시용 수치
       const inferredType = forcePos.type;
       const tpLine = `$${forcePos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${forcePos.tpPct.toFixed(2)}%)`;
       const slLine = `$${forcePos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${forcePos.slPct.toFixed(2)}%)`;
@@ -709,12 +738,10 @@ function showResultModal(pos){
         <b>정리:</b> “완전 차단” 대신 “경고 + 감점”으로 운영합니다.
       `;
 
-      // ✅ 강제추적 버튼 활성화
       confirmBtn.disabled = false;
       confirmBtn.textContent = "위험 감안하고 추적 등록";
-      confirmBtn.onclick = () => confirmTrack(forcePos); // 강제 포지션으로 등록
+      confirmBtn.onclick = () => confirmTrack(forcePos);
     }else{
-      // 일반 HOLD는 기존대로: 등록 금지
       grid.innerHTML = `
         <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
         <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
@@ -731,10 +758,9 @@ function showResultModal(pos){
       `;
       confirmBtn.disabled = true;
       confirmBtn.textContent = "보류는 등록하지 않음";
-      confirmBtn.onclick = () => {}; // 기본
+      confirmBtn.onclick = () => {};
     }
   }else{
-    // 일반 LONG/SHORT
     grid.innerHTML = `
       <div class="mini-box"><small>진입가</small><div>$${pos.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
       <div class="mini-box"><small>성공확률(추정)</small><div>${(ex.winProb*100).toFixed(1)}%</div></div>
@@ -762,7 +788,7 @@ function showResultModal(pos){
 
     confirmBtn.disabled = false;
     confirmBtn.textContent = "추적 시스템에 등록";
-    confirmBtn.onclick = () => confirmTrack(); // 기본 tempPos로 등록
+    confirmBtn.onclick = () => confirmTrack();
   }
 
   modal.style.display = "flex";
@@ -772,21 +798,16 @@ function closeModal(){
   const modal = document.getElementById("result-modal");
   if(modal) modal.style.display = "none";
   tempPos = null;
-
-  // confirmBtn onclick을 원복해도 되지만, 다음 showResultModal에서 다시 세팅한다.
 }
 
 function confirmTrack(forcedPos=null){
   ensureRuntimeState();
 
-  // forcedPos가 있으면 그걸 우선 사용(패턴차단 HOLD override)
   const posToUse = forcedPos || tempPos;
   if(!posToUse) return;
 
-  // ✅ id 보장
   ensurePosId(posToUse);
 
-  // 일반 HOLD는 금지, 단 패턴차단 override는 허용
   if(posToUse.type === "HOLD" && !posToUse._forceTrack){
     return;
   }
@@ -801,7 +822,7 @@ function confirmTrack(forcedPos=null){
 
   state.activePositions.unshift({
     ...posToUse,
-    id: posToUse.id, // ✅ 확실히 유지
+    id: posToUse.id,
     status: "ACTIVE",
     lastPrice: posToUse.entry,
     pnl: 0,
@@ -828,8 +849,6 @@ function trackPositions(symbol, currentPrice){
   ensureRuntimeState();
 
   let changed = false;
-
-  // ✅ 상수 미정의 방어
   const FEE_SAFE = (typeof FEE_PCT === "number" && Number.isFinite(FEE_PCT)) ? FEE_PCT : 0;
 
   for(let i = state.activePositions.length - 1; i >= 0; i--){
@@ -840,7 +859,6 @@ function trackPositions(symbol, currentPrice){
 
     pos.lastPrice = currentPrice;
 
-    // pnl (NET)
     let pnlGross = 0;
     if(pos.type === "LONG"){
       pnlGross = ((currentPrice - pos.entry) / pos.entry) * 100;
@@ -850,7 +868,6 @@ function trackPositions(symbol, currentPrice){
     const pnl = pnlGross - FEE_SAFE;
     pos.pnl = pnl;
 
-    // MFE 업데이트 (GROSS 기준)
     const favorable = (pos.type === "LONG")
       ? ((currentPrice - pos.entry) / pos.entry) * 100
       : ((pos.entry - currentPrice) / pos.entry) * 100;
@@ -860,7 +877,6 @@ function trackPositions(symbol, currentPrice){
       if(favorable > pos.mfePct) pos.mfePct = favorable;
     }
 
-    // 브레이크이븐 + 트레일링
     if(Number.isFinite(pos.mfePct) && pos.status === "ACTIVE"){
       if(pos.mfePct >= BE_TRIGGER_PCT){
         if(pos.type === "LONG"){
@@ -899,7 +915,6 @@ function trackPositions(symbol, currentPrice){
     }
 
     if(close){
-      // ✅ 결과 확정 시: 실패패턴 DB에 누적 기록
       try{ recordTradeToPatternDB(pos, win); }catch(e){}
 
       state.history.total++;
@@ -973,8 +988,6 @@ function renderTrackingList(){
   }
 
   ensureExpiryOnAllPositions();
-
-  // ✅ BUGFIX: 렌더 전에 id 보장
   ensureIdsOnAllPositions();
 
   container.innerHTML = state.activePositions.map(pos => {
@@ -1138,6 +1151,8 @@ function updateStatsUI(){
 async function autoScanUniverse(){
   ensureRuntimeState();
 
+  const opToken = beginOperation("SCAN");
+
   const scanBtn = document.getElementById("scan-btn");
   const status = document.getElementById("scan-status");
   if(scanBtn) scanBtn.disabled = true;
@@ -1151,6 +1166,8 @@ async function autoScanUniverse(){
     const otherTf = tfSet[1];
 
     for(let i=0;i<state.universe.length;i++){
+      checkCanceled(opToken);
+
       const coin = state.universe[i];
       if(status) status.textContent = `스캔 중... (${i+1}/${state.universe.length})`;
 
@@ -1167,12 +1184,9 @@ async function autoScanUniverse(){
 
         const pos = buildSignalFromCandles_MTF(coin.s, baseTf, candlesByTf, "2TF");
 
-        // ✅ 변경: HOLD라도 "패턴경고 HOLD"면 제외하지 않고 RISK로 포함
         const riskHold = isPatternBlockedHold(pos);
-
         if(pos.type === "HOLD" && !riskHold) continue;
 
-        // 표시용 타입(리스크 HOLD면 방향 추정)
         const ex = pos.explain || {};
         const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
 
@@ -1193,10 +1207,14 @@ async function autoScanUniverse(){
         results.push(item);
       }catch(e){}
 
-      await sleep(SCAN_DELAY_MS);
+      // ✅ 취소 가능 sleep
+      try{
+        await sleepCancelable(SCAN_DELAY_MS, opToken);
+      }catch(e){
+        throw e;
+      }
     }
 
-    // ✅ 변경: score 기반 정렬 (risk는 감점으로 후순위)
     results.sort((a,b)=> (b._score - a._score));
     state.lastScanResults = results.slice(0, 6).map(x => {
       const { _score, ...rest } = x;
@@ -1207,7 +1225,15 @@ async function autoScanUniverse(){
 
     renderScanResults();
     if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
+  }catch(e){
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("자동 스캔이 취소되었습니다.", "warn");
+      if(status) status.textContent = "취소됨";
+      return;
+    }
+    throw e;
   }finally{
+    endOperation(opToken);
     if(scanBtn) scanBtn.disabled = false;
     setTimeout(()=>{
       const el = document.getElementById("scan-status");
@@ -1291,6 +1317,8 @@ function shiftPosEntryTo(pos, newEntry){
 async function runBacktest(){
   ensureRuntimeState();
 
+  const opToken = beginOperation("BACKTEST");
+
   const btBtn = document.getElementById("bt-btn");
   if(btBtn){
     btBtn.disabled = true;
@@ -1301,6 +1329,8 @@ async function runBacktest(){
   if(box) box.classList.remove("show");
 
   try{
+    checkCanceled(opToken);
+
     const tfSet = getMTFSet2(state.tf);
     const baseTf = tfSet[0];
     const otherTf = tfSet[1];
@@ -1320,6 +1350,8 @@ async function runBacktest(){
     const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
 
     for(let idx = start; idx < end; idx += 7){
+      checkCanceled(opToken);
+
       const sliceBase = candlesBase.slice(0, idx+1);
       if(sliceBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
 
@@ -1375,9 +1407,14 @@ async function runBacktest(){
 
     if(box) box.classList.add("show");
   }catch(e){
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("백테스트가 취소되었습니다.", "warn");
+      return;
+    }
     console.error(e);
     toast("백테스트 중 오류가 발생했습니다.", "danger");
   }finally{
+    endOperation(opToken);
     if(btBtn){
       btBtn.disabled = false;
       btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
@@ -1437,3 +1474,6 @@ window.runBacktest = runBacktest;
 window.confirmTrack = confirmTrack;
 window.closeModal = closeModal;
 window.quickAnalyzeAndShow = quickAnalyzeAndShow;
+
+// ✅ NEW: 진행중 취소 (index.html에서 버튼으로 연결)
+window.cancelOperation = cancelOperation;
