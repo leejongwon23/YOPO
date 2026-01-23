@@ -77,7 +77,7 @@ const SIM_TOPK = 25;
 const HOLD_MIN_TOPK = 12;
 const HOLD_MIN_SIM_AVG = 55;
 const HOLD_MIN_EDGE = 0.08;
-const HOLD_MIN_TP_PCT = 1.0;
+const HOLD_MIN_TP_PCT = 0.8;
 
 // ✅ MTF 합의 기준
 const MTF_WEIGHTS_3TF = { "60": 0.50, "240": 0.30, "D": 0.20 }; // 분석(정밀): 3TF
@@ -116,39 +116,6 @@ const EXTENDED_LIMIT = 900;
 const BT_MIN_PROB = 0.58;
 const BT_MIN_EDGE = 0.10;
 const BT_MIN_SIM  = 60;
-
-/* ==========================================================
-   ✅ Tuning (성공률 우선 모드)
-   - strictMode=true: 예측은 더 보수적으로(빈도↓, 승률↑)
-   - strictMode=false: 예측은 더 적극적으로(빈도↑)
-   ========================================================== */
-const TUNING_PRESETS = {
-  normal: {
-    HOLD_MIN_TOPK: HOLD_MIN_TOPK,
-    HOLD_MIN_SIM_AVG: HOLD_MIN_SIM_AVG,
-    HOLD_MIN_EDGE: HOLD_MIN_EDGE,
-    HOLD_MIN_TP_PCT: HOLD_MIN_TP_PCT,
-    BT_MIN_PROB: BT_MIN_PROB,
-    BT_MIN_EDGE: BT_MIN_EDGE,
-    BT_MIN_SIM: BT_MIN_SIM
-  },
-  strict: {
-    HOLD_MIN_TOPK: 14,
-    HOLD_MIN_SIM_AVG: 58,
-    HOLD_MIN_EDGE: 0.10,
-    HOLD_MIN_TP_PCT: 1.0,
-    BT_MIN_PROB: 0.60,
-    BT_MIN_EDGE: 0.12,
-    BT_MIN_SIM: 62
-  }
-};
-
-function getTuning(){
-  ensureCoreStateShape();
-  const strict = !!state?.settings?.strictMode;
-  return strict ? TUNING_PRESETS.strict : TUNING_PRESETS.normal;
-}
-
 
 /* ==========================================================
    ✅ ADD (2026-01-22E) 근본 업그레이드: 레짐/최근가중/실전보정/변동성/트레일링/수수료
@@ -380,41 +347,8 @@ const DEFAULT_CANDIDATES = [
   { s: "UNIUSDT", n: "유니스왑" },
   { s: "ETCUSDT", n: "이더리움클래식" },
   { s: "FILUSDT", n: "파일코인" },
-  { s: "ATOMUSDT", n: "코스모스" },
-
-  /* ✅ 추가 30개(기본 60 구성) — cg 매핑 불확실은 생략 */
-  { s: "ALGOUSDT", n: "알고랜드" },
-  { s: "XLMUSDT", n: "스텔라루멘" },
-  { s: "VETUSDT", n: "비체인" },
-  { s: "HBARUSDT", n: "헤데라" },
-  { s: "THETAUSDT", n: "세타" },
-  { s: "FTMUSDT", n: "팬텀" },
-  { s: "KAVAUSDT", n: "카바" },
-  { s: "CRVUSDT", n: "커브" },
-  { s: "SNXUSDT", n: "신세틱스" },
-  { s: "MKRUSDT", n: "메이커" },
-  { s: "LDOUSDT", n: "리도" },
-  { s: "STXUSDT", n: "스택스" },
-  { s: "RUNEUSDT", n: "토르체인" },
-  { s: "ICPUSDT", n: "ICP" },
-  { s: "TIAUSDT", n: "셀레스티아" },
-  { s: "JUPUSDT", n: "주피터" },
-  { s: "JTOUSDT", n: "지토" },
-  { s: "PENDLEUSDT", n: "펜들" },
-  { s: "ONDOUSDT", n: "온도" },
-  { s: "GALAUSDT", n: "갈라" },
-  { s: "SANDUSDT", n: "샌드박스" },
-  { s: "MANAUSDT", n: "디센트럴랜드" },
-  { s: "AXSUSDT", n: "엑시인피니티" },
-  { s: "APEUSDT", n: "에이프코인" },
-  { s: "GMTUSDT", n: "스테픈" },
-  { s: "PYTHUSDT", n: "파이스" },
-  { s: "ENAUSDT", n: "에테나" },
-  { s: "WIFUSDT", n: "도그위프햇" },
-  { s: "BONKUSDT", n: "봉크" },
-  { s: "PEPEUSDT", n: "페페" }
+  { s: "ATOMUSDT", n: "코스모스" }
 ];
-
 
 /* =========================
    State (전역)
@@ -434,14 +368,6 @@ let state = loadState() || {
   lastScanAt: 0,
   lastScanResults: [],
   lastPrices: {},
-
-  /* ✅ NEW: 성공률 우선 모드/완성 캔들만 사용/차트 심볼 설정 */
-  settings: {
-    strictMode: true,
-    closedCandleOnly: true,
-    chartExchange: "AUTO",
-    chartPerp: true
-  },
 
   /* ✅ NEW: 공통 작업 취소 플래그/토큰 */
   op: { cancel: false, token: 0 }
@@ -473,7 +399,6 @@ function ensureCoreStateShape(){
       lastScanAt: 0,
       lastScanResults: [],
       lastPrices: {},
-      settings: { strictMode: true, closedCandleOnly: true, chartExchange: "AUTO", chartPerp: true },
       op: { cancel: false, token: 0 }
     };
     changed = true;
@@ -494,16 +419,6 @@ function ensureCoreStateShape(){
   if(!Array.isArray(state.lastScanResults)){ state.lastScanResults = []; changed = true; }
   if(!state.lastPrices || typeof state.lastPrices !== "object"){ state.lastPrices = {}; changed = true; }
 
-  if(!state.settings || typeof state.settings !== "object"){
-    state.settings = { strictMode: true, closedCandleOnly: true, chartExchange: "AUTO", chartPerp: true };
-    changed = true;
-  }else{
-    if(typeof state.settings.strictMode !== "boolean"){ state.settings.strictMode = true; changed = true; }
-    if(typeof state.settings.closedCandleOnly !== "boolean"){ state.settings.closedCandleOnly = true; changed = true; }
-    if(typeof state.settings.chartExchange !== "string"){ state.settings.chartExchange = "AUTO"; changed = true; }
-    if(typeof state.settings.chartPerp !== "boolean"){ state.settings.chartPerp = true; changed = true; }
-  }
-
   if(!state.op || typeof state.op !== "object"){
     state.op = { cancel: false, token: 0 };
     changed = true;
@@ -511,6 +426,32 @@ function ensureCoreStateShape(){
     if(typeof state.op.cancel !== "boolean"){ state.op.cancel = false; changed = true; }
     if(!Number.isFinite(state.op.token)){ state.op.token = 0; changed = true; }
   }
+
+  /* ✅ settings (UI 토글) */
+  if(!state.settings || typeof state.settings !== "object"){
+    state.settings = { strictMode: true, closedCandleOnly: true };
+    changed = true;
+  }else{
+    if(typeof state.settings.strictMode !== "boolean"){ state.settings.strictMode = true; changed = true; }
+    if(typeof state.settings.closedCandleOnly !== "boolean"){ state.settings.closedCandleOnly = true; changed = true; }
+  }
+
+  /* ✅ chart prefs */
+  if(!state.chart || typeof state.chart !== "object"){
+    state.chart = { source: "AUTO", perp: true };
+    changed = true;
+  }else{
+    if(!["AUTO","BYBIT","BINANCE"].includes(String(state.chart.source||"AUTO"))){
+      state.chart.source = "AUTO"; changed = true;
+    }
+    if(typeof state.chart.perp !== "boolean"){ state.chart.perp = true; changed = true; }
+  }
+
+  /* ✅ bulk results caches */
+  if(!Array.isArray(state.lastScanResultsFull)){ state.lastScanResultsFull = []; changed = true; }
+  if(!Number.isFinite(state.lastScanFullAt)){ state.lastScanFullAt = 0; changed = true; }
+  if(!Array.isArray(state.lastBacktestAllResults)){ state.lastBacktestAllResults = []; changed = true; }
+  if(!Number.isFinite(state.lastBacktestAllAt)){ state.lastBacktestAllAt = 0; changed = true; }
 
   if(changed) saveState();
 }

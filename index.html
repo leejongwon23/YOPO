@@ -145,63 +145,31 @@
             <button class="mini-toggle" id="chart-perp-btn" onclick="toggleChartPerp?.()">차트 선물(.P): ON</button>
           </div>
 
-          <!-- ✅ 통합 예측(단/중/장 한번에) -->
-          <button class="action-btn" id="predict-all-btn" onclick="executeAnalysisAll?.()">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행
-          </button>
-
-          <!-- ✅ 진행 취소(분석/스캔/백테스트 공통) -->
-          <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
-            <i class="fa-solid fa-hand"></i> 진행 취소(분석/스캔/백테스트)
-          </button>
-
-          <div class="tiny-note" style="margin-top:8px;">
-            - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
-          </div>
-
-          <!-- ✅ 기존 단일 TF 분석 버튼은 “고급”으로 남겨둠(원하면 제거 가능) -->
-          <button class="action-btn secondary" id="predict-btn" onclick="executeAnalysis()">
-            <i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석
+                    <!-- ✅ 60코인 통합 예측/스캔(단·중·장) -->
+          <button class="action-btn" id="scan-all-btn" onclick="startUnifiedScan?.()">
+            <i class="fa-solid fa-binoculars"></i> 60코인 통합 예측/스캔(단·중·장)
           </button>
 
           <div class="btn-row">
-            <!-- ✅ 통합 자동스캔(단/중/장 모두) -->
-            <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll?.()">
-              <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
-            </button>
-
             <button class="action-btn secondary" id="scan-view-btn" onclick="openScanModal?.()">
-              <i class="fa-solid fa-list-check"></i> 스캔 결과 열기
+              <i class="fa-solid fa-list-check"></i> 스캔/예측 결과 보기
             </button>
 
-            <!-- 기존 -->
-            <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse?.()">
-              <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(60/현재TF)
+            <button class="action-btn secondary" id="bt-all-btn" onclick="openBacktestModal?.()">
+              <i class="fa-solid fa-flask"></i> 통합 백테스트(60×3) 결과 보기
             </button>
-            <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
-              <i class="fa-solid fa-flask"></i> 백테스트
+
+            <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
+              <i class="fa-solid fa-hand"></i> 진행 취소
             </button>
           </div>
 
-          <!-- 백테스트 결과 -->
-          <div class="bt-box" id="bt-box">
-            <div class="bt-title">
-              <span>백테스트 결과(필터 강화형)</span>
-              <span id="bt-range" style="font-weight:950;">--</span>
-            </div>
-            <div class="bt-metrics">
-              <div class="mini-box"><small>표본</small><div id="bt-n">--</div></div>
-              <div class="mini-box"><small>승률</small><div id="bt-win">--</div></div>
-              <div class="mini-box"><small>평균수익(%)</small><div id="bt-avg">--</div></div>
-            </div>
-            <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
-              - 백테스트는 “과거로 시험해보는 점수표”입니다.<br/>
-              - 이번 버전은 잡신호를 빼려고 <b>필터(확률/엣지/유사도)</b> 통과한 신호만 테스트합니다.<br/>
-              - 표본이 적으면 승률이 높아 보여도 믿기 어려우니, 표본도 같이 보세요.
-            </div>
+          <div class="tiny-note" style="margin-top:8px;">
+            - “통합 예측/스캔”은 60개 코인을 1H/4H/1D로 자동 스캔합니다.<br/>
+            - 결과에서 코인을 클릭하면 통합 예측 결과를 확인하고, 원하면 바로 “추적 등록”할 수 있습니다.
           </div>
 
-          <div class="tiny-note">
+<div class="tiny-note">
             - 서버 없이(HTML 1파일) 동작하는 “안정화 버전”입니다.<br/>
             - 애매하면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
             - “중복 신호/과한 빈도”를 막기 위해 <b>중복/쿨다운</b> 보호를 넣었습니다.

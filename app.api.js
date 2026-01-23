@@ -450,89 +450,35 @@ async function marketTick(){
 /* =========================
    Candle Fetch
 ========================= */
+async function fetchCandles(symbol, tf, limit){
+  _ensureApiStateShape();
+  const token = _getOpToken();
+  if(_isCancelled(token)) return [];
 
-async function fetchCandles(symbol, tf, limit = CANDLE_LIMIT){
-  // ✅ 1) Bybit 우선 → 실패/부족하면 Binance(Futures)로 폴백
-  const BYBIT_URL = "https://api.bybit.com/v5/market/kline";
-  const BINANCE_FAPI = "https://fapi.binance.com/fapi/v1/klines";
+  const res = await fetchJSON(BYBIT_KLINE(symbol, tf, limit), { timeoutMs: 9000, retry: 1 });
+  if(_isCancelled(token)) return [];
 
-  const tfToBinance = (t) => {
-    if(t === "60") return "1h";
-    if(t === "240") return "4h";
-    return "1d"; // "D"
-  };
+  const kline = res?.result?.list || [];
+  const candles = kline.map(row => ({
+    t: Number(row[0]),
+    o: parseFloat(row[1]),
+    h: parseFloat(row[2]),
+    l: parseFloat(row[3]),
+    c: parseFloat(row[4]),
+    v: parseFloat(row[5])
+  })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
 
-  const tfMs = (t) => (typeof tfToMs === "function" ? tfToMs(t) : (t==="60"?3600000:(t==="240"?14400000:86400000)));
+  candles.sort((a,b)=> a.t - b.t);
 
-  const trimClosed = (arr) => {
-    try{
-      if(!Array.isArray(arr) || arr.length < 3) return arr;
-      const ms = tfMs(tf);
-      // 마지막 캔들이 "진행 중"이면 제거(종가 기반으로만 예측/백테스트 정합성↑)
-      if(state?.settings?.closedCandleOnly){
-        const last = arr[arr.length-1];
-        if(last && Number.isFinite(last.t)){
-          const now = Date.now();
-          if(now < last.t + ms - 15000){ // 15초 버퍼
-            arr = arr.slice(0, -1);
-          }
-        }
-      }
-      return arr;
-    }catch(_e){ return arr; }
-  };
-
-  // ---------- Bybit ----------
+  // ✅ 종가(완성캔들)만 사용 모드: 아직 완성되지 않은 마지막 캔들은 제거
   try{
-    const url = `${BYBIT_URL}?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tf)}&limit=${encodeURIComponent(limit)}`;
-    const j = await safeFetchJSON(url, { timeoutMs: 15000 });
-    const list = j?.result?.list;
-    if(Array.isArray(list) && list.length){
-      const out = list.map(r => ({
-        t: Number(r[0]),
-        o: Number(r[1]),
-        h: Number(r[2]),
-        l: Number(r[3]),
-        c: Number(r[4]),
-        v: Number(r[5] || 0)
-      })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c));
-
-      out.sort((a,b)=>a.t-b.t);
-      const trimmed = trimClosed(out);
-
-      // 충분하면 Bybit 그대로 사용
-      if(trimmed.length >= Math.min(200, Math.floor(limit*0.6))){
-        return trimmed;
+    if(state && state.settings && state.settings.closedCandleOnly && typeof tfToMs === "function" && candles.length){
+      const ms = tfToMs(tf);
+      const last = candles[candles.length-1];
+      if(Number.isFinite(last?.t) && (last.t + ms) > Date.now()){
+        candles.pop();
       }
-      // 부족하면 Binance 폴백 시도
     }
-  }catch(_e){
-    // 폴백으로 진행
-  }
-
-  // ---------- Binance Futures (폴백) ----------
-  try{
-    const interval = tfToBinance(tf);
-    // Binance는 limit 최대 1500. (여기는 900 기본)
-    const url = `${BINANCE_FAPI}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(Math.min(1500, limit))}`;
-    const arr = await safeFetchJSON(url, { timeoutMs: 15000 });
-    if(Array.isArray(arr) && arr.length){
-      const out = arr.map(r => ({
-        t: Number(r[0]),
-        o: Number(r[1]),
-        h: Number(r[2]),
-        l: Number(r[3]),
-        c: Number(r[4]),
-        v: Number(r[5] || 0)
-      })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c));
-
-      out.sort((a,b)=>a.t-b.t);
-      return trimClosed(out);
-    }
-  }catch(_e){
-    // ignore
-  }
-
-  return [];
+  }catch(e){}
+  return candles;
 }
-
