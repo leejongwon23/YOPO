@@ -605,4 +605,250 @@ body{
 }
 .modal-grid{
   display:grid;
-  grid-template-columns:1fr
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-bottom:14px;
+  font-weight:950;
+}
+.mini-box{
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:10px;
+  text-align:left;
+}
+.mini-box small{ display:block; color:var(--text-sub); font-weight:950; margin-bottom:3px; }
+.modal-btn{
+  width:100%;
+  padding:14px;
+  border:none;
+  background:var(--primary);
+  color:#fff;
+  border-radius:12px;
+  font-weight:950;
+  cursor:pointer;
+  font-size:15px;
+}
+.modal-btn.secondary{
+  margin-top:8px;
+  background:#f1f5f9;
+  color:var(--text-main);
+  border:1px solid var(--border);
+}
+
+/* ✅ 통합(단/중/장) 선택 카드 UI
+   - 실제 DOM은 app.features.js에서 #multi-cards 안에 "mini-box"로 렌더됨
+   - 그래서 #multi-cards 내부 mini-box만 카드처럼 보이도록 덮어쓴다 */
+#multi-results{ margin-top: 4px; }
+#multi-cards{
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:10px;
+}
+
+/* ✅ 여기부터가 핵심: #multi-cards 안의 mini-box를 카드로 */
+#multi-cards .mini-box{
+  background: var(--secondary);
+  cursor: pointer;
+  transition: .15s ease;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+}
+#multi-cards .mini-box:hover{
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+#multi-cards .mini-box small{
+  font-size:12px;
+  font-weight:950;
+  color: var(--text-sub);
+  margin-bottom: 4px;
+}
+#multi-cards .mini-box > div{
+  font-weight: 950;
+}
+#multi-cards .mini-box[style*="not-allowed"]{
+  cursor: not-allowed;
+}
+
+/* 선택된 전략 안내 */
+#multi-selected{
+  padding:10px 12px;
+  border:1px dashed var(--border);
+  border-radius:12px;
+  background: #fff;
+}
+#multi-choose:disabled{
+  background:#cbd5e0;
+  cursor:not-allowed;
+}
+
+/* (레거시) multi-card 클래스는 남겨둬도 무방 */
+.multi-card{
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:12px;
+  background: var(--secondary);
+  cursor:pointer;
+  transition:.15s ease;
+}
+.multi-card:hover{
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.multi-card.selected{
+  border-color: var(--primary);
+  background: var(--primary-light);
+  box-shadow: 0 10px 22px rgba(0,82,255,.18);
+}
+.multi-card .row-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+}
+.multi-card .tf{
+  font-size:12px;
+  font-weight:950;
+  color: var(--text-sub);
+}
+.multi-card .signal{
+  font-size:13px;
+  font-weight:950;
+  color: var(--primary);
+}
+.multi-card .desc{
+  margin-top:8px;
+  font-size:12px;
+  font-weight:850;
+  color: var(--text-sub);
+  line-height:1.45;
+}
+
+/* ---------- BACKTEST BOX ---------- */
+.bt-box{
+  margin-top:10px;
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:12px;
+  display:none;
+}
+.bt-box.show{ display:block; }
+.bt-title{ font-size:12px; font-weight:950; color:var(--text-sub); margin-bottom:8px; display:flex; justify-content:space-between; }
+.bt-metrics{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.bt-metrics .mini-box{ background:var(--secondary); }
+
+/* ✅ Better tap targets on touch devices */
+@media (pointer: coarse){
+  .coin-row, .rec-item, .action-btn, .tf-btn{ min-height: 44px; }
+}
+
+/* ==========================================================
+   ✅ MOBILE OPTIMIZATION (차트/추적 안보임 FIX 포함)
+   ========================================================== */
+@media (max-width: 980px){
+  body{
+    display:block;
+    height:auto;
+    min-height:100vh;
+    overflow:auto;
+    padding-bottom: var(--safe-bottom);
+  }
+
+  #app{
+    display:flex !important;
+    flex-direction: column !important;
+    width:100% !important;
+    height:auto !important;
+    min-height: 100vh;
+  }
+
+  .sidebar{
+    width:100%;
+    min-width:0;
+    border-right:none;
+    box-shadow:none;
+  }
+  .main-panel{
+    width:100%;
+    min-width:0;
+  }
+
+  .chart-container{
+    flex:none;
+    min-height: 320px;
+    height: 52vh;
+    max-height: 640px;
+  }
+  .tracking-dashboard{
+    flex:none;
+    min-height: 320px;
+    height: auto;
+  }
+
+  .market-list{ max-height: 46vh; }
+  .tracking-list{ max-height: 56vh; }
+}
+
+@media (max-width: 720px){
+  .brand-header{ padding:18px 16px; }
+  .brand-header h1{ font-size:22px; }
+  .stats-dashboard{ padding:12px; gap:10px; }
+  .stat-card{ padding:10px; border-radius:12px; }
+  .stat-value{ font-size:16px; }
+
+  .market-list{ padding:10px 12px 10px; }
+  .coin-row{ padding:14px; border-radius:14px; margin-bottom:8px; }
+  .coin-info h4{ font-size:15px; }
+  .coin-price .p{ font-size:15px; }
+
+  .analysis-controls{
+    position: sticky;
+    bottom: 0;
+    z-index: 300;
+    padding:12px;
+    padding-bottom: calc(12px + var(--safe-bottom));
+    border-top:1px solid var(--border);
+    box-shadow:0 -8px 22px rgba(0,0,0,.06);
+  }
+  .tf-btn{ padding:10px 6px; font-size:12.5px; }
+  .action-btn{ padding:14px 10px; font-size:14px; border-radius:14px; }
+
+  .recommend-box{ margin:10px 0 12px; border-radius:14px; }
+  .history-box{ margin:0 12px 12px; border-radius:14px; }
+  .tracking-header{ padding:12px 14px; }
+  .tracking-header h3{ font-size:15px; }
+
+  .tracking-list{ padding:12px; }
+  .position-card{ padding:14px; border-radius:16px; }
+  .card-symbol{ font-size:16px; }
+  .card-grid{ grid-template-columns:1fr; gap:10px; }
+  .price-info{ text-align:left; display:flex; justify-content:space-between; gap:10px; }
+  .price-label{ margin-bottom:0; }
+  .progress-text{ font-size:12px; }
+  .card-foot{ font-size:11px; }
+  .analysis-modal{ padding:18px; border-radius:18px; }
+  .modal-grid{ grid-template-columns:1fr; }
+
+  /* ✅ 통합 카드도 모바일에서 안전 */
+  #multi-cards{ grid-template-columns: 1fr; }
+}
+
+@media (max-width: 420px){
+  .brand-header h1{ font-size:20px; }
+  .stat-label{ font-size:10.5px; }
+  .tiny-note{ font-size:10.5px; }
+  .coin-price .p{ font-size:14px; }
+  .coin-price .chg{ font-size:10.5px; }
+  .small-metrics{ font-size:9.8px; }
+  .action-btn{ font-size:13.5px; }
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+
+@keyframes pulse{0%{opacity:1}50%{opacity:.5}100%{opacity:1}}
+@keyframes popUp{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
