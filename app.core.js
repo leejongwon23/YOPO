@@ -250,6 +250,73 @@ function computePatternPenalty(meta){
   return { penalty, hardHold };
 }
 
+/* ==========================================================
+   ✅ NEW: "통합예측(단/중/장)" 합의 규칙
+   - 3개 결과 중 LONG/SHORT가 2개 이상 같아야 "최종 방향" 인정
+   - 그렇지 않으면 HOLD
+   - HOLD는 "방향표"로 취급하지 않음(=기권)
+   ========================================================== */
+function consensusAll3Signals(sig60, sig240, sigD){
+  const sigs = [
+    { tfRaw:"60",  sig:sig60 },
+    { tfRaw:"240", sig:sig240 },
+    { tfRaw:"D",   sig:sigD }
+  ];
+
+  // 방향표(홀드 제외)
+  let longN = 0, shortN = 0;
+  for(const x of sigs){
+    const t = x?.sig?.type;
+    if(t === "LONG") longN++;
+    if(t === "SHORT") shortN++;
+  }
+
+  let finalType = "HOLD";
+  if(longN >= 2) finalType = "LONG";
+  else if(shortN >= 2) finalType = "SHORT";
+  else finalType = "HOLD"; // 2개 이상 동일이 아니면 HOLD
+
+  // 통합 확률/엣지(간단 평균 + 합의 가중)
+  let wp = 0, ed = 0, cnt = 0;
+  for(const x of sigs){
+    if(!x.sig || !x.sig.explain) continue;
+    const ex = x.sig.explain;
+    if(Number.isFinite(ex.winProb)) wp += ex.winProb;
+    if(Number.isFinite(ex.edge)) ed += ex.edge;
+    cnt++;
+  }
+  wp = cnt ? (wp / cnt) : 0.5;
+  ed = cnt ? (ed / cnt) : 0;
+
+  // 합의가 깔끔하면 살짝 보너스(정렬용)
+  const agree = Math.max(longN, shortN); // 0~3
+  const wpAdj = clamp(wp + (agree >= 2 ? 0.01 : 0), 0.5, 0.99);
+
+  return {
+    finalType,
+    agree,
+    longN,
+    shortN,
+    winProbAvg: wpAdj,
+    edgeAvg: ed,
+    detail: {
+      "60": sig60,
+      "240": sig240,
+      "D": sigD
+    }
+  };
+}
+
+function scoreUnifiedSignal(unified){
+  // 통합 스캔 정렬 점수: 확률 + 엣지 (간단/직관)
+  const w = Number(unified?.winProbAvg ?? 0);
+  const e = Number(unified?.edgeAvg ?? 0);
+  const agree = Number(unified?.agree ?? 0);
+  // 합의 2 이상이면 살짝 가산
+  const bonus = (agree >= 2) ? 0.02 : 0;
+  return (w * 1.0) + (e * 0.7) + bonus;
+}
+
 /* =========================
    Candidate List (15)
 ========================= */
@@ -331,12 +398,10 @@ function getPosExpiryAt(pos){
   const tfRaw = pos.tfRaw || state.tf || "60";
   const expected = start + tfToMs(tfRaw);
 
-  // 1순위: 저장된 expiryAt이 있으면 그걸 사용
   if(Number.isFinite(pos.expiryAt) && pos.expiryAt > 0){
     return pos.expiryAt;
   }
 
-  // 없으면 생성(동기화)
   pos.createdAt = start;
   pos.expiryAt = expected;
   try{ saveState(); }catch(e){}
