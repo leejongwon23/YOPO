@@ -121,6 +121,15 @@
           <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행
         </button>
 
+        <!-- ✅ NEW: 진행 취소(분석/스캔/백테스트 공통) -->
+        <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
+          <i class="fa-solid fa-hand"></i> 진행 취소(분석/스캔/백테스트)
+        </button>
+
+        <div class="tiny-note" style="margin-top:8px;">
+          - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
+        </div>
+
         <!-- ✅ 기존 단일 TF 분석 버튼은 “고급”으로 남겨둠(원하면 제거 가능) -->
         <button class="action-btn secondary" id="predict-btn" onclick="executeAnalysis()">
           <i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석
