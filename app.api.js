@@ -1,10 +1,44 @@
 /*************************************************************
- * YOPO AI PRO — app.api.js (분할 v1)  ✅ UPDATED (FIXED)
+ * YOPO AI PRO — app.api.js (분할 v1)  ✅ UPDATED (FIXED+)
  * 역할: 외부 API 통신 + 데이터 로딩(유니버스/도미넌스/티커/캔들)
  * 주의:
  * - UI 업데이트 함수(updateCoinRow/renderUniverseList/trackPositions/switchCoin 등)는
  *   app.features.js에 있어도 OK. (호출 시점에 정의돼 있으면 동작)
  *************************************************************/
+
+/* =========================
+   ✅ Core cancel wrappers (core와 연결)
+   - core(app.core.js)에 requestCancelOperation/isOperationCancelled 등이 있으면 사용
+   - 없으면 "취소 없음"으로 동작(안전)
+========================= */
+function _getOpToken(){
+  try{
+    if(state && state.op && Number.isFinite(state.op.token)) return state.op.token;
+  }catch(e){}
+  return 0;
+}
+function _isCancelled(token){
+  try{
+    if(typeof isOperationCancelled === "function") return isOperationCancelled(token);
+  }catch(e){}
+  // fallback: 취소 없음
+  return false;
+}
+function _ensureApiStateShape(){
+  try{
+    if(!state || typeof state !== "object") return;
+    if(!state.op || typeof state.op !== "object") state.op = { cancel:false, token:0 };
+    if(typeof state.op.cancel !== "boolean") state.op.cancel = false;
+    if(!Number.isFinite(state.op.token)) state.op.token = 0;
+
+    if(!state.lastPrices || typeof state.lastPrices !== "object") state.lastPrices = {};
+    if(!Array.isArray(state.universe)) state.universe = [];
+    if(!Array.isArray(state.activePositions)) state.activePositions = [];
+    if(!state.history || typeof state.history !== "object") state.history = { total:0, win:0 };
+    if(!Number.isFinite(state.history.total)) state.history.total = 0;
+    if(!Number.isFinite(state.history.win)) state.history.win = 0;
+  }catch(e){}
+}
 
 /* =========================
    ✅ Safety helpers (폴백)
@@ -55,11 +89,17 @@ function _mapCgToBybitSymbol(cgSymUpper, bybitSet){
    Universe + Dominance
 ========================= */
 async function refreshUniverseAndGlobals(){
+  _ensureApiStateShape();
+  const token = _getOpToken(); // ✅ 이 작업 시작 시점 토큰
   const apiDot = document.getElementById("api-dot");
 
   try{
+    if(_isCancelled(token)) return;
+
     // 1) BTC 도미넌스
     const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 1 });
+    if(_isCancelled(token)) return;
+
     const dom = g?.data?.market_cap_percentage?.btc;
     if(typeof dom === "number"){
       state.btcDomPrev = (typeof state.btcDom === "number") ? state.btcDom : null;
@@ -71,6 +111,8 @@ async function refreshUniverseAndGlobals(){
 
     // 2) Bybit 심볼 목록(교차 검증용)
     const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
+
     const tickers = by?.result?.list || [];
     const bybitSet = new Set(
       tickers
@@ -80,6 +122,7 @@ async function refreshUniverseAndGlobals(){
 
     // 3) CoinGecko 마켓(상위 200)
     const markets = await fetchJSON(CG_MARKETS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
 
     // 점수 산정: 시총 + 거래량 + 변동성(24h) 가벼운 가중치
     const scored = (Array.isArray(markets) ? markets : [])
@@ -120,7 +163,6 @@ async function refreshUniverseAndGlobals(){
     if(picked.length < 30){
       const need = 30 - picked.length;
 
-      // Bybit turnover 순 상위 후보 뽑기
       const rows = tickers
         .map(t => {
           const symbol = String(t.symbol || "").toUpperCase();
@@ -139,6 +181,7 @@ async function refreshUniverseAndGlobals(){
       const exist = new Set(picked.map(x=>x.s));
       const add = [];
       for(const r of rows){
+        if(_isCancelled(token)) return;
         if(add.length >= need) break;
         if(exist.has(r.symbol)) continue;
         add.push({
@@ -159,13 +202,15 @@ async function refreshUniverseAndGlobals(){
     // 예외: 너무 적으면(제한/장애) fallback로 완전 대체
     if(picked.length < 18){
       console.warn("CG/Bybit cross universe too small -> full fallback");
-      await fallbackUniverseFromBybit(); // 여기서 state.universe 세팅
+      await fallbackUniverseFromBybit(token); // 여기서 state.universe 세팅
       if(apiDot) apiDot.className = "status-dot warn";
       return;
     }
 
+    if(_isCancelled(token)) return;
+
     // 정상 반영
-    state.universe = picked;
+    state.universe = picked.slice(0, 30);
     state.lastUniverseAt = Date.now();
     state.lastApiHealth = "ok";
     saveState();
@@ -181,14 +226,19 @@ async function refreshUniverseAndGlobals(){
     if(apiDot) apiDot.className = "status-dot warn";
     state.lastApiHealth = "warn";
     saveState();
-    await fallbackUniverseFromBybit();
+    await fallbackUniverseFromBybit(token);
   }
 }
 
-async function fallbackUniverseFromBybit(){
+async function fallbackUniverseFromBybit(token = _getOpToken()){
+  _ensureApiStateShape();
   const apiDot = document.getElementById("api-dot");
   try{
+    if(_isCancelled(token)) return;
+
     const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
+
     const tickers = json?.result?.list || [];
 
     const rows = tickers
@@ -206,11 +256,12 @@ async function fallbackUniverseFromBybit(){
       .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
 
     rows.sort((a,b)=> (b.turn - a.turn));
-    const top = rows.slice(0, 120);
+    const top = rows.slice(0, 160);
 
     // ✅ 30개로 확대
     const picked = [];
     for(const r of top){
+      if(_isCancelled(token)) return;
       if(picked.length >= 30) break;
       if(picked.some(x=>x.s===r.symbol)) continue;
       picked.push({
@@ -222,6 +273,8 @@ async function fallbackUniverseFromBybit(){
         score: safeLog10(r.turn)
       });
     }
+
+    if(_isCancelled(token)) return;
 
     state.universe = picked.slice(0, 30);
     state.lastUniverseAt = Date.now();
@@ -244,13 +297,16 @@ async function fallbackUniverseFromBybit(){
    Market tick + tracking
 ========================= */
 async function marketTick(){
+  _ensureApiStateShape();
+  const token = _getOpToken();
+
   try{
-    // ✅ 방어: lastPrices 없으면 초기화
-    if(!state.lastPrices || typeof state.lastPrices !== "object"){
-      state.lastPrices = {};
-    }
+    // ✅ 취소/초기화 직후엔 “지금 tick”을 즉시 종료
+    if(_isCancelled(token)) return;
 
     const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
+
     const tickers = json?.result?.list || [];
 
     const uni = Array.isArray(state.universe) ? state.universe : [];
@@ -261,6 +317,8 @@ async function marketTick(){
     const activeSymbols = new Set(active.map(p => p?.symbol).filter(Boolean));
 
     for(const t of tickers){
+      if(_isCancelled(token)) return;
+
       const sym = String(t.symbol || "").toUpperCase();
       if(!symbols.has(sym)) continue;
 
@@ -277,9 +335,11 @@ async function marketTick(){
       }
     }
 
-    // ✅ 안정장치: TIME 정산/통계 갱신 보장
-    if(typeof settleExpiredPositions === "function") settleExpiredPositions();
-    if(typeof updateStatsUI === "function") updateStatsUI();
+    // ✅ 안정장치: TIME 정산/통계 갱신 보장(정밀추적 종료→기록/성공률 반영)
+    if(!_isCancelled(token)){
+      if(typeof settleExpiredPositions === "function") settleExpiredPositions();
+      if(typeof updateStatsUI === "function") updateStatsUI();
+    }
 
     saveState();
 
@@ -297,7 +357,13 @@ async function marketTick(){
    Candle Fetch
 ========================= */
 async function fetchCandles(symbol, tf, limit){
+  _ensureApiStateShape();
+  const token = _getOpToken();
+  if(_isCancelled(token)) return [];
+
   const res = await fetchJSON(BYBIT_KLINE(symbol, tf, limit), { timeoutMs: 9000, retry: 1 });
+  if(_isCancelled(token)) return [];
+
   const kline = res?.result?.list || [];
   const candles = kline.map(row => ({
     t: Number(row[0]),
@@ -307,6 +373,7 @@ async function fetchCandles(symbol, tf, limit){
     c: parseFloat(row[4]),
     v: parseFloat(row[5])
   })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
+
   candles.sort((a,b)=> a.t - b.t);
   return candles;
 }
