@@ -285,11 +285,11 @@ body{
   display:flex;
   gap:10px;
   margin-top:10px;
-  flex-wrap: wrap;              /* ✅ NEW */
+  flex-wrap: wrap;
 }
 .btn-row .action-btn{
-  flex: 1 1 160px;              /* ✅ NEW: 좁으면 자동 줄바꿈 */
-  min-width: 160px;             /* ✅ NEW */
+  flex: 1 1 160px;
+  min-width: 160px;
 }
 
 .action-btn{
@@ -311,7 +311,7 @@ body{
   user-select:none;
 }
 .action-btn:hover{ background:var(--primary-dark); transform:translateY(-1px); box-shadow:0 5px 15px rgba(0,82,255,.25); }
-.action-btn:active{ transform:translateY(0px); } /* ✅ NEW: 클릭 안정감 */
+.action-btn:active{ transform:translateY(0px); }
 .action-btn:disabled{ background:#cbd5e0; cursor:not-allowed; transform:none; box-shadow:none; }
 
 .action-btn.secondary{
@@ -325,13 +325,13 @@ body{
   box-shadow:none;
 }
 
-/* ✅ NEW: 위험/리셋 류 버튼(secondary라도 실수 클릭 방지용 강조) */
-#reset-stats-btn:hover, #cancel-all-btn:hover{
+/* ✅ 위험/리셋 류 버튼 hover 강조 */
+#reset-stats-btn:hover, #cancel-all-btn:hover, #reset-all-btn:hover{
   border-color: rgba(255,77,79,.35);
   box-shadow: 0 6px 18px rgba(255,77,79,.10);
 }
 
-/* ✅ NEW: 통합 버튼(가장 중요한 버튼) 살짝 강조 */
+/* ✅ 통합 버튼(가장 중요한 버튼) 살짝 강조 */
 #predict-all-btn{
   box-shadow: 0 10px 26px rgba(0,82,255,.22);
 }
@@ -632,6 +632,64 @@ body{
   border:1px solid var(--border);
 }
 
+/* ✅ NEW: 통합(단/중/장) 선택 카드 UI */
+#multi-results{ margin-top: 4px; }
+#multi-cards{
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:10px;
+}
+.multi-card{
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:12px;
+  background: var(--secondary);
+  cursor:pointer;
+  transition:.15s ease;
+}
+.multi-card:hover{
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.multi-card.selected{
+  border-color: var(--primary);
+  background: var(--primary-light);
+  box-shadow: 0 10px 22px rgba(0,82,255,.18);
+}
+.multi-card .row-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+}
+.multi-card .tf{
+  font-size:12px;
+  font-weight:950;
+  color: var(--text-sub);
+}
+.multi-card .signal{
+  font-size:13px;
+  font-weight:950;
+  color: var(--primary);
+}
+.multi-card .desc{
+  margin-top:8px;
+  font-size:12px;
+  font-weight:850;
+  color: var(--text-sub);
+  line-height:1.45;
+}
+#multi-selected{
+  padding:10px 12px;
+  border:1px dashed var(--border);
+  border-radius:12px;
+  background: #fff;
+}
+#multi-choose:disabled{
+  background:#cbd5e0;
+  cursor:not-allowed;
+}
+
 /* ---------- BACKTEST BOX ---------- */
 .bt-box{
   margin-top:10px;
@@ -740,6 +798,9 @@ body{
   .card-foot{ font-size:11px; }
   .analysis-modal{ padding:18px; border-radius:18px; }
   .modal-grid{ grid-template-columns:1fr; }
+
+  /* ✅ 통합 카드도 모바일에서 안전 */
+  #multi-cards{ grid-template-columns: 1fr; }
 }
 
 @media (max-width: 420px){
