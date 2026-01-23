@@ -280,11 +280,18 @@ body{
   box-shadow:0 2px 5px rgba(0,0,0,.05);
 }
 
+/* ✅ FIX: 버튼이 2~3개 있어도 깨지지 않게 */
 .btn-row{
   display:flex;
   gap:10px;
   margin-top:10px;
+  flex-wrap: wrap;              /* ✅ NEW */
 }
+.btn-row .action-btn{
+  flex: 1 1 160px;              /* ✅ NEW: 좁으면 자동 줄바꿈 */
+  min-width: 160px;             /* ✅ NEW */
+}
+
 .action-btn{
   width:100%;
   border:none;
@@ -301,8 +308,10 @@ body{
   align-items:center;
   gap:10px;
   flex:1;
+  user-select:none;
 }
 .action-btn:hover{ background:var(--primary-dark); transform:translateY(-1px); box-shadow:0 5px 15px rgba(0,82,255,.25); }
+.action-btn:active{ transform:translateY(0px); } /* ✅ NEW: 클릭 안정감 */
 .action-btn:disabled{ background:#cbd5e0; cursor:not-allowed; transform:none; box-shadow:none; }
 
 .action-btn.secondary{
@@ -314,6 +323,20 @@ body{
 .action-btn.secondary:hover{
   background:#e9eef6;
   box-shadow:none;
+}
+
+/* ✅ NEW: 위험/리셋 류 버튼(secondary라도 실수 클릭 방지용 강조) */
+#reset-stats-btn:hover, #cancel-all-btn:hover{
+  border-color: rgba(255,77,79,.35);
+  box-shadow: 0 6px 18px rgba(255,77,79,.10);
+}
+
+/* ✅ NEW: 통합 버튼(가장 중요한 버튼) 살짝 강조 */
+#predict-all-btn{
+  box-shadow: 0 10px 26px rgba(0,82,255,.22);
+}
+#predict-all-btn:hover{
+  box-shadow: 0 14px 34px rgba(0,82,255,.28);
 }
 
 .tiny-note{
