@@ -22,191 +22,224 @@
         (기본 비밀번호: <b>2580</b>)
       </p>
       <div class="auth-row">
-        <input id="auth-input" type="password" placeholder="비밀번호 입력" />
-        <button class="btn primary" onclick="tryAuth()">확인</button>
+        <input class="auth-input" id="auth-input" type="password" inputmode="numeric" placeholder="비밀번호 입력 (2580)">
+        <button class="auth-btn" onclick="tryAuth()">입장</button>
       </div>
-      <div class="auth-hint">접속 후 새로고침해도 인증 유지됩니다.</div>
+      <div class="auth-err" id="auth-err">비밀번호가 틀렸습니다.</div>
+      <p class="auth-sub" style="margin-top:10px;">
+        참고: 이 잠금은 “가벼운 잠금”입니다. (HTML은 열면 내용이 보일 수 있습니다)
+      </p>
     </div>
   </div>
 
-  <!-- APP -->
-  <div id="app">
-    <!-- LEFT -->
-    <div class="left">
-      <header class="topbar">
-        <div class="brand">
-          <div class="logo">YOPO</div>
-          <div class="brand-txt">
-            <h1>YOPO AI PRO</h1>
-            <p>Premium Crypto Analytics</p>
+  <!-- APP WRAP -->
+  <div id="app" style="display:flex; width:100%; height:100%;">
+    <div class="sidebar">
+      <div class="brand-header">
+        <h1><i class="fa-solid fa-layer-group"></i> YOPO AI PRO <span class="brand-badge">PREMIUM</span></h1>
+        <div class="brand-sub">
+          <span>KMASTER REAL-TIME CRYPTO ANALYTICS</span>
+          <span class="mini-pill" id="btc-dom-pill">BTC DOM: --</span>
+        </div>
+      </div>
+
+      <div class="stats-dashboard">
+        <div class="stat-card">
+          <span class="stat-label">누적 분석</span>
+          <span class="stat-value" id="total-stat">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">성공률</span>
+          <span class="stat-value" id="win-stat">0%</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">추적 중</span>
+          <span class="stat-value" id="active-stat">0</span>
+        </div>
+      </div>
+
+      <!-- ✅ 운영 버튼(리셋/전체취소/전체초기화) -->
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="action-btn secondary" id="reset-stats-btn" onclick="resetStatsUIAndData?.()">
+          <i class="fa-solid fa-rotate-left"></i> 누적 리셋
+        </button>
+        <button class="action-btn secondary" id="cancel-all-btn" onclick="cancelAllTracking?.()">
+          <i class="fa-solid fa-ban"></i> 추적 전체취소
+        </button>
+      </div>
+
+      <!-- ✅ NEW: 전체 초기화(누적+추적+진행취소 한번에) -->
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="action-btn secondary" id="reset-all-btn" onclick="resetAll?.()">
+          <i class="fa-solid fa-broom"></i> 전체 초기화(누적+추적+진행)
+        </button>
+      </div>
+
+      <!-- 최근 종료 기록 -->
+      <div class="history-box" id="history-box">
+        <div class="history-title">
+          <span>최근 종료 기록</span>
+          <span style="font-weight:950; color:var(--text-sub);" id="history-count">0</span>
+        </div>
+        <div id="history-container">
+          <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:4px 2px;">
+            아직 종료된 기록이 없습니다.
+          </div>
+        </div>
+      </div>
+
+      <div class="market-list">
+        <div class="section-title">
+          <span>유망 코인 60 (자동+AI 추천)</span>
+          <span class="right">
+            <span class="status-dot" id="api-dot"></span>
+            <span id="universe-ts">업데이트: --</span>
+          </span>
+        </div>
+
+        <!-- 추천 TOP -->
+        <div class="recommend-box">
+          <div class="recommend-title">
+            <span>추천 TOP (자동 스캔 결과)</span>
+            <span id="scan-status" style="font-weight:950;">대기</span>
+          </div>
+          <div id="rec-container">
+            <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
+              “통합 자동 스캔”을 누르면 단기/중기/장기를 한 번에 분석해서 결과를 보여줍니다.<br/>
+              추천을 <b>클릭하면 즉시 분석</b> 후, 결과창에서 <b>전략을 선택</b>하여 <b>추적 등록</b>할 수 있습니다.
+            </div>
           </div>
         </div>
 
-        <div class="top-actions">
-          <div class="pill" id="btc-dom-pill">BTC DOM: --</div>
-          <div class="pill muted" id="tf-pill">TF: 1H</div>
-        </div>
-      </header>
+        <div id="market-list-container"></div>
+      </div>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h3><i class="fa-solid fa-magnifying-glass-chart"></i> 분석 & 스캔</h3>
-          <div class="panel-actions">
-            <button class="btn" onclick="setTF('60')">단기(1H)</button>
-            <button class="btn" onclick="setTF('240')">중기(4H)</button>
-            <button class="btn" onclick="setTF('D')">장기(1D)</button>
+      <div class="analysis-controls">
+        <!-- ✅ 차트용 TF 선택은 유지 (차트 표시/수동 분석 기준 TF로도 사용 가능) -->
+        <div class="tf-selector">
+          <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
+          <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
+          <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
+        </div>
+
+        <!-- ✅ 통합 예측(단/중/장 한번에) -->
+        <button class="action-btn" id="predict-all-btn" onclick="executeAnalysisAll?.()">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행
+        </button>
+
+        <!-- ✅ 진행 취소(분석/스캔/백테스트 공통) -->
+        <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
+          <i class="fa-solid fa-hand"></i> 진행 취소(분석/스캔/백테스트)
+        </button>
+
+        <div class="tiny-note" style="margin-top:8px;">
+          - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
+        </div>
+
+        <!-- ✅ 기존 단일 TF 분석 버튼은 “고급”으로 남겨둠(원하면 제거 가능) -->
+        <button class="action-btn secondary" id="predict-btn" onclick="executeAnalysis()">
+          <i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석
+        </button>
+
+        <div class="btn-row">
+          <!-- ✅ 통합 자동스캔(단/중/장 모두) -->
+          <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll?.()">
+            <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
+          </button>
+
+          <!-- 기존 -->
+          <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse()">
+            <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(기존)
+          </button>
+          <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
+            <i class="fa-solid fa-flask"></i> 백테스트
+          </button>
+        </div>
+
+        <!-- 백테스트 결과 -->
+        <div class="bt-box" id="bt-box">
+          <div class="bt-title">
+            <span>백테스트 결과(필터 강화형)</span>
+            <span id="bt-range" style="font-weight:950;">--</span>
+          </div>
+          <div class="bt-metrics">
+            <div class="mini-box"><small>표본</small><div id="bt-n">--</div></div>
+            <div class="mini-box"><small>승률</small><div id="bt-win">--</div></div>
+            <div class="mini-box"><small>평균수익(%)</small><div id="bt-avg">--</div></div>
+          </div>
+          <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
+            - 백테스트는 “과거로 시험해보는 점수표”입니다.<br/>
+            - 이번 버전은 잡신호를 빼려고 <b>필터(확률/엣지/유사도)</b> 통과한 신호만 테스트합니다.<br/>
+            - 표본이 적으면 승률이 높아 보여도 믿기 어려우니, 표본도 같이 보세요.
           </div>
         </div>
 
-        <div class="grid2">
-          <button class="btn primary" onclick="executeAnalysisAll()">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장)
-          </button>
-          <button class="btn" onclick="autoScanUniverseAll()">
-            <i class="fa-solid fa-robot"></i> 자동 스캔(단·중·장)
-          </button>
+        <div class="tiny-note">
+          - 서버 없이(HTML 1파일) 동작하는 “안정화 버전”입니다.<br/>
+          - 애매하면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
+          - “중복 신호/과한 빈도”를 막기 위해 <b>중복/쿨다운</b> 보호를 넣었습니다.
         </div>
-
-        <div class="grid2">
-          <button class="btn" onclick="runBacktest()">
-            <i class="fa-solid fa-chart-simple"></i> 백테스트
-          </button>
-          <button class="btn danger" onclick="cancelOngoingOperations()">
-            <i class="fa-solid fa-ban"></i> 진행 취소
-          </button>
-        </div>
-
-        <div class="grid2">
-          <button class="btn" onclick="resetStatsUIAndData()">
-            <i class="fa-solid fa-rotate-left"></i> 누적 리셋
-          </button>
-          <button class="btn" onclick="cancelAllTracking()">
-            <i class="fa-solid fa-xmark"></i> 추적 전체 취소
-          </button>
-        </div>
-
-        <div class="grid2">
-          <button class="btn danger" onclick="resetAll()">
-            <i class="fa-solid fa-trash"></i> 전체 초기화(누적+추적+취소)
-          </button>
-          <button class="btn" onclick="confirmTrack()">
-            <i class="fa-solid fa-location-crosshairs"></i> 선택 추적 등록
-          </button>
-        </div>
-
-        <div class="hint-row">
-          <div id="scan-status">대기중...</div>
-          <div id="rec-container"></div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h3><i class="fa-solid fa-coins"></i> 마켓</h3>
-        </div>
-
-        <div class="market-list">
-          <div class="section-title">
-            <span>유망 코인 60 (자동+AI 추천)</span>
-            <span class="right">
-              <span class="status-dot" id="api-dot"></span>
-              <span id="universe-ts">업데이트: --</span>
-            </span>
-          </div>
-          <div id="market-list-container"></div>
-        </div>
-      </section>
+      </div>
     </div>
 
-    <!-- RIGHT -->
-    <div class="right">
-      <section class="panel">
-        <div class="panel-head">
-          <h3><i class="fa-solid fa-chart-line"></i> 차트</h3>
-          <div class="panel-actions">
-            <button class="btn" onclick="executeAnalysisAll()">예측</button>
-            <button class="btn" onclick="quickAnalyzeAndShow(state.symbol, state.tfRaw)">빠른분석</button>
-          </div>
-        </div>
-        <div id="chart-wrap"></div>
-      </section>
+    <div class="main-panel">
+      <div class="chart-container" id="chart-wrap"></div>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h3><i class="fa-solid fa-bullseye"></i> 정밀 추적</h3>
+      <div class="tracking-dashboard">
+        <div class="tracking-header">
+          <h3><i class="fa-solid fa-radar"></i> 실시간 포지션 정밀 추적</h3>
+          <span class="live-badge">LIVE</span>
         </div>
-        <div class="stats-grid">
-          <div class="stat">
-            <div class="label">누적 성공</div>
-            <div class="value" id="win-stat">0</div>
-          </div>
-          <div class="stat">
-            <div class="label">총 예측</div>
-            <div class="value" id="total-stat">0</div>
-          </div>
-          <div class="stat">
-            <div class="label">추적중</div>
-            <div class="value" id="active-stat">0</div>
-          </div>
+        <div class="tracking-list" id="tracking-container"></div>
+      </div>
+    </div>
+
+    <!-- ✅ 결과 모달 (단일/통합 공용) -->
+    <div class="modal-overlay" id="result-modal">
+      <div class="analysis-modal">
+        <div class="modal-header">
+          <div id="modal-icon" class="modal-signal">📈</div>
+          <h2 id="modal-title" style="margin:0; color:var(--primary);">LONG SIGNAL</h2>
+          <p id="modal-subtitle" style="margin:6px 0 0; color:var(--text-sub); font-weight:900;">BTCUSDT | 1H</p>
         </div>
 
-        <div id="tracking-container"></div>
-      </section>
+        <!-- ✅ NEW: 통합(단/중/장) 결과 영역 (features에서 채움) -->
+        <div id="multi-results" style="display:none;">
+          <div style="font-weight:950; margin:10px 0 6px; color:var(--text-main);">
+            전략별 결과(단·중·장) — 하나를 선택하세요
+          </div>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h3><i class="fa-solid fa-clock-rotate-left"></i> 종료 기록</h3>
-          <div class="panel-actions">
-            <span class="pill muted">총 <b id="history-count">0</b>건</span>
-          </div>
-        </div>
-        <div id="history-container"></div>
-      </section>
+          <!-- 전략 카드 컨테이너 -->
+          <div id="multi-cards" class="modal-grid"></div>
 
-      <section class="panel" id="bt-box">
-        <div class="panel-head">
-          <h3><i class="fa-solid fa-flask"></i> 백테스트</h3>
+          <!-- 선택된 전략 안내 -->
+          <div id="multi-selected" style="margin-top:10px; font-size:12px; font-weight:900; color:var(--text-sub);">
+            선택: 없음
+          </div>
+
+          <!-- 선택 확정 버튼(선택 후 추적등록 흐름) -->
+          <button class="modal-btn" id="multi-choose" onclick="confirmTrackSelected?.()">
+            선택한 전략으로 추적 등록
+          </button>
+
+          <div style="height:10px;"></div>
+          <div style="border-top:1px solid var(--border); margin:8px 0 10px;"></div>
         </div>
-        <div class="bt-grid">
-          <div class="bt-item">
-            <div class="label">샘플</div>
-            <div class="value" id="bt-n">-</div>
-          </div>
-          <div class="bt-item">
-            <div class="label">승률</div>
-            <div class="value" id="bt-win">-</div>
-          </div>
-          <div class="bt-item">
-            <div class="label">평균</div>
-            <div class="value" id="bt-avg">-</div>
-          </div>
-          <div class="bt-item">
-            <div class="label">범위</div>
-            <div class="value" id="bt-range">-</div>
-          </div>
-        </div>
-      </section>
+
+        <!-- ✅ 기존 단일 결과 영역 -->
+        <div class="modal-grid" id="modal-grid"></div>
+        <div id="modal-content" class="analysis-text"></div>
+
+        <button class="modal-btn" id="modal-confirm" onclick="confirmTrack()">추적 시스템에 등록</button>
+        <button class="modal-btn secondary" onclick="closeModal()">닫기</button>
+      </div>
     </div>
   </div>
 
-  <!-- RESULT MODAL -->
-  <div class="modal" id="result-modal">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3 id="modal-title">결과</h3>
-        <button class="btn icon" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
-      </div>
-      <div class="modal-body" id="modal-body"></div>
-      <div class="modal-foot">
-        <button class="btn" onclick="closeModal()">닫기</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- TradingView -->
+  <!-- TradingView (전역 위젯) -->
   <script src="https://s3.tradingview.com/tv.js"></script>
 
-  <!-- ✅ JS 로드 순서 절대 고정: core → api → features -->
+  <!-- ✅ JS (순서 절대 고정: core → api → features) -->
   <script src="./app.core.js"></script>
   <script src="./app.api.js"></script>
   <script src="./app.features.js"></script>
