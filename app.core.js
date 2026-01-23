@@ -74,20 +74,20 @@ const SIM_STEP = 2;
 const SIM_TOPK = 25;
 
 // HOLD rules
-const HOLD_MIN_TOPK = 10;
-const HOLD_MIN_SIM_AVG = 52;
-const HOLD_MIN_EDGE = 0.06;
-const HOLD_MIN_TP_PCT = 0.6;
+const HOLD_MIN_TOPK = 12;
+const HOLD_MIN_SIM_AVG = 55;
+const HOLD_MIN_EDGE = 0.08;
+const HOLD_MIN_TP_PCT = 0.8;
 
 // ✅ MTF 합의 기준
 const MTF_WEIGHTS_3TF = { "60": 0.50, "240": 0.30, "D": 0.20 }; // 분석(정밀): 3TF
 const MTF_WEIGHTS_2TF = { "base": 0.65, "other": 0.35 };       // 스캔/백테스트(속도): 2TF
 const MTF_MIN_AGREE = 2;           // 3TF 중 최소 2개는 같은 방향이어야 안정
-const MTF_DISAGREE_PENALTY = 0.045; // 합의 부족이면 edge를 살짝 깎아 더 보수적(HOLD 증가)
+const MTF_DISAGREE_PENALTY = 0.06; // 합의 부족이면 edge를 살짝 깎아 더 보수적(HOLD 증가)
 
 // TP/SL
 const RR = 2.0;
-const TF_MULT = { "60": 1.2, "240": 2.0, "D": 3.5 };
+const TF_MULT = { "15": 0.75, "30": 0.95, "60": 1.2, "240": 2.0, "D": 3.5, "W": 5.0 };
 const ATR_MIN_PCT = 0.15;
 const TP_MAX_PCT = 20.0;
 
@@ -369,12 +369,6 @@ let state = loadState() || {
   lastScanResults: [],
   lastPrices: {},
 
-  // ✅ UI 토글 최소화(차트 소스/선물만 유지)
-  settings: {
-    chartExchange: "AUTO", // AUTO | BINANCE | BYBIT
-    chartPerp: true
-  },
-
   /* ✅ NEW: 공통 작업 취소 플래그/토큰 */
   op: { cancel: false, token: 0 }
 };
@@ -405,7 +399,6 @@ function ensureCoreStateShape(){
       lastScanAt: 0,
       lastScanResults: [],
       lastPrices: {},
-      settings: { chartExchange:"AUTO", chartPerp:true },
       op: { cancel: false, token: 0 }
     };
     changed = true;
@@ -433,32 +426,6 @@ function ensureCoreStateShape(){
     if(typeof state.op.cancel !== "boolean"){ state.op.cancel = false; changed = true; }
     if(!Number.isFinite(state.op.token)){ state.op.token = 0; changed = true; }
   }
-
-  /* ✅ settings (차트 소스/선물) */
-  if(!state.settings || typeof state.settings !== "object"){
-    state.settings = { chartExchange:"AUTO", chartPerp:true };
-    changed = true;
-  }else{
-    if(typeof state.settings.chartExchange !== "string"){ state.settings.chartExchange = "AUTO"; changed = true; }
-    if(typeof state.settings.chartPerp !== "boolean"){ state.settings.chartPerp = true; changed = true; }
-  }
-
-  /* ✅ chart prefs */
-  if(!state.chart || typeof state.chart !== "object"){
-    state.chart = { source: "AUTO", perp: true };
-    changed = true;
-  }else{
-    if(!["AUTO","BYBIT","BINANCE"].includes(String(state.chart.source||"AUTO"))){
-      state.chart.source = "AUTO"; changed = true;
-    }
-    if(typeof state.chart.perp !== "boolean"){ state.chart.perp = true; changed = true; }
-  }
-
-  /* ✅ bulk results caches */
-  if(!Array.isArray(state.lastScanResultsFull)){ state.lastScanResultsFull = []; changed = true; }
-  if(!Number.isFinite(state.lastScanFullAt)){ state.lastScanFullAt = 0; changed = true; }
-  if(!Array.isArray(state.lastBacktestAllResults)){ state.lastBacktestAllResults = []; changed = true; }
-  if(!Number.isFinite(state.lastBacktestAllAt)){ state.lastBacktestAllAt = 0; changed = true; }
 
   if(changed) saveState();
 }
@@ -522,11 +489,41 @@ function resetAllData(){
 ========================= */
 function tfToMs(tfRaw){
   if(tfRaw === "15") return 15 * 60 * 1000;
+  if(tfRaw === "30") return 30 * 60 * 1000;
   if(tfRaw === "60") return 60 * 60 * 1000;
   if(tfRaw === "240") return 4 * 60 * 60 * 1000;
+  if(tfRaw === "D") return 24 * 60 * 60 * 1000;
   if(tfRaw === "W") return 7 * 24 * 60 * 60 * 1000;
+  const n = Number(tfRaw);
+  if(Number.isFinite(n) && n > 0) return n * 60 * 1000;
   return 24 * 60 * 60 * 1000;
 }
+
+function tfLabel(tfRaw){
+  if(tfRaw === "15") return "15m";
+  if(tfRaw === "30") return "30m";
+  if(tfRaw === "60") return "1H";
+  if(tfRaw === "240") return "4H";
+  if(tfRaw === "D") return "1D";
+  if(tfRaw === "W") return "1W";
+  return String(tfRaw);
+}
+
+function getScanTFs6(){
+  return ["15","30","60","240","D","W"];
+}
+
+function getMTFSetDynamic(baseTfRaw){
+  const all = getScanTFs6();
+  const i = all.indexOf(baseTfRaw);
+  if(i === -1) return ["60","240","D"];
+  if(i <= 1) return ["15","30","60"];
+  if(i === 2) return ["30","60","240"];
+  if(i === 3) return ["60","240","D"];
+  if(i === 4) return ["240","D","W"];
+  return ["D","W"];
+}
+
 
 function formatRemain(ms){
   ms = Math.max(0, ms|0);
@@ -721,13 +718,6 @@ function computeSignalCore(symbol, tfRaw, candles){
   const trendStrength = (atrRaw > 0) ? (Math.abs(ema20 - ema50) / atrRaw) : 0;
   const atrPct = (entry > 0) ? ((atrRaw / entry) * 100) : 0;
 
-  // ✅ 추가 지표(정밀) + 구간(S/R)
-  const bb = calcBBands(closes, 20, 2);
-  const stochRsi = calcStochRSI(closes, 14, 14);
-  const vwap = calcVWAP(candles, 50);
-  const adx = calcADX(highs, lows, closes, 14);
-  const sr = calcSR(highs, lows, closes, 70);
-
   const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
 
   const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
@@ -751,30 +741,8 @@ function computeSignalCore(symbol, tfRaw, candles){
   const volBias = clamp(volTrend, -1, 1);
   const trendBias = clamp(trend * 0.8, -1, 1);
 
-  // ✅ 추가 바이어스(정밀)
-  const bbBias = clamp((0.5 - bb.pos) * 1.4, -1, 1);            // 밴드 하단=롱, 상단=숏
-  const stochBias = clamp((0.5 - stochRsi) * 1.2, -1, 1);       // 과매도=롱, 과매수=숏
-  const vwapBias = (atrRaw > 0) ? clamp((entry - vwap) / (atrRaw * 1.2), -1, 1) : 0; // VWAP 위=롱
-  const adxStrength = clamp((adx.adx - 18) / 25, 0, 1);          // 18 아래는 약한 추세
-  const adxBias = clamp(trend * adxStrength, -1, 1);
-
-  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias)
-         + (0.08 * bbBias) + (0.06 * stochBias) + (0.05 * vwapBias) + (0.06 * adxBias);
-
-  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias)
-         + (-0.08 * bbBias) + (-0.06 * stochBias) + (-0.05 * vwapBias) + (-0.06 * adxBias);
-
-  // ✅ S/R 근접 패널티: 저항 바로 아래에서 롱, 지지 바로 위에서 숏은 성공률을 깎는다.
-  if(Number.isFinite(sr?.distToResPct) && Number.isFinite(atrPct) && atrPct > 0){
-    if(sr.distToResPct >= 0 && sr.distToResPct < Math.max(0.25, atrPct * 0.45)){
-      longP -= 0.03; shortP += 0.03;
-    }
-  }
-  if(Number.isFinite(sr?.distToSupPct) && Number.isFinite(atrPct) && atrPct > 0){
-    if(sr.distToSupPct >= 0 && sr.distToSupPct < Math.max(0.25, atrPct * 0.45)){
-      shortP -= 0.03; longP += 0.03;
-    }
-  }
+  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
+  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
 
   longP  = 0.5 + (longP - 0.5) * domDamp;
   shortP = 0.5 + (shortP - 0.5) * domDamp;
@@ -805,14 +773,6 @@ function computeSignalCore(symbol, tfRaw, candles){
     ema50,
     trend,
     trendStrength,
-    bbPos: bb.pos,
-    bbWidth: bb.width,
-    stochRsi,
-    vwap,
-    adx: adx.adx,
-    plusDI: adx.plusDI,
-    minusDI: adx.minusDI,
-    sr,
     btcDom: dom,
     btcDomUp: domUp,
     domHoldBoost
@@ -925,9 +885,10 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   let con = null;
   let mtfExplain = null;
 
-  if(mode === "3TF"){
+  if(mode === "3TF" || mode === "AUTO"){
     const cores = {};
-    for(const tfRaw of getMTFSet3()){
+    const tfSet = (mode === "AUTO") ? getMTFSetDynamic(baseTfRaw) : getMTFSet3();
+    for(const tfRaw of tfSet){
       const candles = candlesByTf[tfRaw];
       if(!candles || candles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
       cores[tfRaw] = computeSignalCore(symbol, tfRaw, candles);
@@ -981,59 +942,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   const recent = getRecentWinRate(symbol, baseTfRaw, RECENT_CALIB_N);
   winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProbAdj + RECENT_CALIB_ALPHA * recent, 0.5, 0.99);
 
-  // ✅ MTF 컨텍스트 강화(분봉/일봉 확장 → "주봉 느낌" 포함)
-  // - 스캔(60코인)은 속도 때문에 3TF(1H/4H/1D) 기본 유지
-  // - 정밀(단일 코인)에서는 15m 캔들이 있으면 micro 합의로 보정
-  let micro = null;
-  if(candlesByTf && candlesByTf["15"] && baseTfRaw === "60"){
-    try{
-      const mc = computeSignalCore(symbol, "15", candlesByTf["15"]);
-      micro = { tf:"15m", type:mc.type, winProb:mc.winProb, edge:mc.edge, simAvg:mc.simAvg, simCount:mc.simCount, atrPct:mc.atrPct };
-      if(mc.type === type){
-        winProbAdj = clamp(winProbAdj + 0.010, 0.50, 0.99);
-        edgeAdj = Math.max(0, edgeAdj + 0.010);
-      }else{
-        winProbAdj = clamp(winProbAdj - 0.012, 0.50, 0.99);
-        edgeAdj = Math.max(0, edgeAdj - 0.012);
-      }
-    }catch(e){}
-  }
-
-  // ✅ macro(주봉 느낌): 일봉에서 장기 EMA(50/200)로 큰 방향성 확인
-  //    (실제 주봉 API가 아니라 "주봉 수준의 큰 구간" 판단)
-  let macro = null;
-  try{
-    const dCandles = candlesByTf && candlesByTf["D"] ? candlesByTf["D"] : null;
-    if(dCandles && dCandles.length >= 260){
-      const closesD = dCandles.map(x => x.c);
-      const ema50D = emaLast(closesD, 50);
-      const ema200D = emaLast(closesD, 200);
-      const dir = (ema50D >= ema200D) ? 1 : -1;
-      macro = { tf:"W*", dir:(dir>0 ? "UP" : "DOWN"), ema50:ema50D, ema200:ema200D };
-
-      if((type === "LONG" && dir > 0) || (type === "SHORT" && dir < 0)){
-        winProbAdj = clamp(winProbAdj + 0.008, 0.50, 0.99);
-        edgeAdj = Math.max(0, edgeAdj + 0.006);
-      }else{
-        winProbAdj = clamp(winProbAdj - 0.010, 0.50, 0.99);
-        edgeAdj = Math.max(0, edgeAdj - 0.008);
-      }
-    }
-  }catch(e){}
-
-
   const holdReasons = [];
-  const warnReasons = [];
-
-  // ✅ 수동 ON/OFF 제거: "자동 안전장치"
-  // - 예측을 아예 막지 않는다(기회 유지)
-  // - 최근 성과/MTF 합의가 나쁘면 기준을 '조금'만 보수적으로 조정한다.
-  const autoStrict = (recent < 0.48) || (mode === "3TF" && (con.agree || 1) <= 1);
-
-  const minTopK   = autoStrict ? HOLD_MIN_TOPK : Math.max(6, HOLD_MIN_TOPK - 3);
-  const minSimAvg = autoStrict ? HOLD_MIN_SIM_AVG : Math.max(44, HOLD_MIN_SIM_AVG - 8);
-  const minEdge   = autoStrict ? HOLD_MIN_EDGE : Math.max(0.04, HOLD_MIN_EDGE - 0.03);
-  const minTpPct  = autoStrict ? HOLD_MIN_TP_PCT : Math.max(0.40, HOLD_MIN_TP_PCT - 0.25);
   const mtfVotes = (con.votes || []).join("/");
 
   const explainBase = {
@@ -1057,10 +966,6 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     trendStrength: base.trendStrength,
     btcDom: base.btcDom,
     btcDomUp: base.btcDomUp,
-
-    // ✅ 확장 컨텍스트
-    micro,
-    macro,
 
     conf: null,
     mtf: {
@@ -1136,59 +1041,41 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
 
-  if(con.simCount < minTopK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
-  if(con.simAvg < minSimAvg) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
-  if(edgeAdj < minEdge) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
-  if(tpPct < minTpPct) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
+  if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
+  if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
+  if(edgeAdj < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
+  if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
 
   if(con.votes && con.votes.length >= 2){
     const agreeNeed = (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
     if(con.agree < agreeNeed){
-      (autoStrict ? holdReasons : warnReasons).push(`${autoStrict ? "" : "주의: "}타임프레임 합의 부족(${mtfVotes})`);
+      holdReasons.push(`타임프레임 합의 부족(${mtfVotes})`);
     }
   }
 
-  // ✅ 추세/변동성/환경 조건은 "autoStrict"에서는 HOLD, 그 외에는 기본적으로 경고로 완화
-  let minStrength = REGIME_MIN_STRENGTH_BY_TF[baseTfRaw] ?? 0.5;
-  let maxAtrPct = VOL_MAX_ATR_PCT_BY_TF[baseTfRaw] ?? 3.0;
-  if(!autoStrict){
-    minStrength = Math.max(-0.05, minStrength - 0.04);
-    maxAtrPct = maxAtrPct * 1.35;
-  }
+  const minStrength = REGIME_MIN_STRENGTH_BY_TF[baseTfRaw] ?? 0.5;
   const ts = base.trendStrength ?? 0;
   if(ts < minStrength){
-    const extreme = (!autoStrict) && (ts < (minStrength - 0.12));
-    (autoStrict || extreme ? holdReasons : warnReasons).push(`${(autoStrict||extreme) ? "" : "주의: "}추세 약함(강도 ${ts.toFixed(2)} < ${minStrength.toFixed(2)})`);
+    holdReasons.push(`추세 약함(강도 ${ts.toFixed(2)} < ${minStrength.toFixed(2)})`);
   }
 
+  const maxAtrPct = VOL_MAX_ATR_PCT_BY_TF[baseTfRaw] ?? 3.0;
   const ap = base.atrPct ?? 0;
   if(ap > maxAtrPct){
-    const extreme = (!autoStrict) && (ap > maxAtrPct * 1.45);
-    (autoStrict || extreme ? holdReasons : warnReasons).push(`${(autoStrict||extreme) ? "" : "주의: "}급변동 위험(ATR ${ap.toFixed(2)}% > ${maxAtrPct.toFixed(2)}%)`);
+    holdReasons.push(`급변동 위험(ATR ${ap.toFixed(2)}% > ${maxAtrPct.toFixed(2)}%)`);
   }
 
-  if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") (autoStrict ? holdReasons : warnReasons).push(`${autoStrict ? "" : "주의: "}BTC 도미넌스 환경이 알트에 불리(보수적)`);
-  if(base.volTrend < -0.25) (autoStrict ? holdReasons : warnReasons).push(`${autoStrict ? "" : "주의: "}거래량 흐름 약함(신뢰↓)`);
+  if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
+  if(base.volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
 
   if(avoidMeta && pp.penalty > 0){
     holdReasons.push(`(패턴 감점 적용: -${(pp.penalty*100).toFixed(1)}%p, n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%)`);
   }
 
-  // ✅ 경고(주의:)는 화면에 보여주되, 기본 HOLD 판정에는 포함하지 않는다.
-  const allReasons = holdReasons.concat(warnReasons);
-  explainBase.holdReasons = allReasons;
-  const isHoldByBaseRules = allReasons.some(r => {
-    const s = String(r);
-    if(s.startsWith("(패턴 감점 적용")) return false;
-    if(s.startsWith("주의:")) return false;
-    return true;
-  });
+  const isHoldByBaseRules = holdReasons.some(r => !String(r).startsWith("(패턴 감점 적용"));
   const hardHold = !!(avoidMeta && pp.hardHold);
   if(hardHold){
-    const msg = `실패패턴 극악(강제 HOLD): n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%`;
-    holdReasons.push(msg);
-    allReasons.push(msg);
-    explainBase.holdReasons = allReasons;
+    holdReasons.push(`실패패턴 극악(강제 HOLD): n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%`);
   }
 
   const finalHold = isHoldByBaseRules || hardHold;
@@ -1196,7 +1083,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   return {
     id: Date.now(),
     symbol,
-    tf: baseTfRaw === "60" ? "1H" : baseTfRaw === "240" ? "4H" : "1D",
+    tf: tfLabel(baseTfRaw),
     tfRaw: baseTfRaw,
     type: finalHold ? "HOLD" : type,
     entry,
@@ -1223,6 +1110,9 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
   const curStart = n - winLen;
   const curSeg = closes.slice(curStart, n);
   const curRet = returns(curSeg);
+  const rsiAll = calcRSISeries(closes, 14);
+  const curRsiSeg = rsiAll.slice(curStart, n);
+  const curRsi = normalizeSeries(curRsiSeg);
 
   const sims = [];
   const lastStart = n - winLen - futureH - 2;
@@ -1230,7 +1120,11 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
   for(let s=0; s<=lastStart; s+=step){
     const seg = closes.slice(s, s + winLen);
     const ret = returns(seg);
-    const sim = zncc(curRet, ret);
+    const rsiSeg = rsiAll.slice(s, s + winLen);
+    const rsiNorm = normalizeSeries(rsiSeg);
+    const simRet = zncc(curRet, ret);
+    const simRsi = zncc(curRsi, rsiNorm);
+    const sim = (Number.isFinite(simRet)?simRet:0) * 0.72 + (Number.isFinite(simRsi)?simRsi:0) * 0.28;
     if(!Number.isFinite(sim)) continue;
 
     const entry = closes[s + winLen - 1];
@@ -1320,6 +1214,38 @@ function calcRSI(closes, period=14){
     if(diff >= 0) gains += diff;
     else losses -= diff;
   }
+
+function calcRSISeries(closes, period=14){
+  const out = new Array(closes.length).fill(50);
+  if(!Array.isArray(closes) || closes.length < period + 2) return out;
+  let gain=0, loss=0;
+  for(let i=1;i<=period;i++){
+    const d = closes[i] - closes[i-1];
+    if(d>=0) gain += d; else loss -= d;
+  }
+  let avgG = gain/period;
+  let avgL = loss/period;
+  out[period] = (avgL===0) ? 100 : (100 - (100 / (1 + (avgG/avgL))));
+  for(let i=period+1;i<closes.length;i++){
+    const d = closes[i] - closes[i-1];
+    const g = d>0?d:0;
+    const l = d<0?-d:0;
+    avgG = (avgG*(period-1) + g)/period;
+    avgL = (avgL*(period-1) + l)/period;
+    out[i] = (avgL===0) ? 100 : (100 - (100 / (1 + (avgG/avgL))));
+  }
+  return out;
+}
+
+function normalizeSeries(arr){
+  if(!Array.isArray(arr) || arr.length===0) return [];
+  const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+  let varSum=0;
+  for(const x of arr){ varSum += (x-mean)*(x-mean); }
+  const sd = Math.sqrt(varSum/Math.max(arr.length,1)) || 1;
+  return arr.map(x => (x-mean)/sd);
+}
+
   if(losses === 0) return 100;
   const rs = gains / losses;
   return 100 - (100 / (1 + rs));
@@ -1373,111 +1299,6 @@ function calcVolumeTrend(vols, lookback=20){
   const b = avg(vols.slice(-(lookback*2), -lookback));
   if(b === 0) return 0;
   return (a - b) / b;
-}
-
-
-// ✅ 추가 지표/구간 분석 (정밀도 강화)
-function calcBBands(closes, n=20, k=2){
-  if(closes.length < n+2) return { mid:closes[closes.length-1]||0, upper:0, lower:0, pos:0.5, width:0 };
-  const slice = closes.slice(-n);
-  const m = avg(slice);
-  const v = avg(slice.map(x => (x-m)*(x-m)));
-  const sd = Math.sqrt(Math.max(v, 0));
-  const upper = m + k*sd;
-  const lower = m - k*sd;
-  const last = closes[closes.length-1];
-  const denom = Math.max(upper - lower, 1e-9);
-  const pos = clamp((last - lower) / denom, 0, 1);
-  const width = (m > 0) ? ((upper - lower) / m) : 0;
-  return { mid:m, upper, lower, pos, width };
-}
-function calcVWAP(candles, lookback=50){
-  if(!Array.isArray(candles) || candles.length < 5) return 0;
-  const slice = candles.slice(-lookback);
-  let pv = 0, vv = 0;
-  for(const c of slice){
-    const tp = (c.h + c.l + c.c) / 3;
-    const v = Number(c.v) || 0;
-    pv += tp * v;
-    vv += v;
-  }
-  return vv > 0 ? (pv / vv) : (slice[slice.length-1].c || 0);
-}
-function calcStochRSI(closes, rsiPeriod=14, stochPeriod=14){
-  // 0~1
-  const rsiSeries = [];
-  for(let i=rsiPeriod; i<closes.length; i++){
-    const sub = closes.slice(0, i+1);
-    rsiSeries.push(calcRSI(sub, rsiPeriod));
-  }
-  if(rsiSeries.length < stochPeriod+2) return 0.5;
-  const slice = rsiSeries.slice(-stochPeriod);
-  const lo = Math.min(...slice);
-  const hi = Math.max(...slice);
-  const last = rsiSeries[rsiSeries.length-1];
-  const denom = Math.max(hi - lo, 1e-9);
-  return clamp((last - lo) / denom, 0, 1);
-}
-function calcADX(highs, lows, closes, n=14){
-  // 간단 ADX (0~100). 값이 클수록 추세 강함.
-  if(highs.length < n*3) return { adx: 18, plusDI: 20, minusDI: 20 };
-  const len = highs.length;
-  const trs = [];
-  const plusDM = [];
-  const minusDM = [];
-  for(let i=1;i<len;i++){
-    const up = highs[i] - highs[i-1];
-    const down = lows[i-1] - lows[i];
-    plusDM.push((up > down && up > 0) ? up : 0);
-    minusDM.push((down > up && down > 0) ? down : 0);
-    const tr = Math.max(
-      highs[i] - lows[i],
-      Math.abs(highs[i] - closes[i-1]),
-      Math.abs(lows[i] - closes[i-1])
-    );
-    trs.push(tr);
-  }
-  const smooth = (arr)=>{
-    let out = [];
-    let sum = 0;
-    for(let i=0;i<arr.length;i++){
-      sum += arr[i];
-      if(i>=n) sum -= arr[i-n];
-      if(i>=n-1) out.push(sum);
-    }
-    return out;
-  };
-  const trN = smooth(trs);
-  const pN = smooth(plusDM);
-  const mN = smooth(minusDM);
-  if(trN.length < 5) return { adx: 18, plusDI: 20, minusDI: 20 };
-
-  const plusDI = trN.map((tr,i)=> tr>0 ? (100*(pN[i]/tr)) : 0);
-  const minusDI = trN.map((tr,i)=> tr>0 ? (100*(mN[i]/tr)) : 0);
-  const dx = plusDI.map((p,i)=>{
-    const m = minusDI[i];
-    const denom = Math.max(p + m, 1e-9);
-    return 100 * (Math.abs(p - m) / denom);
-  });
-  const adxSeries = smooth(dx);
-  const adx = adxSeries.length ? adxSeries[adxSeries.length-1] / 1 : 18;
-
-  return {
-    adx: clamp(adx, 0, 100),
-    plusDI: plusDI.length ? plusDI[plusDI.length-1] : 20,
-    minusDI: minusDI.length ? minusDI[minusDI.length-1] : 20
-  };
-}
-function calcSR(highs, lows, closes, lookback=60){
-  if(closes.length < lookback+5) return { sup:null, res:null, distToSupPct:null, distToResPct:null };
-  const hs = highs.slice(-lookback);
-  const ls = lows.slice(-lookback);
-  const res = Math.max(...hs);
-  const sup = Math.min(...ls);
-  const last = closes[closes.length-1];
-  const distToResPct = (res > 0) ? ((res - last) / last) * 100 : null;
-  const distToSupPct = (sup > 0) ? ((last - sup) / last) * 100 : null;
-  return { sup, res, distToSupPct, distToResPct };
 }
 
 function avg(arr){
