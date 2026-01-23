@@ -119,6 +119,11 @@ body{
   min-width: 320px;
 }
 
+/* ✅ 화면 확장: 사이드바 접기 */
+body.sidebar-hidden .sidebar{ display:none !important; }
+body.sidebar-hidden .main-panel{ width:100% !important; }
+body.sidebar-hidden #app{ grid-template-columns: 1fr !important; }
+
 .brand-header{
   padding:26px 22px;
   border-bottom:1px solid var(--border);
@@ -938,7 +943,8 @@ body{
   padding:16px;
   z-index:9999;
 }
-.drawer{
+.drawer,
+.drawer-card{
   width:min(1100px, 100%);
   height:min(86vh, 860px);
   background:#fff;
@@ -957,7 +963,8 @@ body{
 .drawer-title{
   font-weight:800;
 }
-.drawer-head-actions{
+.drawer-head-actions,
+.drawer-actions{
   display:flex; gap:8px;
 }
 .icon-btn{
@@ -968,7 +975,8 @@ body{
   cursor:pointer;
 }
 .icon-btn.danger{ border-color:#ffd0d0; color:var(--danger); }
-.drawer-controls{
+.drawer-controls,
+.drawer-toolbar{
   padding:12px 16px;
   border-bottom:1px solid var(--border);
   display:flex;
@@ -976,6 +984,10 @@ body{
   flex-wrap:wrap;
   align-items:center;
 }
+
+/* ✅ index.html 구조 보조 */
+.drawer-title-wrap{ display:flex; flex-direction:column; gap:2px; }
+.drawer-title-sub{ font-size:12px; color:var(--text-sub); font-weight:800; }
 .drawer-search{
   flex:1;
   min-width:220px;

@@ -936,6 +936,15 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProbAdj + RECENT_CALIB_ALPHA * recent, 0.5, 0.99);
 
   const holdReasons = [];
+  const warnReasons = [];
+
+  // ✅ "성공률 우선 모드"(strictMode)가 OFF면, 예측을 '안 하는' 방향이 아니라
+  //    "기회는 늘리되, 위험표시는 더 하자" 방향으로 완화한다.
+  const strictMode = !!(state && state.settings && state.settings.strictMode);
+  const minTopK   = strictMode ? HOLD_MIN_TOPK : Math.max(6, HOLD_MIN_TOPK - 2);
+  const minSimAvg = strictMode ? HOLD_MIN_SIM_AVG : Math.max(45, HOLD_MIN_SIM_AVG - 7);
+  const minEdge   = strictMode ? HOLD_MIN_EDGE : Math.max(0.05, HOLD_MIN_EDGE - 0.03);
+  const minTpPct  = strictMode ? HOLD_MIN_TP_PCT : Math.max(0.45, HOLD_MIN_TP_PCT - 0.35);
   const mtfVotes = (con.votes || []).join("/");
 
   const explainBase = {
@@ -1034,41 +1043,59 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
 
-  if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
-  if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
-  if(edgeAdj < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
-  if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
+  if(con.simCount < minTopK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
+  if(con.simAvg < minSimAvg) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
+  if(edgeAdj < minEdge) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
+  if(tpPct < minTpPct) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
 
   if(con.votes && con.votes.length >= 2){
     const agreeNeed = (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
     if(con.agree < agreeNeed){
-      holdReasons.push(`타임프레임 합의 부족(${mtfVotes})`);
+      (strictMode ? holdReasons : warnReasons).push(`${strictMode ? "" : "주의: "}타임프레임 합의 부족(${mtfVotes})`);
     }
   }
 
-  const minStrength = REGIME_MIN_STRENGTH_BY_TF[baseTfRaw] ?? 0.5;
+  // ✅ 추세/변동성/환경 조건은 "strictMode"에서는 HOLD, 그 외에는 기본적으로 경고로 완화
+  let minStrength = REGIME_MIN_STRENGTH_BY_TF[baseTfRaw] ?? 0.5;
+  let maxAtrPct = VOL_MAX_ATR_PCT_BY_TF[baseTfRaw] ?? 3.0;
+  if(!strictMode){
+    minStrength = Math.max(-0.05, minStrength - 0.04);
+    maxAtrPct = maxAtrPct * 1.35;
+  }
   const ts = base.trendStrength ?? 0;
   if(ts < minStrength){
-    holdReasons.push(`추세 약함(강도 ${ts.toFixed(2)} < ${minStrength.toFixed(2)})`);
+    const extreme = (!strictMode) && (ts < (minStrength - 0.12));
+    (strictMode || extreme ? holdReasons : warnReasons).push(`${(strictMode||extreme) ? "" : "주의: "}추세 약함(강도 ${ts.toFixed(2)} < ${minStrength.toFixed(2)})`);
   }
 
-  const maxAtrPct = VOL_MAX_ATR_PCT_BY_TF[baseTfRaw] ?? 3.0;
   const ap = base.atrPct ?? 0;
   if(ap > maxAtrPct){
-    holdReasons.push(`급변동 위험(ATR ${ap.toFixed(2)}% > ${maxAtrPct.toFixed(2)}%)`);
+    const extreme = (!strictMode) && (ap > maxAtrPct * 1.45);
+    (strictMode || extreme ? holdReasons : warnReasons).push(`${(strictMode||extreme) ? "" : "주의: "}급변동 위험(ATR ${ap.toFixed(2)}% > ${maxAtrPct.toFixed(2)}%)`);
   }
 
-  if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") holdReasons.push(`BTC 도미넌스 환경이 알트에 불리(보수적)`);
-  if(base.volTrend < -0.25) holdReasons.push(`거래량 흐름 약함(신뢰↓)`);
+  if(base.domHoldBoost >= 2 && symbol !== "BTCUSDT") (strictMode ? holdReasons : warnReasons).push(`${strictMode ? "" : "주의: "}BTC 도미넌스 환경이 알트에 불리(보수적)`);
+  if(base.volTrend < -0.25) (strictMode ? holdReasons : warnReasons).push(`${strictMode ? "" : "주의: "}거래량 흐름 약함(신뢰↓)`);
 
   if(avoidMeta && pp.penalty > 0){
     holdReasons.push(`(패턴 감점 적용: -${(pp.penalty*100).toFixed(1)}%p, n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%)`);
   }
 
-  const isHoldByBaseRules = holdReasons.some(r => !String(r).startsWith("(패턴 감점 적용"));
+  // ✅ 경고(주의:)는 화면에 보여주되, 기본 HOLD 판정에는 포함하지 않는다.
+  const allReasons = holdReasons.concat(warnReasons);
+  explainBase.holdReasons = allReasons;
+  const isHoldByBaseRules = allReasons.some(r => {
+    const s = String(r);
+    if(s.startsWith("(패턴 감점 적용")) return false;
+    if(s.startsWith("주의:")) return false;
+    return true;
+  });
   const hardHold = !!(avoidMeta && pp.hardHold);
   if(hardHold){
-    holdReasons.push(`실패패턴 극악(강제 HOLD): n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%`);
+    const msg = `실패패턴 극악(강제 HOLD): n=${avoidMeta.n}, wr ${(avoidMeta.wr*100).toFixed(0)}%`;
+    holdReasons.push(msg);
+    allReasons.push(msg);
+    explainBase.holdReasons = allReasons;
   }
 
   const finalHold = isHoldByBaseRules || hardHold;

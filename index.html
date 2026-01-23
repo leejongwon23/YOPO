@@ -45,15 +45,15 @@
         </div>
 
         <div class="stats-dashboard">
-          <div class="stat-card" onclick="openHistoryModal?.()">
+          <div class="stat-card" onclick="openHistoryModal()">
             <span class="stat-label">누적 분석</span>
             <span class="stat-value" id="total-stat">0</span>
           </div>
-          <div class="stat-card" onclick="openHistoryModal?.()">
+          <div class="stat-card" onclick="openHistoryModal()">
             <span class="stat-label">성공률</span>
             <span class="stat-value" id="win-stat">0%</span>
           </div>
-          <div class="stat-card" onclick="openHistoryModal?.()">
+          <div class="stat-card" onclick="openHistoryModal()">
             <span class="stat-label">추적 중</span>
             <span class="stat-value" id="active-stat">0</span>
           </div>
@@ -61,17 +61,17 @@
 
         <!-- ✅ 운영 버튼(리셋/전체취소/전체초기화) -->
         <div class="btn-row" style="margin-top:10px;">
-          <button class="action-btn secondary" id="reset-stats-btn" onclick="resetStatsUIAndData?.()">
+          <button class="action-btn secondary" id="reset-stats-btn" onclick="resetStatsUIAndData()">
             <i class="fa-solid fa-rotate-left"></i> 누적 리셋
           </button>
-          <button class="action-btn secondary" id="cancel-all-btn" onclick="cancelAllTracking?.()">
+          <button class="action-btn secondary" id="cancel-all-btn" onclick="cancelAllTracking()">
             <i class="fa-solid fa-ban"></i> 추적 전체취소
           </button>
         </div>
 
         <!-- ✅ NEW: 전체 초기화(누적+추적+진행취소 한번에) -->
         <div class="btn-row" style="margin-top:8px;">
-          <button class="action-btn secondary" id="reset-all-btn" onclick="resetAll?.()">
+          <button class="action-btn secondary" id="reset-all-btn" onclick="resetAll()">
             <i class="fa-solid fa-broom"></i> 전체 초기화(누적+추적+진행)
           </button>
         </div>
@@ -84,8 +84,8 @@
           <div class="history-title">
             <span>최근 종료 기록</span>
             <span class="history-actions">
-              <button class="mini-btn" onclick="openHistoryModal?.()">전체보기</button>
-              <button class="mini-btn danger" onclick="resetStatsUIAndData?.()">누적 리셋</button>
+              <button class="mini-btn" onclick="openHistoryModal()">전체보기</button>
+              <button class="mini-btn danger" onclick="resetStatsUIAndData()">누적 리셋</button>
               <span style="font-weight:950; color:var(--text-sub);" id="history-count">0</span>
             </span>
           </div>
@@ -100,8 +100,8 @@
           <div class="section-title">
             <span id="universe-title">유망 코인 <b id="universe-count">60</b> (자동 + AI)</span>
             <span class="right">
-              <button class="mini-btn" onclick="openCoinModal?.()">코인목록</button>
-              <button class="mini-btn" onclick="toggleSidebar?.()">화면확장</button>
+              <button class="mini-btn" onclick="openCoinModal()">코인목록</button>
+              <button class="mini-btn" onclick="toggleSidebar()">화면확장</button>
               <span class="status-dot" id="api-dot"></span>
               <span id="universe-ts">업데이트: --</span>
             </span>
@@ -112,7 +112,7 @@
             <div class="recommend-title">
               <span>추천 TOP (자동 스캔 결과)</span>
               <span class="rec-actions">
-                <button class="mini-btn" onclick="openScanModal?.()">스캔목록</button>
+                <button class="mini-btn" onclick="openScanModal()">스캔목록</button>
                 <span id="scan-status" style="font-weight:950;">대기</span>
               </span>
             </div>
@@ -139,27 +139,27 @@
           </div>
 
           <div class="control-row">
-            <button class="mini-toggle" id="strict-mode-btn" onclick="toggleStrictMode?.()">성공률 우선 모드: ON</button>
-            <button class="mini-toggle" id="closed-candle-btn" onclick="toggleClosedCandle?.()">종가(완성캔들)만 사용: ON</button>
-            <button class="mini-toggle" id="chart-ex-btn" onclick="cycleChartExchange?.()">차트 소스: AUTO</button>
-            <button class="mini-toggle" id="chart-perp-btn" onclick="toggleChartPerp?.()">차트 선물(.P): ON</button>
+            <button class="mini-toggle" id="strict-mode-btn" onclick="toggleStrictMode()">성공률 우선 모드: ON</button>
+            <button class="mini-toggle" id="closed-candle-btn" onclick="toggleClosedCandle()">종가(완성캔들)만 사용: ON</button>
+            <button class="mini-toggle" id="chart-ex-btn" onclick="cycleChartExchange()">차트 소스: AUTO</button>
+            <button class="mini-toggle" id="chart-perp-btn" onclick="toggleChartPerp()">차트 선물(.P): ON</button>
           </div>
 
                     <!-- ✅ 60코인 통합 예측/스캔(단·중·장) -->
-          <button class="action-btn" id="scan-all-btn" onclick="startUnifiedScan?.()">
+          <button class="action-btn" id="scan-all-btn" onclick="startUnifiedScan()">
             <i class="fa-solid fa-binoculars"></i> 60코인 통합 예측/스캔(단·중·장)
           </button>
 
           <div class="btn-row">
-            <button class="action-btn secondary" id="scan-view-btn" onclick="openScanModal?.()">
+            <button class="action-btn secondary" id="scan-view-btn" onclick="openScanModal()">
               <i class="fa-solid fa-list-check"></i> 스캔/예측 결과 보기
             </button>
 
-            <button class="action-btn secondary" id="bt-all-btn" onclick="openBacktestModal?.()">
+            <button class="action-btn secondary" id="bt-all-btn" onclick="openBacktestModal()">
               <i class="fa-solid fa-flask"></i> 통합 백테스트(60×3) 결과 보기
             </button>
 
-            <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
+            <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation()">
               <i class="fa-solid fa-hand"></i> 진행 취소
             </button>
           </div>
@@ -215,7 +215,7 @@
           </div>
 
           <!-- 선택 확정 버튼(선택 후 추적등록 흐름) -->
-          <button class="modal-btn" id="multi-choose" onclick="confirmTrackSelected?.()">
+          <button class="modal-btn" id="multi-choose" onclick="confirmTrackSelected()">
             선택한 전략으로 추적 등록
           </button>
 
@@ -243,8 +243,8 @@
           <div id="drawer-sub" class="drawer-sub">--</div>
         </div>
         <div class="drawer-actions">
-          <button class="mini-btn" id="drawer-refresh-btn" onclick="drawerRefresh?.()">새로고침</button>
-          <button class="mini-btn danger" onclick="closeDrawer?.()">닫기</button>
+          <button class="mini-btn" id="drawer-refresh-btn" onclick="drawerRefresh()">새로고침</button>
+          <button class="mini-btn danger" onclick="closeDrawer()">닫기</button>
         </div>
       </div>
 

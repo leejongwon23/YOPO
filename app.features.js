@@ -123,9 +123,10 @@ function ensureUiPrefs(){
 
 function updateModeButtons(){
   ensureUiPrefs();
-  const strictBtn = document.getElementById("strict-btn");
-  const closeBtn  = document.getElementById("close-btn");
-  const srcBtn    = document.getElementById("chart-source-btn");
+  // ✅ index.html 기준 ID와 반드시 일치해야 버튼이 "반응"한다.
+  const strictBtn = document.getElementById("strict-mode-btn");
+  const closeBtn  = document.getElementById("closed-candle-btn");
+  const srcBtn    = document.getElementById("chart-ex-btn");
   const perpBtn   = document.getElementById("chart-perp-btn");
 
   const onOff = (v)=> (v ? "ON" : "OFF");
@@ -165,6 +166,27 @@ function toggleChartSource(){
   try{ saveState(); }catch(e){}
   updateModeButtons();
   try{ initChart(); }catch(e){}
+}
+
+// ✅ index.html 호환: 기존 onclick 이름(차트 소스 순환)
+function cycleChartExchange(){
+  return toggleChartSource();
+}
+
+// ✅ index.html 호환 별칭(버튼 onclick)
+function cycleChartExchange(){
+  return toggleChartSource();
+}
+
+/* ==========================================================
+   ✅ UI 도우미(사이드바 확장/축소)
+   - "화면확장" 버튼은 sidebar를 숨기고 차트를 크게 본다.
+   ========================================================== */
+function toggleSidebar(){
+  const root = document.body;
+  if(!root) return;
+  root.classList.toggle("sidebar-hidden");
+  try{ toast(root.classList.contains("sidebar-hidden") ? "차트 화면을 확장했습니다." : "사이드바를 다시 표시했습니다.", "success"); }catch(e){}
 }
 
 function toggleChartPerp(){
@@ -565,6 +587,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   ensureRuntimeState();
   ensureUiPrefs();
   updateModeButtons();
+
+  // ✅ 사이드바 접기 상태 복원
+  try{
+    if(state.ui && state.ui.sidebarHidden) document.body.classList.add("sidebar-hidden");
+  }catch(e){}
 
   if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){
     state.lastSignalAt = {};
@@ -1846,116 +1873,14 @@ function renderScanResults(){
 }
 
 /* ==========================================================
-   Backtest (원본 유지)
+   Backtest
+   - 기존(단일 TF) 백테스트는 UI 혼란을 만들고, 파일이 깨져있어 통합형으로 통일한다.
+   - 외부에서 runBacktest()를 호출해도 "통합 백테스트"로 동작하게 유지.
    ========================================================== */
-function sliceCandlesUpToTime(candles, t){
-  if(!Array.isArray(candles) || !candles.length) return [];
-  if(candles[candles.length-1].t <= t) return candles.slice();
-  let j = candles.length - 1;
-  while(j >= 0 && candles[j].t > t) j--;
-  return candles.slice(0, Math.max(0, j+1));
-}
-
-function shiftPosEntryTo(pos, newEntry){
-  if(!pos || !Number.isFinite(newEntry)) return pos;
-  const oldEntry = pos.entry;
-  if(!Number.isFinite(oldEntry) || oldEntry <= 0) return pos;
-
-  const d = newEntry - oldEntry;
-  pos.entry = newEntry;
-
-  if(pos.type !== "HOLD"){
-    if(Number.isFinite(pos.tp)) pos.tp += d;
-    if(Number.isFinite(pos.sl)) pos.sl += d;
-
-    if(Number.isFinite(pos.tp)){
-      pos.tpPct = Math.abs((pos.tp - pos.entry) / pos.entry) * 100;
-    }
-    if(Number.isFinite(pos.sl)){
-      pos.slPct = Math.abs((pos.sl - pos.entry) / pos.entry) * 100;
-    }
-  }
-  return pos;
-}
-
 async function runBacktest(){
-  ensureRuntimeState();
-  ensureUiPrefs();
-  updateModeButtons();
-
-  const opToken = beginOperation("BACKTEST");
-
-  const btBtn = document.getElementById("bt-btn");
-  if(btBtn){
-    btBtn.disabled = true;
-    btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트...';
-  }
-
-  const box = document.getElementById("bt-box");
-  if(box) box.classList.remove("show");
-
-  try{
-    checkCanceled(opToken);
-
-    const tfSet = getMTFSet2(state.tf);
-    const baseTf = tfSet[0];
-    const otherTf = tfSet[1];
-
-    const candlesBase = await fetchCandles(state.symbol, baseTf, EXTENDED_LIMIT);
-    if(candlesBase.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
-
-    let candlesOther = null;
-    try{
-      candlesOther = await fetchCandles(state.symbol, otherTf, EXTENDED_LIMIT);
-    }catch(e){}
-
-    let wins=0, total=0;
-    let pnlSum=0;
-
-    const end = candlesBase.length - (FUTURE_H + 20);
-    const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
-
-    for(let idx = start; idx < end; idx += 7){
-      checkCanceled(opToken);
-
-      const sliceBase = candlesBase.slice(0, idx+1);
-      if(sliceBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
-
-      const byTf = { [baseTf]: sliceBase };
-
-      if(Array.isArray(candlesOther) && candlesOther.length > 120){
-        const tRef = sliceBase[sliceBase.length-1].t;
-        const sliceOther = sliceCandlesUpToTime(candlesOther, tRef);
-        if(sliceOther.length >= (SIM_WINDOW + FUTURE_H + 80)){
-          byTf[otherTf] = sliceOther;
-        }
-      }
-
-      const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, byTf, "2TF");
-      if(pos.type === "HOLD") continue;
-
-      const ex = pos.explain || {};
-      if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
-      if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
-      if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
-
-      const entryCandle = candlesBase[idx+1];
-      if(!entryCandle || !Number.isFinite(entryCandle.o)) continue;
-      shiftPosEntryTo(pos, entryCandle.o);
-
-      const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
-      const outcome = simulateOutcome(pos, future);
-      if(!outcome.resolved) continue;
-
-      total++;
-      if(outcome.win) wins++;
-      pnlSum += outcome.pnlPct;
-
-      if(total >= BACKTEST_TRADES) break;
-    }
-
-    const winRate = total ? (wins/total)*100 : 0;
-    const avgPnl = tot
+  openBacktestModal();
+  return runBacktestAll();
+}
 
 /* ==========================================================
    ✅ DRAWER (FullScreen Modal)
@@ -1986,10 +1911,14 @@ function openDrawer(mode, title){
 
   const ov = document.getElementById("drawer-overlay");
   const ttl = document.getElementById("drawer-title");
+  const sub = document.getElementById("drawer-title-sub");
   const q = document.getElementById("drawer-search");
 
   if(ov) ov.style.display = "flex";
-  if(ttl) ttl.textContent = title || (mode === "BT" ? "통합 백테스트 결과" : "자동 스캔 결과");
+  if(ttl) ttl.textContent = title || (mode === "BT" ? "통합 백테스트 결과" : mode === "COIN" ? "코인 목록" : mode === "HIST" ? "누적 기록" : "자동 스캔 결과");
+  if(sub){
+    sub.textContent = (mode === "BT") ? "60개 코인 × 3전략 결과" : (mode === "COIN") ? "검색 후 '선택'을 누르세요" : (mode === "HIST") ? "만료 정산된 기록" : "검색/필터 후 '보기' 클릭";
+  }
   if(q){
     q.value = state.drawer.query || "";
     q.oninput = (ev)=>{
@@ -2017,6 +1946,32 @@ function refreshDrawer(){
   try{
     if(state.drawer && state.drawer.mode === "BT") runBacktestAll();
     else autoScanUniverseAll();
+  }catch(e){}
+}
+
+// ✅ index.html 호환: 새로고침 버튼 이름
+function drawerRefresh(){
+  return refreshDrawer();
+}
+
+// ✅ index.html 호환: 코인목록/누적기록
+function openCoinModal(){
+  openDrawer("COIN", "코인 목록 (60개)");
+}
+
+function openHistoryModal(){
+  openDrawer("HIST", "누적 기록 / 종료 내역");
+}
+
+// ✅ 화면 확장(사이드바 접기)
+function toggleSidebar(){
+  try{
+    const key = "sidebarHidden";
+    if(!state.ui || typeof state.ui !== "object") state.ui = {};
+    state.ui[key] = !state.ui[key];
+    if(state.ui[key]) document.body.classList.add("sidebar-hidden");
+    else document.body.classList.remove("sidebar-hidden");
+    saveState();
   }catch(e){}
 }
 
@@ -2049,32 +2004,40 @@ function renderDrawer(){
 
   const mode = state.drawer.mode;
 
-  // 필터 버튼 렌더
-  const tfTabs = [
-    {k:"ALL", t:"전체"},
-    {k:"60", t:"1H"},
-    {k:"240", t:"4H"},
-    {k:"D", t:"1D"}
-  ];
-  const showTabs = (mode === "SCAN")
-    ? [{k:"ALL", t:"전체"},{k:"TRADE", t:"예측가능"},{k:"HOLD", t:"HOLD"}]
-    : [{k:"ALL", t:"전체"},{k:"GOOD", t:"상위"},{k:"BAD", t:"하위"}];
+  // 모드별 필터 UI
+  if(mode === "SCAN" || mode === "BT"){
+    // 필터 버튼 렌더
+    const tfTabs = [
+      {k:"ALL", t:"전체"},
+      {k:"60", t:"1H"},
+      {k:"240", t:"4H"},
+      {k:"D", t:"1D"}
+    ];
+    const showTabs = (mode === "SCAN")
+      ? [{k:"ALL", t:"전체"},{k:"TRADE", t:"예측가능"},{k:"HOLD", t:"HOLD"}]
+      : [{k:"ALL", t:"전체"},{k:"GOOD", t:"상위"},{k:"BAD", t:"하위"}];
 
-  filters.innerHTML =
-    tfTabs.map(x => `<button class="pill ${state.drawer.tf===x.k?'on':''}" data-kind="tf" data-k="${x.k}">${x.t}</button>`).join("") +
-    showTabs.map(x => `<button class="pill ${state.drawer.show===x.k?'on':''}" data-kind="show" data-k="${x.k}">${x.t}</button>`).join("");
+    filters.innerHTML =
+      tfTabs.map(x => `<button class="pill ${state.drawer.tf===x.k?'on':''}" data-kind="tf" data-k="${x.k}">${x.t}</button>`).join("") +
+      showTabs.map(x => `<button class="pill ${state.drawer.show===x.k?'on':''}" data-kind="show" data-k="${x.k}">${x.t}</button>`).join("");
 
-  filters.querySelectorAll("button").forEach(btn=>{
-    btn.onclick = ()=>{
-      const kind = btn.getAttribute("data-kind");
-      const k = btn.getAttribute("data-k");
-      if(kind === "tf") state.drawer.tf = k;
-      else state.drawer.show = k;
-      renderDrawer();
-    };
-  });
+    filters.querySelectorAll("button").forEach(btn=>{
+      btn.onclick = ()=>{
+        const kind = btn.getAttribute("data-kind");
+        const k = btn.getAttribute("data-k");
+        if(kind === "tf") state.drawer.tf = k;
+        else state.drawer.show = k;
+        renderDrawer();
+      };
+    });
+  }else{
+    // 코인목록/누적기록은 필터 대신 검색만
+    filters.innerHTML = "";
+  }
 
   if(mode === "BT") renderBacktestDrawer(body);
+  else if(mode === "COIN") renderCoinDrawer(body);
+  else if(mode === "HIST") renderHistoryDrawer(body);
   else renderScanDrawer(body);
 }
 
@@ -2113,7 +2076,7 @@ function renderScanDrawer(body){
         <div class="k"><b>모드</b><div>${state.settings.strictMode ? "성공률 우선" : "일반"}</div></div>
       </div>
       <div class="drawer-actions">
-        <button class="mini-btn primary" onclick="autoScanUniverseAll?.()">60코인 전체 스캔 시작</button>
+        <button class="mini-btn primary" onclick="autoScanUniverseAll()">60코인 전체 스캔 시작</button>
       </div>
       <div class="drawer-hint">
         - 예측가능(거래 후보)이 너무 없으면, 시스템이 임계값을 자동 완화해서 최소 개수는 뽑습니다.<br/>
@@ -2151,7 +2114,7 @@ function renderScanDrawer(body){
         <div>${badge} <span class="mono">${escapeHtml(status)}</span></div>
         <div class="mono">${prob}</div>
         <div class="mono">${score}</div>
-        <div><button class="mini-btn" onclick="quickAnalyzeAllAndShow?.('${escapeAttr(x.symbol)}')">보기</button></div>
+        <div><button class="mini-btn" onclick="quickAnalyzeAllAndShow('${escapeAttr(x.symbol)}')">보기</button></div>
       </div>
     `;
   }).join("");
@@ -2166,6 +2129,126 @@ function renderScanDrawer(body){
 function fmtTh(th){
   if(!th) return "--";
   return `P≥${(th.prob*100).toFixed(0)}% · E≥${th.edge.toFixed(4)} · SIM≥${th.sim.toFixed(0)}`;
+}
+
+/* ==========================================================
+   COIN LIST (Drawer)
+   - 코인 목록을 "큰 화면"으로 보기 좋게 제공
+   - 클릭하면 차트/선택 적용 후 닫기
+   ========================================================== */
+function renderCoinDrawer(body){
+  const q = (state.drawer.query || "").trim().toUpperCase();
+  const list = Array.isArray(state.universe) ? state.universe : [];
+
+  const rows = list.filter(c=>{
+    if(!q) return true;
+    const s = String(c.s||"").toUpperCase();
+    const n = String(c.n||"").toUpperCase();
+    return s.includes(q) || n.includes(q);
+  });
+
+  const at = state.lastUniverseAt ? new Date(state.lastUniverseAt).toLocaleTimeString() : "--";
+
+  const header = `
+    <div class="drawer-top">
+      <div class="drawer-kpi">
+        <div class="k"><b>총 코인</b><div>${list.length}개</div></div>
+        <div class="k"><b>현재 선택</b><div>${escapeHtml(state.symbol||"-")}</div></div>
+        <div class="k"><b>업데이트</b><div>${at}</div></div>
+      </div>
+      <div class="drawer-hint">- 코인을 누르면 차트가 해당 코인으로 바뀌고, 필요하면 통합 예측/스캔을 실행하세요.</div>
+    </div>
+  `;
+
+  if(!list.length){
+    body.innerHTML = header + `<div class="drawer-empty">코인 목록이 비어 있습니다. 잠시 후 다시 새로고침 해주세요.</div>`;
+    return;
+  }
+
+  const tableHead = `
+    <div class="drawer-table">
+      <div class="row head">
+        <div>코인</div><div>이름</div><div>선택</div><div>통합예측</div>
+      </div>
+  `;
+
+  const tableRows = rows.map(c=>{
+    const sym = String(c.s||"");
+    const name = String(c.n||"");
+    return `
+      <div class="row">
+        <div class="coin mono">${escapeHtml(sym)}</div>
+        <div>${escapeHtml(name||"-")}</div>
+        <div><button class="mini-btn" onclick="(function(){ switchCoin('${escapeAttr(sym)}'); closeDrawer(); })()">선택</button></div>
+        <div><button class="mini-btn primary" onclick="(function(){ quickAnalyzeAllAndShow('${escapeAttr(sym)}'); })()">보기</button></div>
+      </div>
+    `;
+  }).join("");
+
+  body.innerHTML = header + tableHead + tableRows + "</div>";
+}
+
+/* ==========================================================
+   HISTORY (Drawer)
+   - 누적 통계 + 최근 종료 기록
+   ========================================================== */
+function renderHistoryDrawer(body){
+  const q = (state.drawer.query || "").trim().toUpperCase();
+  const list = Array.isArray(state.closedTrades) ? state.closedTrades : [];
+
+  const rows = list.filter(x=>{
+    if(!q) return true;
+    const s = String(x.symbol||"").toUpperCase();
+    const tf = String(x.tf||"").toUpperCase();
+    return s.includes(q) || tf.includes(q);
+  });
+
+  // 통계
+  const total = Number(state.stats?.total||0) || list.length;
+  const wins  = Number(state.stats?.win||0) || list.filter(x=>x.win===true).length;
+  const winRate = total>0 ? (wins/total*100) : 0;
+
+  const header = `
+    <div class="drawer-top">
+      <div class="drawer-kpi">
+        <div class="k"><b>누적 분석</b><div>${total}회</div></div>
+        <div class="k"><b>성공</b><div>${wins}회</div></div>
+        <div class="k"><b>성공률</b><div>${winRate.toFixed(1)}%</div></div>
+      </div>
+      <div class="drawer-hint">- 여기 기록은 "추적"으로 등록된 포지션이 만료되며 자동으로 승/패가 반영된 결과입니다.</div>
+    </div>
+  `;
+
+  if(!rows.length){
+    body.innerHTML = header + `<div class="drawer-empty">아직 종료 기록이 없습니다. 통합 예측 후 “추적 등록”을 하면 누적이 쌓입니다.</div>`;
+    return;
+  }
+
+  const tableHead = `
+    <div class="drawer-table">
+      <div class="row head">
+        <div>시간</div><div>코인</div><div>전략</div><div>결과</div><div>비고</div>
+      </div>
+  `;
+
+  const tableRows = rows.slice().reverse().map(x=>{
+    const t = x.closedAt ? new Date(x.closedAt).toLocaleString() : "-";
+    const sym = String(x.symbol||"");
+    const tf = String(x.tf||"");
+    const res = x.win ? `<span class="tag good">성공</span>` : `<span class="tag bad">실패</span>`;
+    const note = String(x.reason||x.note||"");
+    return `
+      <div class="row">
+        <div class="mono">${escapeHtml(t)}</div>
+        <div class="coin mono">${escapeHtml(sym)}</div>
+        <div>${escapeHtml(tf)}</div>
+        <div>${res}</div>
+        <div class="mono">${escapeHtml(note)}</div>
+      </div>
+    `;
+  }).join("");
+
+  body.innerHTML = header + tableHead + tableRows + "</div>";
 }
 
 /* ==========================================================
@@ -2357,7 +2440,7 @@ function renderBacktestDrawer(body){
         <div class="k"><b>전체 승률</b><div>${(agg*100).toFixed(1)}%</div></div>
       </div>
       <div class="drawer-actions">
-        <button class="mini-btn primary" onclick="runBacktestAll?.()">60×3 백테스트 시작</button>
+        <button class="mini-btn primary" onclick="runBacktestAll()">60×3 백테스트 시작</button>
       </div>
       <div class="drawer-hint">
         - 결과는 “최근 구간 샘플” 기반이라 완전한 정답이 아니라, 우선순위(상위 후보) 용도입니다.<br/>
@@ -2387,7 +2470,7 @@ function renderBacktestDrawer(body){
         <div class="mono">${x.total||0}</div>
         <div class="mono">${wr}</div>
         <div class="mono">${escapeHtml(x.note||"")}</div>
-        <div><button class="mini-btn" onclick="quickAnalyzeAllAndShow?.('${escapeAttr(x.symbol)}')">보기</button></div>
+        <div><button class="mini-btn" onclick="quickAnalyzeAllAndShow('${escapeAttr(x.symbol)}')">보기</button></div>
       </div>
     `;
   }).join("");
@@ -2401,80 +2484,6 @@ function escapeHtml(s){
 function escapeAttr(s){
   // 따옴표 포함 방지
   return String(s ?? "").replace(/'/g, "\\'");
-}
-
-al ? (pnlSum/total) : 0;
-
-    const nEl = document.getElementById("bt-n");
-    const wEl = document.getElementById("bt-win");
-    const aEl = document.getElementById("bt-avg");
-    const rEl = document.getElementById("bt-range");
-    if(nEl) nEl.textContent = `${total}회`;
-    if(wEl) wEl.textContent = `${winRate.toFixed(1)}%`;
-    if(aEl) aEl.textContent = `${avgPnl.toFixed(2)}%`;
-
-    const tfNameShow = baseTf === "60" ? "1H" : baseTf === "240" ? "4H" : "1D";
-    if(rEl){
-      rEl.textContent =
-        `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · ✅otherTF누수방지 · ✅다음시가진입 · ✅동봉캔들보수판정 · 비용 -${FEE_PCT.toFixed(2)}% 반영`;
-    }
-
-    if(box) box.classList.add("show");
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("백테스트가 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("백테스트 중 오류가 발생했습니다.", "danger");
-  }finally{
-    endOperation(opToken);
-    if(btBtn){
-      btBtn.disabled = false;
-      btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
-    }
-  }
-}
-
-function simulateOutcome(pos, futureCandles){
-  for(const c of futureCandles){
-    const hi = c.h, lo = c.l;
-
-    if(pos.type === "LONG"){
-      const hitTP = (hi >= pos.tp);
-      const hitSL = (lo <= pos.sl);
-
-      if(hitTP && hitSL){
-        const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"BOTH_SL" };
-      }
-      if(hitTP){
-        const pnl = ((pos.tp - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:true, pnlPct:pnl, reason:"TP" };
-      }
-      if(hitSL){
-        const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"SL" };
-      }
-    }else{
-      const hitTP = (lo <= pos.tp);
-      const hitSL = (hi >= pos.sl);
-
-      if(hitTP && hitSL){
-        const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"BOTH_SL" };
-      }
-      if(hitTP){
-        const pnl = ((pos.entry - pos.tp)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:true, pnlPct:pnl, reason:"TP" };
-      }
-      if(hitSL){
-        const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"SL" };
-      }
-    }
-  }
-  return { resolved:false, win:false, pnlPct:0, reason:"NO_HIT" };
 }
 
 /* ==========================================================
@@ -2511,13 +2520,20 @@ window.resetAll = resetAll;
 window.toggleStrictMode = toggleStrictMode;
 window.toggleClosedCandle = toggleClosedCandle;
 window.toggleChartSource = toggleChartSource;
+window.cycleChartExchange = cycleChartExchange;
 window.toggleChartPerp = toggleChartPerp;
+
+// ✅ 상단/사이드 UI
+window.openCoinModal = openCoinModal;
+window.openHistoryModal = openHistoryModal;
+window.toggleSidebar = toggleSidebar;
 
 // ✅ Drawer
 window.openScanModal = openScanModal;
 window.openBacktestModal = openBacktestModal;
 window.closeDrawer = closeDrawer;
 window.refreshDrawer = refreshDrawer;
+window.drawerRefresh = drawerRefresh;
 window.startUnifiedScan = startUnifiedScan;
 
 // ✅ 통합 백테스트
