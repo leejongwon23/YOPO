@@ -26,6 +26,32 @@ function formatMoney(n){
 }
 
 /* ==========================================================
+   ✅ RUNTIME SAFETY (핵심)
+   - 정산/통계가 "조용히" 멈추는 대부분의 원인:
+     state.history / state.closedTrades / state.activePositions가 undefined,
+     혹은 숫자가 아닌 값으로 들어간 케이스.
+   - interval try/catch가 삼켜버리면 UI만 멀쩡하고 통계만 안 바뀜.
+   ========================================================== */
+function ensureRuntimeState(){
+  if(typeof state !== "object" || !state) return;
+
+  if(!Array.isArray(state.activePositions)) state.activePositions = [];
+  if(!Array.isArray(state.closedTrades)) state.closedTrades = [];
+
+  if(typeof state.history !== "object" || !state.history){
+    state.history = { total: 0, win: 0 };
+  }
+
+  // 숫자 방어
+  if(!Number.isFinite(state.history.total)) state.history.total = 0;
+  if(!Number.isFinite(state.history.win)) state.history.win = 0;
+
+  // universe / lastPrices도 안전망(부트 타이밍에 가끔 undefined)
+  if(!Array.isArray(state.universe)) state.universe = [];
+  if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
+}
+
+/* ==========================================================
    ✅ BUGFIX HELPERS
    - pos.id 누락 방지: 카운트다운/부분업데이트가 id 기반이라
      activePositions에 들어가는 순간 id가 반드시 필요함.
@@ -200,6 +226,8 @@ function updateStrategyCountUI(){
    COUNTDOWN 부분 업데이트 + 만료 정산
    ========================================================== */
 function updateCountdownTexts(){
+  ensureRuntimeState();
+
   const list = state.activePositions || [];
   if(!list.length) return;
 
@@ -220,8 +248,10 @@ function updateCountdownTexts(){
    TIME 만료 정산 (MFE 반영) + 비용 반영
    ========================================================== */
 function settleExpiredPositions(){
+  ensureRuntimeState();
+
   const list = state.activePositions || [];
-  if(!list.length) return;
+  if(!list.length) return false;
 
   const now = Date.now();
   let changed = false;
@@ -229,12 +259,21 @@ function settleExpiredPositions(){
   // ✅ 드리프트 보정(0초인데 정산이 안 되는 케이스 방지)
   const DRIFT_MS = 500;
 
+  // ✅ 상수 미정의 방어(정산이 예외로 죽으면 통계 갱신이 멈춤)
+  const FEE_SAFE = (typeof FEE_PCT === "number" && Number.isFinite(FEE_PCT)) ? FEE_PCT : 0;
+  const TIME_MFE_MIN_SAFE = (typeof TIME_MFE_MIN_PCT === "number" && Number.isFinite(TIME_MFE_MIN_PCT)) ? TIME_MFE_MIN_PCT : 0;
+  const TIME_MFE_RATIO_SAFE = (typeof TIME_MFE_TP_RATIO === "number" && Number.isFinite(TIME_MFE_TP_RATIO)) ? TIME_MFE_TP_RATIO : 0;
+
   for(let i = list.length - 1; i >= 0; i--){
     const pos = list[i];
     ensurePosId(pos);
 
     const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
-    if(now < (expiryAt - DRIFT_MS)) continue;
+
+    // expiryAt이 NaN이면 즉시 정산(카운트다운 0인데 안 빠지는 케이스 방지)
+    if(Number.isFinite(expiryAt)){
+      if(now < (expiryAt - DRIFT_MS)) continue;
+    }
 
     const lastPrice = Number.isFinite(pos.lastPrice) ? pos.lastPrice : pos.entry;
 
@@ -245,7 +284,7 @@ function settleExpiredPositions(){
     }else{
       pnlGross = ((pos.entry - lastPrice) / pos.entry) * 100;
     }
-    const pnl = pnlGross - FEE_PCT;
+    const pnl = pnlGross - FEE_SAFE;
     pos.pnl = pnl;
 
     const mfe = (typeof pos.mfePct === "number") ? pos.mfePct : 0;
@@ -258,8 +297,8 @@ function settleExpiredPositions(){
       win = true;
       reason = "TIME";
     }else{
-      const needByTp = (tpPct !== null) ? (tpPct * TIME_MFE_TP_RATIO) : TIME_MFE_MIN_PCT;
-      const need = Math.max(TIME_MFE_MIN_PCT, needByTp);
+      const needByTp = (tpPct !== null) ? (tpPct * TIME_MFE_RATIO_SAFE) : TIME_MFE_MIN_SAFE;
+      const need = Math.max(TIME_MFE_MIN_SAFE, needByTp);
       if(mfe >= need){
         win = true;
         reason = "TIME_MFE";
@@ -272,6 +311,7 @@ function settleExpiredPositions(){
     // ✅ 결과 확정 시: 실패패턴 DB에 누적 기록
     try{ recordTradeToPatternDB(pos, win); }catch(e){}
 
+    // ✅ history 안전 보장
     state.history.total++;
     if(win) state.history.win++;
 
@@ -301,7 +341,7 @@ function settleExpiredPositions(){
       : ` / MFE ${mfe.toFixed(2)}%`;
 
     toast(
-      `[${pos.symbol} ${pos.tf}] 시간 종료: ${win ? "성공" : "실패"} (${reason}) / 수익률 ${pnl.toFixed(2)}%${extra} (비용 -${FEE_PCT.toFixed(2)}%)`,
+      `[${pos.symbol} ${pos.tf}] 시간 종료: ${win ? "성공" : "실패"} (${reason}) / 수익률 ${pnl.toFixed(2)}%${extra} (비용 -${FEE_SAFE.toFixed(2)}%)`,
       win ? "success" : "danger"
     );
   }
@@ -316,12 +356,16 @@ function settleExpiredPositions(){
     updateStrategyCountUI();
     updateCountdownTexts();
   }
+
+  return changed;
 }
 
 /* ==========================================================
    Boot
    ========================================================== */
 document.addEventListener("DOMContentLoaded", async () => {
+  ensureRuntimeState();
+
   // ✅ 안전: lastSignalAt 없으면 생성
   if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){
     state.lastSignalAt = {};
@@ -363,6 +407,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ✅ 핵심: 이게 살아있어야 "시간 종료 → 통계/히스토리 갱신"이 된다
   setInterval(() => {
+    try{ ensureRuntimeState(); }catch(e){}
     try{ updateCountdownTexts(); }catch(e){}
     try{ settleExpiredPositions(); }catch(e){}
   }, 1000);
@@ -374,6 +419,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 // ✅ 호환 강화: btn이 없어도 동작
 function setTF(tf, btn){
+  ensureRuntimeState();
+
   state.tf = tf;
 
   const btns = Array.from(document.querySelectorAll(".tf-btn"));
@@ -391,6 +438,8 @@ function setTF(tf, btn){
 }
 
 function switchCoin(symbol){
+  ensureRuntimeState();
+
   state.symbol = symbol;
   document.querySelectorAll(".coin-row").forEach(r => r.classList.remove("active"));
   const row = document.getElementById(`row-${symbol}`);
@@ -426,6 +475,8 @@ function initChart(){
    Universe list + price row
    ========================================================== */
 function renderUniverseList(){
+  ensureRuntimeState();
+
   const container = document.getElementById("market-list-container");
   if(!container) return;
 
@@ -488,6 +539,8 @@ function updateCoinRow(symbol, price, changePct, silent=false){
    Core Analysis
    ========================================================== */
 async function executeAnalysis(){
+  ensureRuntimeState();
+
   const btn = document.getElementById("predict-btn");
   if(btn){
     btn.disabled = true;
@@ -537,6 +590,8 @@ async function executeAnalysis(){
 
 // 추천 클릭 → 즉시 분석
 async function quickAnalyzeAndShow(symbol, tfRaw){
+  ensureRuntimeState();
+
   try{
     const btns = document.querySelectorAll(".tf-btn");
     btns.forEach(b => b.classList.remove("active"));
@@ -576,6 +631,8 @@ async function quickAnalyzeAndShow(symbol, tfRaw){
    Modal
    ========================================================== */
 function showResultModal(pos){
+  ensureRuntimeState();
+
   // ✅ 패턴차단 HOLD라면: "강제추적 가능"한 포지션을 함께 준비
   let forcePos = null;
   const blockedByPattern = isPatternBlockedHold(pos);
@@ -720,6 +777,8 @@ function closeModal(){
 }
 
 function confirmTrack(forcedPos=null){
+  ensureRuntimeState();
+
   // forcedPos가 있으면 그걸 우선 사용(패턴차단 HOLD override)
   const posToUse = forcedPos || tempPos;
   if(!posToUse) return;
@@ -766,7 +825,12 @@ function confirmTrack(forcedPos=null){
    Tracking
    ========================================================== */
 function trackPositions(symbol, currentPrice){
+  ensureRuntimeState();
+
   let changed = false;
+
+  // ✅ 상수 미정의 방어
+  const FEE_SAFE = (typeof FEE_PCT === "number" && Number.isFinite(FEE_PCT)) ? FEE_PCT : 0;
 
   for(let i = state.activePositions.length - 1; i >= 0; i--){
     const pos = state.activePositions[i];
@@ -783,7 +847,7 @@ function trackPositions(symbol, currentPrice){
     }else{
       pnlGross = ((pos.entry - currentPrice) / pos.entry) * 100;
     }
-    const pnl = pnlGross - FEE_PCT;
+    const pnl = pnlGross - FEE_SAFE;
     pos.pnl = pnl;
 
     // MFE 업데이트 (GROSS 기준)
@@ -848,7 +912,7 @@ function trackPositions(symbol, currentPrice){
       }else{
         pnlExitGross = ((pos.entry - px) / pos.entry) * 100;
       }
-      const pnlExit = pnlExitGross - FEE_PCT;
+      const pnlExit = pnlExitGross - FEE_SAFE;
 
       const record = {
         id: Date.now(),
@@ -872,7 +936,7 @@ function trackPositions(symbol, currentPrice){
       changed = true;
 
       toast(
-        `[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnlExit.toFixed(2)}% / MFE ${record.mfePct.toFixed(2)}% (비용 -${FEE_PCT.toFixed(2)}%)`,
+        `[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnlExit.toFixed(2)}% / MFE ${record.mfePct.toFixed(2)}% (비용 -${FEE_SAFE.toFixed(2)}%)`,
         win ? "success" : "danger"
       );
     }else{
@@ -889,6 +953,8 @@ function trackPositions(symbol, currentPrice){
 }
 
 function renderTrackingList(){
+  ensureRuntimeState();
+
   const container = document.getElementById("tracking-container");
   if(!container) return;
 
@@ -1009,6 +1075,8 @@ function renderTrackingList(){
    Closed trades + stats
    ========================================================== */
 function renderClosedTrades(){
+  ensureRuntimeState();
+
   const container = document.getElementById("history-container");
   const countEl = document.getElementById("history-count");
   if(!container || !countEl) return;
@@ -1048,6 +1116,8 @@ function renderClosedTrades(){
 }
 
 function updateStatsUI(){
+  ensureRuntimeState();
+
   const totalEl = document.getElementById("total-stat");
   const winEl = document.getElementById("win-stat");
   const activeEl = document.getElementById("active-stat");
@@ -1066,6 +1136,8 @@ function updateStatsUI(){
    Auto Scan
    ========================================================== */
 async function autoScanUniverse(){
+  ensureRuntimeState();
+
   const scanBtn = document.getElementById("scan-btn");
   const status = document.getElementById("scan-status");
   if(scanBtn) scanBtn.disabled = true;
@@ -1145,6 +1217,8 @@ async function autoScanUniverse(){
 }
 
 function renderScanResults(){
+  ensureRuntimeState();
+
   const container = document.getElementById("rec-container");
   if(!container) return;
 
@@ -1215,6 +1289,8 @@ function shiftPosEntryTo(pos, newEntry){
 }
 
 async function runBacktest(){
+  ensureRuntimeState();
+
   const btBtn = document.getElementById("bt-btn");
   if(btBtn){
     btBtn.disabled = true;
