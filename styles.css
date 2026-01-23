@@ -292,6 +292,21 @@ body.sidebar-hidden #app{ grid-template-columns: 1fr !important; }
   margin-top:10px;
   flex-wrap: wrap;
 }
+
+/* ✅ chart controls (소스/선물) */
+.btn-row.chart-controls{
+  margin-top:8px;
+}
+.action-btn.mini{
+  padding:10px 12px;
+  font-size:12px;
+  font-weight:950;
+  border-radius:14px;
+}
+@media (max-width: 980px){
+  .action-btn.mini{ width:100%; }
+}
+
 .btn-row .action-btn{
   flex: 1 1 160px;
   min-width: 160px;

@@ -469,16 +469,5 @@ async function fetchCandles(symbol, tf, limit){
   })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
 
   candles.sort((a,b)=> a.t - b.t);
-
-  // ✅ 종가(완성캔들)만 사용 모드: 아직 완성되지 않은 마지막 캔들은 제거
-  try{
-    if(state && state.settings && state.settings.closedCandleOnly && typeof tfToMs === "function" && candles.length){
-      const ms = tfToMs(tf);
-      const last = candles[candles.length-1];
-      if(Number.isFinite(last?.t) && (last.t + ms) > Date.now()){
-        candles.pop();
-      }
-    }
-  }catch(e){}
   return candles;
 }

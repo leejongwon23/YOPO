@@ -103,6 +103,14 @@ function ensureRuntimeState(){
 
   if(!Array.isArray(state.universe)) state.universe = [];
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
+
+  // ✅ 차트 설정(소스/선물)
+  if(typeof state.settings !== "object" || !state.settings){
+    state.settings = { chartExchange:"AUTO", chartPerp:true };
+  }else{
+    if(typeof state.settings.chartExchange !== "string") state.settings.chartExchange = "AUTO";
+    if(typeof state.settings.chartPerp !== "boolean") state.settings.chartPerp = true;
+  }
 }
 
 
@@ -692,11 +700,52 @@ function switchCoin(symbol){
 /* ==========================================================
    Chart
    ========================================================== */
+function _resolveChartExchange(){
+  ensureRuntimeState();
+  const ex = (state.settings && state.settings.chartExchange) ? state.settings.chartExchange : "AUTO";
+  if(ex === "AUTO"){
+    // AUTO: 선물(P)=BYBIT, 현물=BINANCE
+    return (state.settings && state.settings.chartPerp) ? "BYBIT" : "BINANCE";
+  }
+  return ex;
+}
+function _tvSymbol(sym){
+  const exchange = _resolveChartExchange();
+  const perp = !!(state.settings && state.settings.chartPerp);
+  let s = `${exchange}:${sym}`;
+  // TradingView: Binance perpetual은 .P가 흔함. (Bybit은 기본 심볼로도 잘 뜨는 편)
+  if(perp && exchange === "BINANCE") s = `${exchange}:${sym}.P`;
+  return s;
+}
+function cycleChartSource(){
+  ensureRuntimeState();
+  const order = ["AUTO","BINANCE","BYBIT"];
+  const cur = state.settings.chartExchange || "AUTO";
+  const next = order[(order.indexOf(cur)+1+order.length)%order.length];
+  state.settings.chartExchange = next;
+  saveState();
+  try{ renderChartControls(); }catch(e){}
+  initChart();
+}
+function toggleChartPerp(){
+  ensureRuntimeState();
+  state.settings.chartPerp = !state.settings.chartPerp;
+  saveState();
+  try{ renderChartControls(); }catch(e){}
+  initChart();
+}
+function renderChartControls(){
+  const exBtn = document.getElementById("chart-source-btn");
+  const pBtn  = document.getElementById("chart-perp-btn");
+  if(exBtn) exBtn.textContent = `차트 소스: ${state.settings.chartExchange || "AUTO"}`;
+  if(pBtn)  pBtn.textContent  = `차트 선물(P): ${state.settings.chartPerp ? "ON" : "OFF"}`;
+}
 function initChart(){
   const wrap = document.getElementById("chart-wrap");
   if(!wrap) return;
 
   wrap.innerHTML = "";
+  try{ renderChartControls(); }catch(e){}
   new TradingView.widget({
     autosize:true,
     symbol:getTradingViewSymbol(state.symbol),
@@ -2514,6 +2563,10 @@ window.cancelOperation = cancelOperation;
 window.resetStatsUIAndData = resetStatsUIAndData;
 window.cancelAllTracking = cancelAllTracking;
 window.resetAll = resetAll;
+
+// 차트 버튼
+window.cycleChartSource = cycleChartSource;
+window.toggleChartPerp = toggleChartPerp;
 
 
 // ✅ UI 토글

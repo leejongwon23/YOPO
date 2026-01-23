@@ -138,6 +138,17 @@
             <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
           </div>
 
+          <!-- ✅ 차트 소스/선물(P) (요청사항: 이 2개만 남김) -->
+          <div class="btn-row chart-controls">
+            <button class="action-btn secondary mini" id="chart-source-btn" onclick="cycleChartSource?.()">
+              차트 소스: AUTO
+            </button>
+            <button class="action-btn secondary mini" id="chart-perp-btn" onclick="toggleChartPerp?.()">
+              차트 선물(P): ON
+            </button>
+          </div>
+
+
           <div class="control-row">
             <button class="mini-toggle" id="strict-mode-btn" onclick="toggleStrictMode()">성공률 우선 모드: ON</button>
             <button class="mini-toggle" id="closed-candle-btn" onclick="toggleClosedCandle()">종가(완성캔들)만 사용: ON</button>
