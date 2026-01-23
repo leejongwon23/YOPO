@@ -11,6 +11,21 @@
  *************************************************************/
 
 /* ==========================================================
+   ✅ SAFETY: formatMoney 폴백 (부트 중 renderUniverseList가 터지면
+   setInterval이 아예 안 걸려서 "정산/통계/추적 갱신 멈춤" 현상이 생김)
+   ========================================================== */
+function formatMoney(n){
+  const v = Number(n);
+  if(!Number.isFinite(v)) return "-";
+  const abs = Math.abs(v);
+  if(abs >= 1e12) return (v/1e12).toFixed(2) + "T";
+  if(abs >= 1e9)  return (v/1e9).toFixed(2)  + "B";
+  if(abs >= 1e6)  return (v/1e6).toFixed(2)  + "M";
+  if(abs >= 1e3)  return (v/1e3).toFixed(2)  + "K";
+  return v.toFixed(0);
+}
+
+/* ==========================================================
    ✅ BUGFIX HELPERS
    - pos.id 누락 방지: 카운트다운/부분업데이트가 id 기반이라
      activePositions에 들어가는 순간 id가 반드시 필요함.
@@ -48,10 +63,17 @@ function ensureIdsOnAllPositions(){
         사용자가 원하면 "위험 감안하고 추적 등록" 허용
    ========================================================== */
 
+// ✅ FIX: core가 문구를 "패턴 감점 적용" / "실패패턴 극악(강제 HOLD)"로 쓰므로
+// 기존 "실패패턴 차단"만 찾으면 거의 안 걸림 → RISK 로직이 죽음
 function isPatternBlockedHold(pos){
   if(!pos || pos.type !== "HOLD") return false;
   const reasons = pos?.explain?.holdReasons || [];
-  return reasons.some(r => String(r).includes("실패패턴 차단"));
+  const text = reasons.map(x=>String(x)).join(" | ");
+  return (
+    text.includes("실패패턴") ||          // "실패패턴 극악(강제 HOLD)" 등
+    text.includes("패턴 감점 적용") ||     // "(패턴 감점 적용: -x%p ...)"
+    text.includes("강제 HOLD")            // "강제 HOLD" 직접
+  );
 }
 
 function buildForcedTrackFromHold(pos){
@@ -300,44 +322,49 @@ function settleExpiredPositions(){
    Boot
    ========================================================== */
 document.addEventListener("DOMContentLoaded", async () => {
-  // auth gate
-  if(!isAuthed()){
-    showAuth();
-  }else{
-    hideAuth();
+  // ✅ 안전: lastSignalAt 없으면 생성
+  if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){
+    state.lastSignalAt = {};
   }
-  document.getElementById("auth-input")?.addEventListener("keydown", (e)=>{
-    if(e.key === "Enter") tryAuth();
-  });
 
-  ensureToastUI();
+  // auth gate
+  try{
+    if(!isAuthed()) showAuth();
+    else hideAuth();
+    document.getElementById("auth-input")?.addEventListener("keydown", (e)=>{
+      if(e.key === "Enter") tryAuth();
+    });
+  }catch(e){}
+
+  try{ ensureToastUI(); }catch(e){}
 
   // 마이그레이션(만료/슬tp/mfe)
-  ensureExpiryOnAllPositions();
+  try{ ensureExpiryOnAllPositions(); }catch(e){}
+  try{ ensureIdsOnAllPositions(); saveState(); }catch(e){}
 
-  // ✅ BUGFIX: id 누락 방지 (카운트다운/부분업데이트 안정화)
-  ensureIdsOnAllPositions();
-  saveState();
+  // ✅ 부트 중 어떤 렌더가 터져도 "인터벌"은 반드시 걸리게 분리
+  try{ initChart(); }catch(e){}
+  try{ renderUniverseList(); }catch(e){ console.error("renderUniverseList boot error:", e); }
+  try{ renderTrackingList(); }catch(e){}
+  try{ renderClosedTrades(); }catch(e){}
+  try{ updateStatsUI(); }catch(e){}
+  try{ renderScanResults(); }catch(e){}
 
-  initChart();
-  renderUniverseList();
-  renderTrackingList();
-  renderClosedTrades();
-  updateStatsUI();
-  renderScanResults();
+  try{
+    ensureStrategyCountUI();
+    updateStrategyCountUI();
+  }catch(e){}
 
-  ensureStrategyCountUI();
-  updateStrategyCountUI();
-
-  await refreshUniverseAndGlobals();
-  await marketTick();
+  try{ await refreshUniverseAndGlobals(); }catch(e){}
+  try{ await marketTick(); }catch(e){}
 
   setInterval(marketTick, 2000);
   setInterval(refreshUniverseAndGlobals, 60000);
 
+  // ✅ 핵심: 이게 살아있어야 "시간 종료 → 통계/히스토리 갱신"이 된다
   setInterval(() => {
-    updateCountdownTexts();
-    settleExpiredPositions();
+    try{ updateCountdownTexts(); }catch(e){}
+    try{ settleExpiredPositions(); }catch(e){}
   }, 1000);
 });
 
@@ -601,7 +628,7 @@ function showResultModal(pos){
       const slLine = `$${forcePos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${forcePos.slPct.toFixed(2)}%)`;
 
       icon.textContent = "⚠️";
-      title.textContent = "RISK (패턴차단 감지)";
+      title.textContent = "RISK (패턴경고 감지)";
       title.style.color = "var(--danger)";
 
       grid.innerHTML = `
@@ -612,7 +639,7 @@ function showResultModal(pos){
       `;
 
       content.innerHTML = `
-        <b>현재는 “자주 실패한 패턴”으로 감지되어 기본은 HOLD입니다.</b><br/>
+        <b>현재는 “자주 실패한 패턴” 경고가 있어서 기본은 HOLD입니다.</b><br/>
         하지만 너 요청대로 <b>예측을 줄이지 않기 위해</b> 아래 버튼으로 “위험 감안 추적”을 허용합니다.<br/><br/>
         <b>복원된 TP/SL(강제추적 기준):</b><br/>
         - TP ${tpLine}<br/>
@@ -731,7 +758,7 @@ function confirmTrack(forcedPos=null){
   updateCountdownTexts();
 
   if(posToUse._forceTrack){
-    toast(`[${posToUse.symbol} ${posToUse.tf}] RISK 추적 등록 완료 (패턴차단 override)`, "warn");
+    toast(`[${posToUse.symbol} ${posToUse.tf}] RISK 추적 등록 완료 (패턴경고 override)`, "warn");
   }
 }
 
@@ -1068,7 +1095,7 @@ async function autoScanUniverse(){
 
         const pos = buildSignalFromCandles_MTF(coin.s, baseTf, candlesByTf, "2TF");
 
-        // ✅ 변경: HOLD라도 "패턴차단 HOLD"면 제외하지 않고 RISK로 포함
+        // ✅ 변경: HOLD라도 "패턴경고 HOLD"면 제외하지 않고 RISK로 포함
         const riskHold = isPatternBlockedHold(pos);
 
         if(pos.type === "HOLD" && !riskHold) continue;
