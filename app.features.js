@@ -676,6 +676,153 @@ function _showMultiArea(){
 /* ==========================================================
    ✅ 통합 예측 (단/중/장 한번에) + 선택/등록
    ========================================================== */
+
+/* ==========================================================
+   (고급) 현재 TF만 분석 / (기존) 자동 스캔 — index.html onclick 호환
+   - 기존 UI 버튼이 호출하는 executeAnalysis(), autoScanUniverse()가 누락되면
+     클릭 시 아무 반응이 없거나 console error로 오해가 생김.
+   - “현재 TF”는 속도/실전용: 2TF 합의(기준TF + 보조TF)로 계산한다.
+   ========================================================== */
+async function executeAnalysis(){
+  ensureRuntimeState();
+
+  const opToken = beginOperation("ANALYSIS_ONE");
+
+  const btn = document.getElementById("predict-btn");
+  if(btn){
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 분석 중...';
+  }
+
+  try{
+    checkCanceled(opToken);
+
+    const symbol = state.symbol;
+    const baseTfRaw = state.tfRaw || "60";
+    const otherTfRaw = (baseTfRaw === "60") ? "240" : (baseTfRaw === "240" ? "D" : "240");
+
+    const base = await fetchCandles(symbol, baseTfRaw, EXTENDED_LIMIT);
+    checkCanceled(opToken);
+    const other = await fetchCandles(symbol, otherTfRaw, EXTENDED_LIMIT);
+    checkCanceled(opToken);
+
+    const candlesByTf = {};
+    candlesByTf[baseTfRaw] = base;
+    candlesByTf[otherTfRaw] = other;
+
+    const pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "2TF");
+    state.lastSignalAt[`${symbol}|${baseTfRaw}`] = Date.now();
+    saveState();
+
+    showResultModal(pos);
+  }catch(e){
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("진행 중 작업이 취소되었습니다.", "warn");
+      return;
+    }
+    console.error(e);
+    toast("현재 TF 분석 중 오류가 발생했습니다. (API 지연/제한 가능)", "danger");
+  }finally{
+    endOperation(opToken);
+    if(btn){
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-bolt"></i> (고급) 현재 TF만 분석';
+    }
+  }
+}
+
+async function autoScanUniverse(){
+  ensureRuntimeState();
+
+  const opToken = beginOperation("SCAN_ONE");
+
+  const scanBtn = document.getElementById("scan-btn");
+  const status = document.getElementById("scan-status");
+  if(scanBtn) scanBtn.disabled = true;
+  if(status) status.textContent = "스캔 중...";
+
+  try{
+    checkCanceled(opToken);
+
+    const baseTfRaw = state.tfRaw || "60";
+    const otherTfRaw = (baseTfRaw === "60") ? "240" : (baseTfRaw === "240" ? "D" : "240");
+
+    const results = [];
+    for(let i=0;i<state.universe.length;i++){
+      checkCanceled(opToken);
+
+      const coin = state.universe[i];
+      if(status) status.textContent = `스캔 중... (${i+1}/${state.universe.length}) · TF ${baseTfRaw}`;
+
+      try{
+        const base = await fetchCandles(coin.s, baseTfRaw, 360);
+        const other = await fetchCandles(coin.s, otherTfRaw, 360);
+
+        const candlesByTf = {};
+        candlesByTf[baseTfRaw] = base;
+        candlesByTf[otherTfRaw] = other;
+
+        if((base||[]).length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+
+        const pos = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "2TF");
+
+        const riskHold = isPatternBlockedHold(pos);
+        if(pos.type === "HOLD" && !riskHold) continue;
+
+        const ex = pos.explain || {};
+        const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
+
+        const item = {
+          symbol: pos.symbol,
+          tf: pos.tf,
+          tfRaw: pos.tfRaw,
+          type: (pos.type === "HOLD") ? inferredType : pos.type,
+          winProb: ex.winProb,
+          edge: ex.edge,
+          mtfAgree: ex?.mtf?.agree ?? 1,
+          mtfVotes: (ex?.mtf?.votes || []).join("/"),
+          confTier: ex?.conf?.tier ?? "-",
+          isRisk: !!riskHold,
+          multi: false
+        };
+
+        item._score = computeScanScore(item);
+        results.push(item);
+      }catch(e){}
+
+      await sleepCancelable(Math.max(220, SCAN_DELAY_MS - 280), opToken);
+    }
+
+    results.sort((a,b)=> b._score - a._score);
+    const pick = results.slice(0, 12);
+
+    state.lastScanResults = pick.map(x => {
+      const { _score, ...rest } = x;
+      return rest;
+    });
+    state.lastScanAt = Date.now();
+    saveState();
+
+    renderScanResults();
+    if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
+  }catch(e){
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("스캔이 취소되었습니다.", "warn");
+      if(status) status.textContent = "취소됨";
+      return;
+    }
+    console.error(e);
+    toast("자동 스캔 중 오류가 발생했습니다.", "danger");
+  }finally{
+    endOperation(opToken);
+    if(scanBtn) scanBtn.disabled = false;
+    setTimeout(()=>{
+      const el = document.getElementById("scan-status");
+      if(el) el.textContent = "대기";
+    }, 1500);
+  }
+}
+
 async function executeAnalysisAll(){
   ensureRuntimeState();
 
@@ -1805,8 +1952,11 @@ function simulateOutcome(pos, futureCandles){
 window.tryAuth = tryAuth;
 window.setTF = setTF;
 
+// (고급) 현재 TF만 분석 / (기존) 자동 스캔
+window.executeAnalysis = executeAnalysis;
+window.autoScanUniverse = autoScanUniverse;
 
-// 통합(단/중/장)
+// 통합(단/중·장)
 window.executeAnalysisAll = executeAnalysisAll;
 window.quickAnalyzeAllAndShow = quickAnalyzeAllAndShow;
 window.selectMultiTf = selectMultiTf;

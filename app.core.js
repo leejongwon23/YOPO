@@ -61,6 +61,11 @@ function loadState(){
 const BYBIT_TICKERS = "https://api.bybit.com/v5/market/tickers?category=linear";
 const BYBIT_KLINE = (symbol, interval, limit) =>
   `https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+// ✅ Binance (CORS-friendly; candle fallback)
+const BINANCE_FUT_KLINE  = "https://fapi.binance.com/fapi/v1/klines";
+const BINANCE_SPOT_KLINE = "https://api.binance.com/api/v3/klines";
+
+
 
 const CG_MARKETS = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h";
 const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
@@ -1279,7 +1284,7 @@ function sleep(ms){
   return new Promise(res => setTimeout(res, ms));
 }
 
-async function fetchWithTimeout(url, timeoutMs=7000){
+async function fetchWithTimeout(url, timeoutMs=12000){
   const ctrl = new AbortController();
   const t = setTimeout(()=> ctrl.abort(), Math.max(1000, timeoutMs|0));
   try{

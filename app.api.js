@@ -52,6 +52,60 @@ const safeLog10 = (typeof window !== "undefined" && typeof window.safeLog10 === 
       return Math.log10(v);
     };
 
+
+/* =========================
+   ✅ Candle helpers / cache
+   - 누락되면: 예측/스캔/백테스트가 전부 멈춤 (ReferenceError)
+========================= */
+const __CANDLE_CACHE = new Map();     // key -> {ts, data}
+const __CANDLE_INFLIGHT = new Map();  // key -> Promise
+
+function _cKey(symbol, tfRaw, limit){
+  return `${String(symbol||"")}|${String(tfRaw||"")}|${Number(limit)||0}`;
+}
+
+function _tfToBinanceInterval(tfRaw){
+  const v = String(tfRaw || "").trim();
+  const u = v.toUpperCase();
+
+  // Bybit style minutes string -> Binance interval
+  if(u === "15" || u === "15M") return "15m";
+  if(u === "30" || u === "30M") return "30m";
+  if(u === "60" || u === "1H" || u === "60M") return "1h";
+  if(u === "120"|| u === "2H") return "2h";
+  if(u === "240"|| u === "4H") return "4h";
+  if(u === "360"|| u === "6H") return "6h";
+  if(u === "720"|| u === "12H") return "12h";
+  if(u === "D"  || u === "1D" || u === "DAY") return "1d";
+  if(u === "W"  || u === "1W" || u === "WEEK") return "1w";
+  return null;
+}
+
+function _fixCandles(candles){
+  // Normalize: sort asc by time, remove bad rows, dedupe
+  if(!Array.isArray(candles)) return [];
+  const out = [];
+  for(const c of candles){
+    if(!c) continue;
+    const t = Number(c.t);
+    const o = Number(c.o), h = Number(c.h), l = Number(c.l), cc = Number(c.c), v = Number(c.v);
+    if(!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(cc)) continue;
+    out.push({ t, o, h, l, c: cc, v: Number.isFinite(v) ? v : 0 });
+  }
+  out.sort((a,b)=> a.t - b.t);
+  // Deduplicate by timestamp (keep last)
+  const dedup = [];
+  for(let i=0;i<out.length;i++){
+    const cur = out[i];
+    if(dedup.length && dedup[dedup.length-1].t === cur.t){
+      dedup[dedup.length-1] = cur;
+    }else{
+      dedup.push(cur);
+    }
+  }
+  return dedup;
+}
+
 function _isBadUniverseSymbol(sym){
   const s = String(sym || "").toUpperCase();
   // 스테이블/래핑/미러/레버리지 등 잡음 최소 필터(가벼운 수준)
@@ -487,7 +541,8 @@ async function fetchCandles(symbol, tfRaw, limit = 300) {
     const interval = _tfToBinanceInterval(tfRaw);
     if (interval) {
       try {
-        const url = `${BINANCE_FUT_KLINE}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${wantLimit}`;
+        const _BIN_FUT = (typeof BINANCE_FUT_KLINE === "string") ? BINANCE_FUT_KLINE : "https://fapi.binance.com/fapi/v1/klines";
+        const url = `${_BIN_FUT}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${wantLimit}`;
         const arr = await fetchJSON(url, { timeoutMs: 9000, retry: 1 });
         if (Array.isArray(arr)) {
           candles = arr.map(k => ({
@@ -503,7 +558,8 @@ async function fetchCandles(symbol, tfRaw, limit = 300) {
 
       if (!candles.length) {
         try {
-          const url = `${BINANCE_SPOT_KLINE}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${wantLimit}`;
+          const _BIN_SPOT = (typeof BINANCE_SPOT_KLINE === "string") ? BINANCE_SPOT_KLINE : "https://api.binance.com/api/v3/klines";
+          const url = `${_BIN_SPOT}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${wantLimit}`;
           const arr = await fetchJSON(url, { timeoutMs: 9000, retry: 1 });
           if (Array.isArray(arr)) {
             candles = arr.map(k => ({
@@ -522,7 +578,9 @@ async function fetchCandles(symbol, tfRaw, limit = 300) {
     // 2) Fallback: Bybit (often blocked by CORS; fetchJSON will auto-proxy)
     if (!candles.length) {
       try {
-        const url = `${BYBIT_KLINE}?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tf)}&limit=${wantLimit}`;
+        const url = (typeof BYBIT_KLINE === "function")
+          ? BYBIT_KLINE(symbol, tf, wantLimit)
+          : `${BYBIT_KLINE}?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tf)}&limit=${wantLimit}`;
         const by = await fetchJSON(url, { timeoutMs: 11000, retry: 1 });
         const list = by?.result?.list || [];
         candles = list.map(k => ({
