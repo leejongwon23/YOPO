@@ -105,21 +105,11 @@ function ensureRuntimeState(){
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
 }
 
-// ✅ 초기화/리셋/전체취소는 별도 비밀번호(2580) 재확인
-function requirePin(actionLabel){
-  const v = (window.prompt || (()=>null))(`${actionLabel}\n비밀번호(2580)를 입력하세요.`);
-  if(String(v || "") === String(AUTH_PASSWORD)) return true;
-  toast("비밀번호가 틀렸습니다.", "danger");
-  return false;
-}
-
 /* ==========================================================
    ✅ NEW: 운영 버튼 기능 (누적 리셋 / 추적 전체취소 / 전체 초기화)
    ========================================================== */
 function resetStatsUIAndData(){
   ensureRuntimeState();
-
-  if(!requirePin("누적 리셋")) return;
 
   state.history = { total: 0, win: 0 };
   state.closedTrades = [];
@@ -139,8 +129,6 @@ function resetStatsUIAndData(){
 function cancelAllTracking(){
   ensureRuntimeState();
 
-  if(!requirePin("추적 전체 취소")) return;
-
   const n = (state.activePositions || []).length;
   state.activePositions = [];
 
@@ -157,15 +145,11 @@ function cancelAllTracking(){
 function resetAll(){
   ensureRuntimeState();
 
-  if(!requirePin("전체 초기화")) return;
-
   // 진행중 작업 취소
   try{ cancelOperation(); }catch(e){}
 
   // 모달 닫기 + 멀티 상태 초기화
   try{ closeModal(); }catch(e){}
-  try{ closeScanModal && closeScanModal(); }catch(e){}
-  try{ closeBacktestModal && closeBacktestModal(); }catch(e){}
 
   // 누적/추적/스캔/쿨다운까지 싹 초기화
   state.history = { total: 0, win: 0 };
@@ -174,13 +158,7 @@ function resetAll(){
 
   state.lastSignalAt = {};
   state.lastScanResults = [];
-  state.lastScanFullList = [];
-  state.lastScanFullMap = {};
   state.lastScanAt = 0;
-
-  state.lastBacktestSummary = null;
-  state.lastBacktestRows = [];
-  state.lastBacktestAt = 0;
 
   saveState();
 
@@ -301,19 +279,14 @@ function buildForcedTrackFromHold(pos){
 function computeScanScore(item){
   const w = Number(item.winProb ?? 0);
   const e = Number(item.edge ?? 0);
-  const s = Number(item.simAvg ?? 0) / 100;
-  const atr = Number(item.atrPct ?? 0);
-  const adx = Number(item.adx ?? 0);
-  const adxN = clamp((adx - 15) / 25, 0, 1);
-  const srP = Number(item.srPenalty ?? 0); // 0~1 (클수록 불리)
   const penalty = item.isRisk ? 0.06 : 0.0;
-  return (w * 1.05) + (e * 0.75) + (s * 0.45) + (adxN * 0.25) - (atr * 0.12) - (srP * 0.45) - penalty;
+  return (w * 1.0) + (e * 0.7) - penalty;
 }
 
 /* ==========================================================
-   ✅ MULTI (6전략 통합 예측) 상태
+   ✅ MULTI (단/중/장 통합 예측) 상태
    ========================================================== */
-let tempMulti = null;          // { "15":pos, "30":pos, "60":pos, "240":pos, "D":pos, "W":pos }
+let tempMulti = null;          // { "60":pos, "240":pos, "D":pos }
 let selectedMultiPos = null;   // 선택된 pos(또는 forcedPos)
 
 /* ==========================================================
@@ -339,23 +312,17 @@ function updateStrategyCountUI(){
   const el = document.getElementById("tf-counts");
   if(!el) return;
 
-  let c15=0, c30=0, c60 = 0, c240 = 0, cD = 0, cW=0;
+  let c60 = 0, c240 = 0, cD = 0;
   for(const p of (state.activePositions || [])){
-    if(p.tfRaw === "15") c15++;
-    else if(p.tfRaw === "30") c30++;
-    else if(p.tfRaw === "60") c60++;
+    if(p.tfRaw === "60") c60++;
     else if(p.tfRaw === "240") c240++;
-    else if(p.tfRaw === "W") cW++;
     else cD++;
   }
 
   el.innerHTML = `
-    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">15m ${c15}</span>
-    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">30m ${c30}</span>
     <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1H ${c60}</span>
     <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">4H ${c240}</span>
     <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1D ${cD}</span>
-    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1W ${cW}</span>
   `;
 }
 
@@ -567,8 +534,8 @@ function setTF(tf, btn){
   if(btn && btn.classList){
     btn.classList.add("active");
   }else{
-    const found = btns.find(b => String(b.dataset?.tf || "") === String(tf));
-    if(found) found.classList.add("active");
+    const mapIdx = (tf === "60") ? 0 : (tf === "240") ? 1 : 2;
+    if(btns[mapIdx]) btns[mapIdx].classList.add("active");
   }
 
   saveState();
@@ -733,6 +700,16 @@ async function executeAnalysisAll(){
       candlesByTf[tfRaw] = candles;
     }
 
+
+    // ✅ PredBoost: 정밀(단일 코인) 분석에서는 15m(분봉)도 추가 확인
+    try{
+      const c15 = await fetchCandles(symbol, "15", EXTENDED_LIMIT);
+      candlesByTf["15"] = c15;
+    }catch(e){
+      // 15m 실패해도 통합 예측은 계속
+      candlesByTf["15"] = [];
+    }
+
     // 3개 다 한 번에 계산
     const out = {};
     for(const baseTfRaw of ["60","240","D"]){
@@ -786,6 +763,15 @@ async function quickAnalyzeAllAndShow(symbol){
       checkCanceled(opToken);
       const candles = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
       candlesByTf[tfRaw] = candles;
+    }
+
+
+    // ✅ PredBoost: 정밀(단일 코인) 분석에서는 15m(분봉)도 추가 확인
+    try{
+      const c15 = await fetchCandles(symbol, "15", EXTENDED_LIMIT);
+      candlesByTf["15"] = c15;
+    }catch(e){
+      candlesByTf["15"] = [];
     }
 
     const out = {};
@@ -952,7 +938,7 @@ function showResultModal(pos){
 }
 
 /* ==========================================================
-   ✅ 통합 모달: 전략 카드(6개) 보여주고 선택 → 등록
+   ✅ 통합 모달: 전략 카드 3개 보여주고 선택 → 등록
    ========================================================== */
 function showResultModalAll(symbol, posMap){
   ensureRuntimeState();
@@ -975,16 +961,16 @@ function showResultModalAll(symbol, posMap){
   _showMultiArea();
 
   icon.textContent = "🧠";
-  title.textContent = "통합 예측 결과 (6전략)";
+  title.textContent = "통합 예측 결과 (단·중·장)";
   title.style.color = "var(--primary)";
-  subtitle.textContent = `${symbol} | 15m / 30m / 1H / 4H / 1D / 1W`;
+  subtitle.textContent = `${symbol} | 1H / 4H / 1D`;
 
   // 초기 안내
   grid.innerHTML = `
     <div class="mini-box"><small>안내</small><div>위 전략 카드에서 하나를 선택하세요</div></div>
     <div class="mini-box"><small>등록</small><div>선택 후 “추적 등록” 버튼을 누르세요</div></div>
     <div class="mini-box"><small>주의</small><div>HOLD는 원칙상 등록 불가</div></div>
-    <div class="mini-box"><small>예외</small><div>패턴 경고 HOLD 또는 “고확신 HOLD”는 RISK로 허용</div></div>
+    <div class="mini-box"><small>예외</small><div>패턴 경고 HOLD는 RISK로 허용</div></div>
   `;
   content.innerHTML = `
     <b>설명:</b> 단기/중기/장기 결과를 한 번에 보여주고, 너가 원하는 전략을 <b>선택해서</b> 추적 등록하는 방식입니다.
@@ -995,37 +981,10 @@ function showResultModalAll(symbol, posMap){
   chooseBtn.style.opacity = "0.65";
   chooseBtn.textContent = "선택한 전략으로 추적 등록";
 
-  const tfOrder = (typeof STRATEGY_TFS !== "undefined" && Array.isArray(STRATEGY_TFS)) ? STRATEGY_TFS : ["15","30","60","240","D","W"];
-
-  const scoreFromPos = (p) => {
-    const ex = p?.explain || {};
-    return computeScanScore({
-      winProb: ex.winProb,
-      edge: ex.edge,
-      simAvg: ex.simAvg,
-      adx: ex.adx,
-      atrPct: ex.atrPct,
-      trendStrength: ex.trendStrength,
-      srPenalty: ex.srPenalty,
-      isRisk: isPatternBlockedHold(p)
-    });
-  };
-
-  const bestTf = (()=>{
-    let best = null;
-    let bestScore = -1e9;
-    for(const tfRaw of tfOrder){
-      const p = posMap?.[tfRaw];
-      if(!p) continue;
-      const sc = scoreFromPos(p);
-      if(sc > bestScore){ bestScore = sc; best = tfRaw; }
-    }
-    return best;
-  })();
-
+  const tfOrder = ["60","240","D"];
   cards.innerHTML = tfOrder.map(tfRaw => {
     const p = posMap?.[tfRaw] || null;
-    const label = (typeof tfName === "function") ? tfName(tfRaw) : tfRaw;
+    const label = (tfRaw === "60") ? "단기 1H" : (tfRaw === "240") ? "중기 4H" : "장기 1D";
 
     if(!p){
       return `
@@ -1045,10 +1004,6 @@ function showResultModalAll(symbol, posMap){
     const sim = Number.isFinite(ex.simAvg) ? ex.simAvg.toFixed(1) : "-";
     const mtf = ex?.mtf ? `${ex.mtf.agree}/${(ex.mtf.votes||[]).length}(${(ex.mtf.votes||[]).join("/")})` : "-";
     const conf = ex?.conf?.tier ?? "-";
-    const adx = Number.isFinite(ex.adx) ? ex.adx.toFixed(0) : "-";
-    const bb = Number.isFinite(ex.bbPos) ? `${(ex.bbPos*100).toFixed(0)}%` : "-";
-    const st = Number.isFinite(ex.stochRsi) ? `${(ex.stochRsi*100).toFixed(0)}%` : "-";
-    const vwp = Number.isFinite(ex.vwapDistPct) ? `${ex.vwapDistPct.toFixed(2)}%` : "-";
 
     const isHold = (p.type === "HOLD");
     const isLong = (p.type === "LONG");
@@ -1056,9 +1011,7 @@ function showResultModalAll(symbol, posMap){
     const dup = hasActivePosition(p.symbol, p.tfRaw);
 
     const riskHold = isPatternBlockedHold(p);
-    const highHold = isHighConfidenceHold(p);
-    const riskTag = (isHold && (riskHold || highHold)) ? "RISK 가능" : (isHold ? "HOLD" : p.type);
-    const bestTag = (bestTf && tfRaw === bestTf) ? " · AI BEST" : "";
+    const riskTag = (isHold && riskHold) ? "RISK 가능" : (isHold ? "HOLD" : p.type);
 
     return `
       <div class="mini-box" data-tf="${tfRaw}"
@@ -1066,28 +1019,17 @@ function showResultModalAll(symbol, posMap){
            onclick="selectMultiTf('${tfRaw}')">
         <small>${label}</small>
         <div style="color:${color}; font-weight:950;">
-          ${riskTag}${bestTag}${dup ? " (이미 추적중)" : ""}
+          ${riskTag}${dup ? " (이미 추적중)" : ""}
         </div>
         <div style="margin-top:6px; font-size:11px; color:var(--text-sub); font-weight:900; line-height:1.35;">
           성공확률 ${wp}% · 엣지 ${edge}%<br/>
-          유사도 ${sim}% · ADX ${adx} · BB ${bb} · StochRSI ${st}<br/>
-          VWAP ${vwp} · MTF ${mtf} · CONF ${conf}
+          유사도 ${sim}% · MTF ${mtf} · CONF ${conf}
         </div>
       </div>
     `;
   }).join("");
 
   modal.style.display = "flex";
-}
-
-// ✅ HOLD라도 "충분히 높은" 경우엔 기회 제공(과도한 HOLD 방지)
-function isHighConfidenceHold(pos){
-  const ex = (pos && pos.explain) ? pos.explain : {};
-  const wp = Number(ex.winProb || 0);
-  const ed = Number(ex.edge || 0);
-  const sim = Number(ex.simAvg || 0);
-  const tp = Number(ex.tpPct || 0);
-  return (wp >= 0.62) && (ed >= 0.09) && (sim >= 58) && (tp >= 0.75);
 }
 
 /* 카드 선택 */
@@ -1111,14 +1053,10 @@ function selectMultiTf(tfRaw){
   let chosen = p;
   if(p.type === "HOLD"){
     const riskHold = isPatternBlockedHold(p);
-    const softHold = isHighConfidenceHold(p);
-
-    if(riskHold || softHold){
+    if(riskHold){
       const forced = buildForcedTrackFromHold(p);
       if(forced){
         chosen = forced;
-        chosen._forceTrack = true;
-        chosen._forceReason = riskHold ? "RISK_HOLD" : "SOFT_HOLD";
       }else{
         toast("RISK HOLD인데 TP/SL 복원이 실패했습니다.", "warn");
         return;
@@ -1338,6 +1276,11 @@ function trackPositions(symbol, currentPrice){
         pnlExitGross = ((pos.entry - px) / pos.entry) * 100;
       }
       const pnlExit = pnlExitGross - FEE_SAFE;
+
+      // ✅ 오답노트 업데이트(실패 기억) + 서명 기반 패턴 학습
+      if(typeof updateFailureMemoryFromTrade === "function"){
+        updateFailureMemoryFromTrade(pos, win);
+      }
 
       const record = {
         id: Date.now(),
@@ -1562,175 +1505,97 @@ function updateStatsUI(){
 async function autoScanUniverseAll(){
   ensureRuntimeState();
 
-  // 모달 열어두면 진행률이 바로 보임
-  try{ openScanModal && openScanModal(); }catch(e){}
-
   const opToken = beginOperation("SCAN_ALL");
 
-  const startBtn = document.getElementById("scan-start-btn");
-  if(startBtn) startBtn.disabled = true;
-
-  const tfs = (typeof STRATEGY_TFS !== "undefined" && Array.isArray(STRATEGY_TFS)) ? STRATEGY_TFS : ["15","30","60","240","D","W"];
-
-  // 진행률 상태 (모달에서 표시)
-  scanProgress = {
-    running: true,
-    startedAt: Date.now(),
-    totalSteps: (state.universe || []).length * tfs.length,
-    doneSteps: 0,
-    currentSymbol: "-",
-    currentTf: "-",
-    percent: 0
-  };
+  const scanBtn = document.getElementById("scan-all-btn");
+  const status = document.getElementById("scan-status");
+  if(scanBtn) scanBtn.disabled = true;
+  if(status) status.textContent = "통합 스캔 중...";
 
   try{
-    const allMap = {}; // symbol -> { bestTf, best, all:{tf:summary} }
-    const bestList = [];
+    const perTf = { "60": [], "240": [], "D": [] };
 
-    for(let i=0;i<(state.universe||[]).length;i++){
+    for(let i=0;i<state.universe.length;i++){
       checkCanceled(opToken);
 
       const coin = state.universe[i];
-      const sym = coin.s;
-      scanProgress.currentSymbol = sym;
+      if(status) status.textContent = `통합 스캔 중... (${i+1}/${state.universe.length})`;
 
-      // 1) 심볼별 6TF 캔들 확보(최소화)
-      const candlesAll = {};
-      for(const tfRaw of tfs){
-        checkCanceled(opToken);
-        scanProgress.currentTf = tfRaw;
+      try{
+        // 3TF를 한번에 받아서, 단/중/장 각각 점수화
+        const c60  = await fetchCandles(coin.s, "60",  380);
+        const c240 = await fetchCandles(coin.s, "240", 380);
+        const cD   = await fetchCandles(coin.s, "D",   380);
 
-        // TF별 적절한 limit (짧은 TF는 조금 더 길게)
-        const limit = (tfRaw === "15") ? 520 : (tfRaw === "30") ? 480 : (tfRaw === "60") ? 420 : (tfRaw === "240") ? 380 : (tfRaw === "D") ? 360 : 260;
-        try{
-          candlesAll[tfRaw] = await fetchCandles(sym, tfRaw, limit);
-        }catch(e){
-          candlesAll[tfRaw] = [];
+        const candlesByTf = { "60": c60, "240": c240, "D": cD };
+
+        for(const baseTfRaw of ["60","240","D"]){
+          const baseCandles = candlesByTf[baseTfRaw] || [];
+          if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+
+          const pos = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "3TF");
+
+          const riskHold = isPatternBlockedHold(pos);
+          if(pos.type === "HOLD" && !riskHold) continue;
+
+          const ex = pos.explain || {};
+          const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
+
+          const item = {
+            symbol: pos.symbol,
+            tf: pos.tf,
+            tfRaw: pos.tfRaw,
+            type: (pos.type === "HOLD") ? inferredType : pos.type,
+            winProb: ex.winProb,
+            edge: ex.edge,
+            mtfAgree: ex?.mtf?.agree ?? 1,
+            mtfVotes: (ex?.mtf?.votes || []).join("/"),
+            confTier: ex?.conf?.tier ?? "-",
+            isRisk: !!riskHold,
+            multi: true
+          };
+
+          item._score = computeScanScore(item);
+          perTf[baseTfRaw].push(item);
         }
+      }catch(e){}
 
-        // 진행률 갱신
-        scanProgress.doneSteps++;
-        scanProgress.percent = Math.min(100, Math.floor((scanProgress.doneSteps / Math.max(1, scanProgress.totalSteps)) * 100));
-        renderScanModal();
-
-        // 취소 가능 딜레이
-        await sleepCancelable(Math.max(180, SCAN_DELAY_MS - 420), opToken);
-      }
-
-      // 2) TF별 시그널 계산
-      const perTf = {};
-      let best = null;
-      let bestTf = null;
-
-      for(const baseTfRaw of tfs){
-        const set = (typeof getMTFSet2 === "function") ? getMTFSet2(baseTfRaw) : [baseTfRaw];
-        const candlesByTf = {};
-        let ok = true;
-        for(const k of set){
-          const arr = candlesAll[k] || [];
-          candlesByTf[k] = arr;
-          if(arr.length < (SIM_WINDOW + FUTURE_H + 50)) ok = false;
-        }
-        if(!ok){
-          continue;
-        }
-
-        let pos = null;
-        try{
-          pos = buildSignalFromCandles_MTF(sym, baseTfRaw, candlesByTf, "2TF");
-        }catch(e){
-          continue;
-        }
-
-        const ex = pos.explain || {};
-        const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
-        const riskHold = isPatternBlockedHold(pos);
-        const softHold = isHighConfidenceHold(pos);
-        const displayType = (pos.type === "HOLD") ? inferredType : pos.type;
-
-        const summary = {
-          symbol: sym,
-          tfRaw: baseTfRaw,
-          tf: pos.tf,
-          type: displayType,
-          holdOriginal: (pos.type === "HOLD"),
-          isRisk: !!riskHold,
-          isSoft: (!!softHold && !riskHold),
-          winProb: Number(ex.winProb || 0),
-          edge: Number(ex.edge || 0),
-          simAvg: Number(ex.simAvg || 0),
-          adx: Number(ex.adx || 0),
-          atrPct: Number(ex.atrPct || 0),
-          trendStrength: Number(ex.trendStrength || 0),
-          srPenalty: Number(ex.srPenalty || 0),
-          tpPct: Number(ex.tpPct || 0),
-          slPct: Number(ex.slPct || 0)
-        };
-
-        summary._score = computeScanScore(summary);
-        perTf[baseTfRaw] = summary;
-
-        // BEST 선택
-        if(!best || summary._score > best._score){
-          best = summary;
-          bestTf = baseTfRaw;
-        }
-      }
-
-      if(best){
-        bestList.push(best);
-        allMap[sym] = { bestTf, best, all: perTf };
-      }
+      // 취소 가능 딜레이
+      await sleepCancelable(Math.max(300, SCAN_DELAY_MS - 250), opToken);
     }
 
-    // 저장 (BEST 60개)
-    bestList.sort((a,b)=> (b._score||0) - (a._score||0));
-    state.lastScanFull = {
-      createdAt: Date.now(),
-      viewMode: scanViewMode,
-      bestList: bestList.map(x => {
-        const { _score, ...rest } = x;
-        return { ...rest, score: _score };
-      }),
-      allMap
-    };
+    // TF별 상위 2개씩 (총 6개) — “단/중/장 모두 나오게”
+    const pick = [];
+    for(const tfRaw of ["60","240","D"]){
+      perTf[tfRaw].sort((a,b)=> b._score - a._score);
+      pick.push(...perTf[tfRaw].slice(0, 2));
+    }
 
-    // 사이드바 추천은 상위 10개
-    state.lastScanResults = (state.lastScanFull.bestList || []).slice(0, 10).map(x => ({
-      symbol: x.symbol,
-      tf: x.tf,
-      tfRaw: x.tfRaw,
-      type: x.type,
-      winProb: x.winProb,
-      edge: x.edge,
-      mtfAgree: 1,
-      mtfVotes: "",
-      confTier: "",
-      isRisk: !!x.isRisk,
-      multi: true,
-      score: x.score
-    }));
+    // 저장
+    state.lastScanResults = pick.map(x => {
+      const { _score, ...rest } = x;
+      return rest;
+    });
     state.lastScanAt = Date.now();
     saveState();
 
-    scanProgress.running = false;
     renderScanResults();
-    renderScanModal();
-    toast("통합 자동 스캔 완료", "success");
+    if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
   }catch(e){
     if(String(e?.message || "").includes("CANCELLED")){
       toast("통합 자동 스캔이 취소되었습니다.", "warn");
-      scanProgress && (scanProgress.running = false);
-      renderScanModal();
+      if(status) status.textContent = "취소됨";
       return;
     }
     console.error(e);
     toast("통합 자동 스캔 중 오류가 발생했습니다.", "danger");
   }finally{
-    scanProgress && (scanProgress.running = false);
     endOperation(opToken);
-    if(startBtn) startBtn.disabled = false;
-    renderScanModal();
+    if(scanBtn) scanBtn.disabled = false;
+    setTimeout(()=>{
+      const el = document.getElementById("scan-status");
+      if(el) el.textContent = "대기";
+    }, 1500);
   }
 }
 
@@ -1774,475 +1639,6 @@ function renderScanResults(){
       </div>
     `;
   }).join("");
-}
-
-/* ==========================================================
-   ✅ Scan Modal (BEST/ALL + 진행률 표시)
-   ========================================================== */
-let scanViewMode = "BEST";
-let scanProgress = null; // {running,totalSteps,doneSteps,currentSymbol,currentTf,startedAt}
-
-function openScanModal(){
-  const modal = document.getElementById("scan-modal");
-  if(!modal) return;
-  modal.style.display = "flex";
-  renderScanModal();
-}
-
-function closeScanModal(){
-  const modal = document.getElementById("scan-modal");
-  if(!modal) return;
-  modal.style.display = "none";
-}
-
-function setScanView(mode){
-  scanViewMode = (mode === "ALL") ? "ALL" : "BEST";
-  if(state.lastScanFull) state.lastScanFull.view = scanViewMode;
-  renderScanModal();
-}
-
-function refreshScanModal(){
-  renderScanModal();
-}
-
-/* ==========================================================
-   ✅ Backtest Modal (60코인×6전략) + 65% 목표 필터
-   ========================================================== */
-let backtestViewMode = "BEST";
-let backtestProgress = null; // {running,totalSteps,doneSteps,currentSymbol,currentTf,startedAt}
-
-function openBacktestModal(){
-  const el = document.getElementById("backtest-modal");
-  if(el) el.style.display = "flex";
-  renderBacktestModal();
-}
-
-function closeBacktestModal(){
-  const el = document.getElementById("backtest-modal");
-  if(el) el.style.display = "none";
-}
-
-function setBacktestViewMode(mode){
-  backtestViewMode = (mode === "ALL") ? "ALL" : "BEST";
-  if(state.lastBacktestFull) state.lastBacktestFull.view = backtestViewMode;
-  renderBacktestModal();
-}
-
-function refreshBacktestModal(){
-  renderBacktestModal();
-}
-
-function renderBacktestModal(){
-  const status = document.getElementById("backtest-status");
-  const perc = document.getElementById("backtest-perc");
-  const cur = document.getElementById("backtest-current");
-  const barFill = document.getElementById("backtest-bar-fill");
-  const ts = document.getElementById("backtest-ts");
-  const summary = document.getElementById("backtest-summary");
-  const table = document.getElementById("backtest-table");
-
-  const full = state.lastBacktestFull || null;
-  const view = (full && full.view) ? full.view : backtestViewMode;
-
-  // 진행률
-  if(backtestProgress && backtestProgress.running){
-    const p = backtestProgress.totalSteps ? Math.min(100, Math.floor((backtestProgress.doneSteps/backtestProgress.totalSteps)*100)) : 0;
-    if(status) status.textContent = "백테스트 중...";
-    if(perc) perc.textContent = `${p}%`;
-    if(cur) cur.textContent = `${backtestProgress.currentSymbol || ""} ${backtestProgress.currentTf || ""}`.trim();
-    if(barFill) barFill.style.width = `${p}%`;
-  }else{
-    if(status) status.textContent = full ? "완료" : "대기";
-    if(perc) perc.textContent = full ? "100%" : "0%";
-    if(cur) cur.textContent = "";
-    if(barFill) barFill.style.width = full ? "100%" : "0%";
-  }
-
-  if(ts) ts.textContent = full ? `완료: ${fmtKST(full.createdAt)}` : "완료: --";
-
-  // 요약
-  if(summary){
-    if(!full){
-      summary.textContent = "아직 결과가 없습니다. '백테스트 시작'을 눌러주세요.";
-    }else{
-      const sel = full.selected || null;
-      if(sel){
-        summary.innerHTML = `
-          <div><b>AI 최적화 필터</b>: 상위 신호만 선택하여 승률을 끌어올립니다.</div>
-          <div>선택 승률: <b>${(sel.winRate*100).toFixed(1)}%</b> (선택 트레이드 ${sel.trades}개)</div>
-          <div>컷오프 점수(대략): <b>${sel.cutoff.toFixed(3)}</b> 이상</div>
-        `;
-      }else{
-        summary.textContent = "요약 정보를 만들지 못했습니다.";
-      }
-    }
-  }
-
-  // 테이블
-  if(!table) return;
-  if(!full){
-    table.innerHTML = "";
-    return;
-  }
-
-  const rows = (view === "ALL") ? (full.allList || []) : (full.bestList || []);
-  const header = `
-    <table>
-      <thead>
-        <tr>
-          <th>코인</th>
-          <th>전략</th>
-          <th>트레이드</th>
-          <th>승률</th>
-          <th>평균 PnL</th>
-          <th>보기</th>
-        </tr>
-      </thead>
-      <tbody>
-  `;
-
-  const body = rows.map(r => {
-    const winPct = (Number(r.winRate || 0)*100).toFixed(1);
-    const pnl = Number(r.avgPnlPct || 0).toFixed(2);
-    const tfLabel = (typeof tfName === "function") ? tfName(r.tfRaw) : String(r.tfRaw);
-    const bestTag = r.isBestTf ? '<span class="badge best">AI BEST</span>' : "";
-    return `
-      <tr>
-        <td><b>${r.symbol}</b></td>
-        <td>${tfLabel} ${bestTag}</td>
-        <td>${r.trades || 0}</td>
-        <td><b>${winPct}%</b></td>
-        <td>${pnl}%</td>
-        <td><button class="btn sm" onclick="quickAnalyzeAllAndShow('${r.symbol}')">보기</button></td>
-      </tr>
-    `;
-  }).join("");
-
-  const footer = `</tbody></table>`;
-  table.innerHTML = header + body + footer;
-
-  // 버튼 active 표시
-  try{
-    const b1 = document.getElementById("backtest-view-best");
-    const b2 = document.getElementById("backtest-view-all");
-    if(b1 && b2){
-      b1.classList.toggle("active", view === "BEST");
-      b2.classList.toggle("active", view === "ALL");
-    }
-  }catch(e){}
-}
-
-async function runBacktestAll(){
-  ensureRuntimeState();
-  const opToken = beginOperation("BT_ALL");
-
-  openBacktestModal();
-
-  const startBtn = document.getElementById("backtest-start-btn");
-  if(startBtn) startBtn.disabled = true;
-
-  const universe = (state.universe && state.universe.length) ? state.universe.slice(0, 60) : [];
-  const tfs = (typeof STRATEGY_TFS !== "undefined" && Array.isArray(STRATEGY_TFS)) ? STRATEGY_TFS : ["15","30","60","240","D","W"];
-  const futureH = (typeof FUTURE_H !== "undefined") ? FUTURE_H : 8;
-  const simWin = (typeof SIM_WINDOW !== "undefined") ? SIM_WINDOW : 80;
-
-  const limitByTf = (tfRaw)=>{
-    if(tfRaw === "15") return 900;
-    if(tfRaw === "30") return 850;
-    if(tfRaw === "60") return 700;
-    if(tfRaw === "240") return 520;
-    if(tfRaw === "D") return 420;
-    return 260; // W
-  };
-
-  const strideByTf = (tfRaw)=>{
-    if(tfRaw === "15") return 6;
-    if(tfRaw === "30") return 5;
-    if(tfRaw === "60") return 4;
-    if(tfRaw === "240") return 3;
-    return 2; // D/W
-  };
-
-  const samplesPerTf = 10;
-
-  backtestProgress = {
-    running:true,
-    totalSteps: universe.length * tfs.length,
-    doneSteps: 0,
-    currentSymbol: "",
-    currentTf: "",
-    startedAt: Date.now()
-  };
-  renderBacktestModal();
-
-  const allList = [];
-  const bestList = [];
-  const tradePool = []; // {score, win}
-
-  try{
-    for(const symbol of universe){
-      if(isOperationCancelled(opToken)) throw new Error("CANCELLED");
-
-      // 6개 TF 캔들 선 로딩(코인별 6회)
-      const candlesAll = {};
-      for(const tfRaw of tfs){
-        if(isOperationCancelled(opToken)) throw new Error("CANCELLED");
-        try{
-          candlesAll[tfRaw] = await fetchCandles(symbol, tfRaw, limitByTf(tfRaw));
-        }catch(e){
-          candlesAll[tfRaw] = [];
-        }
-        await sleep(30);
-      }
-
-      const perTf = [];
-      for(const tfRaw of tfs){
-        backtestProgress.currentSymbol = symbol;
-        backtestProgress.currentTf = tfRaw;
-
-        backtestProgress.doneSteps += 1;
-        renderBacktestModal();
-
-        const baseFull = candlesAll[tfRaw] || [];
-        if(baseFull.length < (simWin + futureH + 60)){
-          perTf.push({ symbol, tfRaw, trades:0, wins:0, winRate:0, avgPnlPct:0 });
-          continue;
-        }
-
-        // MTF 페어 준비
-        const set2 = (typeof getMTFSet2 === "function") ? getMTFSet2(tfRaw) : [tfRaw];
-        const baseKey = set2[0];
-        const confKey = set2[1] || null;
-        const confFull = confKey ? (candlesAll[confKey] || []) : [];
-
-        let trades = 0;
-        let wins = 0;
-        let pnlSum = 0;
-        let scoreSum = 0;
-
-        const stride = strideByTf(tfRaw);
-        for(let k=1; k<=samplesPerTf; k++){
-          const idx = baseFull.length - futureH - 1 - (k*stride);
-          if(idx < (simWin + 40)) break;
-
-          const entryCandle = baseFull[idx];
-          const baseSlice = baseFull.slice(0, idx+1);
-          const byTf = {};
-          byTf[baseKey] = baseSlice;
-          if(confKey && confFull.length){
-            const confSlice = sliceCandlesUpToTime(confFull, entryCandle.t);
-            byTf[confKey] = confSlice;
-          }
-
-          let pos;
-          try{
-            pos = buildSignalFromCandles_MTF(symbol, tfRaw, byTf, "2TF");
-          }catch(e){
-            continue;
-          }
-
-          // HOLD는 원칙적으로 제외, 단 risk/soft HOLD는 forced로 평가
-          let tradePos = pos;
-          if(pos.type === "HOLD"){
-            if(isPatternBlockedHold(pos) || isHighConfidenceHold(pos)){
-              const forced = buildForcedTrackFromHold(pos);
-              if(forced) tradePos = forced;
-              else continue;
-            }else{
-              continue;
-            }
-          }
-
-          const fut = baseFull.slice(idx+1, idx+1+futureH);
-          const out = simulateOutcome(tradePos, fut);
-
-          if(out && out.resolved){
-            trades += 1;
-            if(out.win) wins += 1;
-            pnlSum += Number(out.pnlPct || 0);
-
-            const ex = tradePos.explain || {};
-            const s = computeScanScore({
-              winProb: ex.winProb,
-              edge: ex.edge,
-              simAvg: ex.simAvg,
-              adx: ex.adx,
-              atrPct: ex.atrPct,
-              srPenalty: ex.srPenalty,
-              trendStrength: ex.trendStrength,
-              isRisk: (isPatternBlockedHold(pos) || tradePos._forceTrack)
-            });
-            scoreSum += s;
-            tradePool.push({ score:s, win:!!out.win });
-          }
-        }
-
-        const winRate = trades ? (wins / trades) : 0;
-        const avgPnlPct = trades ? (pnlSum / trades) : 0;
-        const avgScore = trades ? (scoreSum / trades) : 0;
-
-        perTf.push({ symbol, tfRaw, trades, wins, winRate, avgPnlPct, avgScore });
-      }
-
-      // 코인별 BEST 선택(트레이드가 있는 전략 우선)
-      let best = null;
-      for(const r of perTf){
-        if(!best) best = r;
-        else{
-          // 우선순위: 승률 → 트레이드 수 → avgScore
-          const a = Number(r.winRate || 0);
-          const b = Number(best.winRate || 0);
-          if(a > b + 1e-9) best = r;
-          else if(Math.abs(a-b) < 1e-9){
-            const ta = Number(r.trades || 0);
-            const tb = Number(best.trades || 0);
-            if(ta > tb) best = r;
-            else if(ta === tb && Number(r.avgScore||0) > Number(best.avgScore||0)) best = r;
-          }
-        }
-      }
-
-      for(const r of perTf){
-        allList.push({ ...r, isBestTf: (best && r.tfRaw === best.tfRaw) });
-      }
-      if(best) bestList.push({ ...best, isBestTf:true });
-
-      await sleep(60);
-    }
-
-    // 65% 목표 필터 (tradePool 점수 상위부터 누적 승률 계산)
-    let selected = null;
-    if(tradePool.length){
-      const sorted = tradePool.slice().sort((a,b)=>b.score-a.score);
-      let w = 0;
-      for(let k=1; k<=sorted.length; k++){
-        if(sorted[k-1].win) w += 1;
-        const wr = w/k;
-        if(k >= 25 && wr >= 0.65){
-          selected = { trades:k, winRate:wr, cutoff:sorted[k-1].score };
-        }
-      }
-      // 조건 만족이 없으면 최고 승률 구간을 선택
-      if(!selected){
-        let bestWr = 0;
-        let bestK = 0;
-        let bestCut = sorted[sorted.length-1].score;
-        w = 0;
-        for(let k=1; k<=sorted.length; k++){
-          if(sorted[k-1].win) w += 1;
-          const wr = w/k;
-          if(k >= 20 && wr > bestWr){
-            bestWr = wr;
-            bestK = k;
-            bestCut = sorted[k-1].score;
-          }
-        }
-        selected = { trades: bestK || Math.min(sorted.length, 20), winRate: bestWr || (w/sorted.length), cutoff: bestCut };
-      }
-    }
-
-    state.lastBacktestFull = {
-      createdAt: Date.now(),
-      view: backtestViewMode,
-      bestList: bestList.sort((a,b)=> (b.winRate-a.winRate) || (b.trades-a.trades)),
-      allList: allList.sort((a,b)=> (b.winRate-a.winRate) || (b.trades-a.trades)),
-      selected
-    };
-
-    saveState();
-    renderBacktestModal();
-
-  }catch(err){
-    if(String(err && err.message) === "CANCELLED"){
-      toast("백테스트가 취소되었습니다.", "warn");
-    }else{
-      console.error(err);
-      toast("백테스트 중 오류가 발생했습니다.", "danger");
-    }
-  }finally{
-    backtestProgress = null;
-    renderBacktestModal();
-    if(startBtn) startBtn.disabled = false;
-    endOperation();
-  }
-}
-
-function renderScanModal(){
-  ensureRuntimeState();
-
-  const tsEl = document.getElementById("scan-ts");
-  const tableEl = document.getElementById("scan-table");
-  const barEl = document.getElementById("scan-bar-fill");
-  const curEl = document.getElementById("scan-current");
-  const progEl = document.getElementById("scan-progress");
-
-  // 진행률
-  if(scanProgress && scanProgress.running){
-    const pct = scanProgress.totalSteps ? Math.min(100, Math.floor((scanProgress.doneSteps/scanProgress.totalSteps)*100)) : 0;
-    if(barEl) barEl.style.width = `${pct}%`;
-    if(curEl) curEl.textContent = `${scanProgress.currentSymbol || ""} ${scanProgress.currentTf || ""}`.trim();
-    if(progEl) progEl.textContent = `${scanProgress.doneSteps}/${scanProgress.totalSteps} (${pct}%)`;
-  }else{
-    if(barEl) barEl.style.width = "0%";
-    if(curEl) curEl.textContent = "-";
-    if(progEl) progEl.textContent = "0/0 (0%)";
-  }
-
-  const full = state.lastScanFull || null;
-  if(tsEl){
-    tsEl.textContent = full && full.createdAt ? `업데이트: ${new Date(full.createdAt).toLocaleString()}` : "업데이트: --";
-  }
-
-  if(!tableEl) return;
-  if(!full || !Array.isArray(full.bestList) || !full.bestList.length){
-    tableEl.innerHTML = `<div style="font-size:12px; color:var(--text-sub); font-weight:900; padding:12px 6px;">아직 스캔 결과가 없습니다. 상단의 “60코인 전체 스캔시작”을 눌러주세요.</div>`;
-    return;
-  }
-
-  const view = full.view || scanViewMode;
-  const rows = (view === "ALL" && Array.isArray(full.allList) && full.allList.length) ? full.allList : full.bestList;
-
-  tableEl.innerHTML = `
-    <table class="scan-table">
-      <thead>
-        <tr>
-          <th>코인</th>
-          <th>전략</th>
-          <th>방향</th>
-          <th>점수</th>
-          <th>확률</th>
-          <th>엣지</th>
-          <th>보기</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map(r => {
-          const sym = r.symbol;
-          const tf = r.tf || r.tfRaw || "-";
-          const typ = r.type || "HOLD";
-          const score = Number(r.score || 0);
-          const wp = Number(r.winProb || 0);
-          const ed = Number(r.edge || 0);
-
-          const pillClass = (typ === "LONG") ? "long" : (typ === "SHORT") ? "short" : "hold";
-          const riskTag = r.isRisk ? ` <span style="color:var(--danger); font-weight:950;">RISK</span>` : "";
-          const click = `quickAnalyzeAllAndShow('${sym}')`;
-
-          return `
-            <tr>
-              <td><b>${sym.replace("USDT","")}</b></td>
-              <td>${tf}${(r.isBestTf ? " <span class=\"tag-best\">AI BEST</span>" : "")}</td>
-              <td><span class="pill ${pillClass}">${typ}</span>${riskTag}</td>
-              <td>${score.toFixed(1)}</td>
-              <td>${(wp*100).toFixed(1)}%</td>
-              <td>${(ed*100).toFixed(1)}%</td>
-              <td><button class="btn small" onclick="${click}">보기</button></td>
-            </tr>
-          `;
-        }).join("")}
-      </tbody>
-    </table>
-  `;
 }
 
 /* ==========================================================
@@ -2455,898 +1851,3 @@ window.cancelOperation = cancelOperation;
 window.resetStatsUIAndData = resetStatsUIAndData;
 window.cancelAllTracking = cancelAllTracking;
 window.resetAll = resetAll;
-
-
-
-/* =====================================================================
-   ✅ YOPO AI PRO — v3 + predboost "FULL MERGE" OVERRIDES (2026-01-24)
-   - Scan/Backtest 모달 DOM id 불일치 수정(버튼 '무반응' 근본 원인)
-   - 스캔 진행상황(60코인×6전략) 모달 안에서 실시간 표시
-   - 새로고침은 "재실행"이 아니라 "표시 갱신"만 수행
-   - 보기(예측 모달) z-index 충돌 방지(스타일에서 scan/bt < result)
-   - 6전략 통합 예측(15m/30m/1H/4H/1D/1W) + predboost 지표 기반 점수 사용
-   - 전체 초기화 시 스캔/백테스트 결과까지 함께 초기화
-   - PC↔모바일 동기화(내보내기/가져오기 코드)
-===================================================================== */
-(function(){
-  const $ = (id)=>document.getElementById(id);
-
-  function safeText(el, text){
-    if(!el) return;
-    el.textContent = text;
-  }
-
-  function fmtTs(ts){
-    try{
-      if(!ts) return "없음";
-      const d = new Date(ts);
-      const y = d.getFullYear();
-      const m = String(d.getMonth()+1).padStart(2,"0");
-      const da = String(d.getDate()).padStart(2,"0");
-      const hh = String(d.getHours()).padStart(2,"0");
-      const mm = String(d.getMinutes()).padStart(2,"0");
-      return `${y}-${m}-${da} ${hh}:${mm}`;
-    }catch(e){
-      return "없음";
-    }
-  }
-
-  function tfLabelSafe(tfRaw){
-    try{
-      if(typeof tfToLabel === "function") return tfToLabel(tfRaw);
-    }catch(e){}
-    return String(tfRaw);
-  }
-
-  /* -----------------------------
-     Scan Modal (DOM 정합)
-  ----------------------------- */
-  window.openScanModal = function(){
-    const m = $("scan-modal");
-    if(!m) return;
-    m.style.display = "flex";
-    try{ window.refreshScanModal(); }catch(e){}
-  };
-
-  window.closeScanModal = function(){
-    const m = $("scan-modal");
-    if(!m) return;
-    m.style.display = "none";
-  };
-
-  window.refreshScanModal = function(){
-    try{ renderScanModal(); }catch(e){ console.error("refreshScanModal error:", e); }
-  };
-
-  window.toggleScanView = function(){
-    try{
-      const next = (typeof scanViewMode === "string" && scanViewMode === "BEST") ? "ALL" : "BEST";
-      window.setScanView(next);
-    }catch(e){}
-  };
-
-  window.setScanView = function(mode){
-    try{
-      if(mode !== "BEST" && mode !== "ALL") mode = "BEST";
-      scanViewMode = mode; // 기존 전역 변수 사용
-      if(state && typeof state === "object"){
-        state.lastScanFull = state.lastScanFull || {};
-        state.lastScanFull.viewMode = mode;
-        try{ saveState(); }catch(e){}
-      }
-      renderScanModal();
-    }catch(e){ console.error("setScanView error:", e); }
-  };
-
-  function renderScanModal(){
-    const sub = $("scan-modal-sub");
-    if(sub){
-      const ts = state?.lastScanFull?.ts || state?.lastScanAt || 0;
-      sub.textContent = `최근 스캔: ${fmtTs(ts)}`;
-    }
-
-    // 진행상황
-    const txt = $("scan-progress-text");
-    const fill = $("scan-bar-fill");
-    const p = (scanProgress && Number.isFinite(scanProgress.percent)) ? scanProgress.percent : 0;
-    if(fill) fill.style.width = `${Math.max(0, Math.min(100, Math.round(p*100)))}%`;
-
-    if(txt){
-      const running = !!scanProgress?.running;
-      const step = Number(scanProgress?.step || 0);
-      const total = Number(scanProgress?.total || 0);
-      const now = String(scanProgress?.current || "");
-      if(running){
-        txt.textContent = `진행중: ${step}/${total} • ${now}`;
-      }else{
-        const has = (state?.lastScanFull?.bestRows?.length || 0) + (state?.lastScanFull?.allRows?.length || 0) > 0;
-        txt.textContent = has ? "완료" : "대기";
-      }
-    }
-
-    // 보기 토글 버튼 라벨
-    const toggleBtn = $("scan-toggle-view");
-    if(toggleBtn){
-      toggleBtn.textContent = (scanViewMode === "ALL") ? "ALL 보기" : "BEST 보기";
-    }
-
-    const wrap = $("scan-table");
-    if(!wrap) return;
-
-    const view = (scanViewMode === "ALL") ? "ALL" : "BEST";
-    const full = state?.lastScanFull || null;
-    const rows = (view === "ALL") ? (full?.allRows || []) : (full?.bestRows || []);
-    const hasRows = Array.isArray(rows) && rows.length > 0;
-
-    if(!hasRows){
-      wrap.innerHTML = `<div style="padding:14px; font-weight:950; color:var(--text-sub);">스캔 결과가 없습니다. (60코인 전체 스캔 시작을 눌러주세요)</div>`;
-      return;
-    }
-
-    const head = `
-      <div class="table-wrap">
-      <table class="scan-table">
-        <thead>
-          <tr>
-            <th>코인</th>
-            <th>전략</th>
-            <th>예측</th>
-            <th>Score</th>
-            <th>성공률(추정)</th>
-            <th>TP/SL</th>
-            <th>작업</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
-
-    const body = rows.map(r=>{
-      const sym = r.symbol;
-      const tf = r.tfRaw;
-      const type = r.type || "HOLD";
-      const score = Number.isFinite(r.score) ? r.score.toFixed(3) : "0.000";
-      const win = Number.isFinite(r.winProb) ? `${Math.round(r.winProb*100)}%` : "-";
-      const tpsl = (Number.isFinite(r.tpPct) && Number.isFinite(r.slPct))
-        ? `+${r.tpPct.toFixed(2)}% / -${r.slPct.toFixed(2)}%`
-        : "-";
-
-      const bestTag = r.isBest ? `<span class="tag-best">BEST</span>` : "";
-
-      return `
-        <tr>
-          <td style="font-weight:950;">${sym}</td>
-          <td>${tfLabelSafe(tf)}${bestTag}</td>
-          <td style="font-weight:950;">${type}</td>
-          <td>${score}</td>
-          <td>${win}</td>
-          <td>${tpsl}</td>
-          <td>
-            <button class="btn small" onclick="openPredictionFromScan('${sym}','${tf}')">보기</button>
-            <button class="btn small" style="margin-left:6px;" onclick="trackFromScan('${sym}','${tf}')">추적</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-
-    const tail = `</tbody></table></div>`;
-    wrap.innerHTML = head + body + tail;
-  }
-
-  // 스캔 테이블: 보기(예측 모달) / 추적
-  window.openPredictionFromScan = function(symbol, tfRaw){
-    try{
-      const full = state?.lastScanFull;
-      const all = full?.allRows || [];
-      const row = all.find(x => x.symbol === symbol && String(x.tfRaw) === String(tfRaw));
-      if(!row){
-        toast("해당 스캔 결과를 찾지 못했습니다.", "warn");
-        return;
-      }
-      // 결과 모달은 scan/bt보다 z-index가 높게 설정됨(styles.css)
-      if(typeof showResultModal === "function"){
-        showResultModal(symbol, row);
-      }else{
-        toast("예측 모달 함수(showResultModal)가 없습니다.", "danger");
-      }
-    }catch(e){
-      console.error(e);
-      toast("보기 실행 중 오류", "danger");
-    }
-  };
-
-  window.trackFromScan = async function(symbol, tfRaw){
-    try{
-      const full = state?.lastScanFull;
-      const all = full?.allRows || [];
-      const row = all.find(x => x.symbol === symbol && String(x.tfRaw) === String(tfRaw));
-      if(!row){
-        toast("해당 스캔 결과를 찾지 못했습니다.", "warn");
-        return;
-      }
-      // 스캔결과가 HOLD라도 기회를 '완전 차단'하지 않기 위해:
-      // - HOLD인 경우에도 확률이 존재하면 forced track로 변환(기회 유지)
-      let pos = row;
-      if(row.type === "HOLD" && typeof buildForcedTrackFromHold === "function"){
-        const forced = buildForcedTrackFromHold(row);
-        if(forced) pos = forced;
-      }
-      if(typeof startTrackingPosition === "function"){
-        startTrackingPosition(pos);
-        toast(`추적 시작: ${symbol} (${tfLabelSafe(tfRaw)})`, "success");
-      }else{
-        toast("추적 함수(startTrackingPosition)가 없습니다.", "danger");
-      }
-    }catch(e){
-      console.error(e);
-      toast("추적 실행 중 오류", "danger");
-    }
-  };
-
-  /* -----------------------------
-     Backtest Modal (DOM 정합)
-  ----------------------------- */
-  window.openBacktestModal = function(){
-    const m = $("bt-modal");
-    if(!m) return;
-    m.style.display = "flex";
-    try{ window.refreshBacktestModal(); }catch(e){}
-  };
-
-  window.closeBacktestModal = function(){
-    const m = $("bt-modal");
-    if(!m) return;
-    m.style.display = "none";
-  };
-
-  window.refreshBacktestModal = function(){
-    try{ renderBacktestModal(); }catch(e){ console.error("refreshBacktestModal error:", e); }
-  };
-
-  window.toggleBacktestView = function(){
-    try{
-      const next = (typeof backtestViewMode === "string" && backtestViewMode === "BEST") ? "ALL" : "BEST";
-      window.setBacktestView(next);
-    }catch(e){}
-  };
-
-  window.setBacktestView = function(mode){
-    try{
-      if(mode !== "BEST" && mode !== "ALL") mode = "BEST";
-      backtestViewMode = mode;
-      if(state && typeof state === "object"){
-        state.lastBacktestFull = state.lastBacktestFull || {};
-        state.lastBacktestFull.viewMode = mode;
-        try{ saveState(); }catch(e){}
-      }
-      renderBacktestModal();
-    }catch(e){ console.error("setBacktestView error:", e); }
-  };
-
-  function renderBacktestModal(){
-    const sub = $("bt-modal-sub");
-    if(sub){
-      const ts = state?.lastBacktestFull?.ts || state?.lastBacktestAt || 0;
-      sub.textContent = `최근 백테스트: ${fmtTs(ts)}`;
-    }
-
-    const txt = $("bt-progress-text");
-    const fill = $("bt-bar-fill");
-    const p = (backtestProgress && Number.isFinite(backtestProgress.percent)) ? backtestProgress.percent : 0;
-    if(fill) fill.style.width = `${Math.max(0, Math.min(100, Math.round(p*100)))}%`;
-
-    if(txt){
-      const running = !!backtestProgress?.running;
-      const step = Number(backtestProgress?.step || 0);
-      const total = Number(backtestProgress?.total || 0);
-      const now = String(backtestProgress?.current || "");
-      if(running){
-        txt.textContent = `진행중: ${step}/${total} • ${now}`;
-      }else{
-        const has = (state?.lastBacktestFull?.rows?.length || 0) > 0;
-        txt.textContent = has ? "완료" : "대기";
-      }
-    }
-
-    const toggleBtn = $("bt-toggle-view");
-    if(toggleBtn){
-      toggleBtn.textContent = (backtestViewMode === "ALL") ? "ALL 보기" : "BEST 보기";
-    }
-
-    const sum = $("bt-summary");
-    const tbl = $("bt-table");
-    if(!sum || !tbl) return;
-
-    const view = (backtestViewMode === "ALL") ? "ALL" : "BEST";
-    const full = state?.lastBacktestFull || null;
-    const rowsAll = full?.rows || [];
-    const rows = (view === "ALL") ? rowsAll : rowsAll.filter(x=>x.isBest);
-
-    // 요약
-    if(full?.summary){
-      const s = full.summary;
-      sum.innerHTML = `
-        <div class="bt-box">
-          <div class="bt-k">선택 구간(확신 높은 구간)</div>
-          <div class="bt-v">${Math.round((s.selectedWinRate || 0)*100)}% <span class="badge best">목표 65%</span></div>
-          <div class="bt-sub">거래수: ${s.selectedTrades || 0} / 전체 후보: ${s.rawTrades || 0}</div>
-        </div>
-        <div class="bt-box">
-          <div class="bt-k">전체(참고)</div>
-          <div class="bt-v">${Math.round((s.rawWinRate || 0)*100)}%</div>
-          <div class="bt-sub">확신 필터 없이 계산한 원본 결과</div>
-        </div>
-        <div class="bt-box">
-          <div class="bt-k">BEST 전략 개수</div>
-          <div class="bt-v">${s.bestCount || 0}개</div>
-          <div class="bt-sub">코인별 가장 좋은 전략(6개 중)</div>
-        </div>
-      `;
-    }else{
-      sum.innerHTML = `<div class="bt-box"><div class="bt-k">요약</div><div class="bt-v">-</div><div class="bt-sub">백테스트를 실행하세요.</div></div>`;
-    }
-
-    // 테이블
-    if(!Array.isArray(rows) || rows.length === 0){
-      tbl.innerHTML = `<div style="padding:14px; font-weight:950; color:var(--text-sub);">표시할 결과가 없습니다.</div>`;
-      return;
-    }
-
-    tbl.innerHTML = `
-      <div class="table-wrap">
-      <table class="bt-table">
-        <thead>
-          <tr>
-            <th>코인</th>
-            <th>전략</th>
-            <th>Score</th>
-            <th>예측</th>
-            <th>승률(추정)</th>
-            <th>작업</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map(r=>{
-            const best = r.isBest ? `<span class="badge best">BEST</span>` : "";
-            const score = Number.isFinite(r.score) ? r.score.toFixed(3) : "0.000";
-            const win = Number.isFinite(r.winProb) ? `${Math.round(r.winProb*100)}%` : "-";
-            return `
-              <tr>
-                <td style="font-weight:950;">${r.symbol}</td>
-                <td>${tfLabelSafe(r.tfRaw)}${best}</td>
-                <td>${score}</td>
-                <td style="font-weight:950;">${r.type || "HOLD"}</td>
-                <td>${win}</td>
-                <td>
-                  <button class="btn small" onclick="openPredictionFromBacktest('${r.symbol}','${r.tfRaw}')">보기</button>
-                </td>
-              </tr>
-            `;
-          }).join("")}
-        </tbody>
-      </table>
-      </div>
-    `;
-  }
-
-  window.openPredictionFromBacktest = function(symbol, tfRaw){
-    try{
-      const full = state?.lastBacktestFull;
-      const rows = full?.rows || [];
-      const row = rows.find(x => x.symbol === symbol && String(x.tfRaw) === String(tfRaw));
-      if(!row){
-        toast("해당 백테스트 결과를 찾지 못했습니다.", "warn");
-        return;
-      }
-      if(typeof showResultModal === "function"){
-        showResultModal(symbol, row);
-      }else{
-        toast("예측 모달 함수(showResultModal)가 없습니다.", "danger");
-      }
-    }catch(e){
-      console.error(e);
-      toast("보기 실행 중 오류", "danger");
-    }
-  };
-
-  /* -----------------------------
-     ✅ 통합 예측(6전략) — predboost 포함
-     - 60코인 전체 자동스캔은 autoScanUniverseAll
-     - 여기 버튼(통합 예측)은 '현재 선택된 코인 1개'를 6전략으로 동시에 평가
-  ----------------------------- */
-  window.executeAnalysisAll = async function(){
-    ensureRuntimeState();
-
-    const btn = $("analyze-btn");
-    if(btn){
-      btn.disabled = true;
-      btn.textContent = "통합 예측중...";
-    }
-
-    try{
-      const symbol = state.symbol || "BTCUSDT";
-      const tfs = (Array.isArray(window.STRATEGY_TFS) && window.STRATEGY_TFS.length) ? window.STRATEGY_TFS : ["15","30","60","240","D","W"];
-
-      // 필요한 TF들 한번에 모아서 fetch (중복 제거)
-      const need = new Set();
-      // 60은 3TF(60/240/D)로 강화
-      tfs.forEach(tf=>{
-        const t = String(tf);
-        if(t === "60"){
-          ["60","240","D"].forEach(x=>need.add(x));
-        }else if(t === "240"){
-          ["240","D"].forEach(x=>need.add(x));
-        }else if(t === "D"){
-          ["D","W"].forEach(x=>need.add(x));
-        }else if(t === "W"){
-          ["W","D"].forEach(x=>need.add(x));
-        }else if(t === "15"){
-          ["15","30"].forEach(x=>need.add(x));
-        }else if(t === "30"){
-          ["30","60"].forEach(x=>need.add(x));
-        }else{
-          need.add(t);
-        }
-      });
-
-      const limitFor = (tfRaw)=>{
-        const t = String(tfRaw);
-        if(t === "15") return 520;
-        if(t === "30") return 520;
-        if(t === "60") return 420;
-        if(t === "240") return 360;
-        if(t === "D") return 260;
-        if(t === "W") return 260;
-        return 320;
-      };
-
-      const candlesAll = {};
-      for(const tf of Array.from(need)){
-        candlesAll[tf] = await fetchCandles(symbol, tf, limitFor(tf));
-      }
-
-      const posMap = {};
-      for(const tfRaw of tfs){
-        const t = String(tfRaw);
-        let byTf = {};
-        let mode = "2TF";
-        if(t === "60"){
-          mode = "3TF";
-          byTf = { "60": candlesAll["60"], "240": candlesAll["240"], "D": candlesAll["D"] };
-        }else if(t === "240"){
-          byTf = { "240": candlesAll["240"], "D": candlesAll["D"] };
-        }else if(t === "D"){
-          byTf = { "D": candlesAll["D"], "W": candlesAll["W"] };
-        }else if(t === "W"){
-          byTf = { "W": candlesAll["W"], "D": candlesAll["D"] };
-        }else if(t === "15"){
-          byTf = { "15": candlesAll["15"], "30": candlesAll["30"] };
-        }else if(t === "30"){
-          byTf = { "30": candlesAll["30"], "60": candlesAll["60"] };
-        }else{
-          byTf = { [t]: candlesAll[t] };
-        }
-
-        let sig = null;
-        try{
-          sig = buildSignalFromCandles_MTF(symbol, t, byTf, mode);
-        }catch(e){
-          console.error("buildSignalFromCandles_MTF error:", e);
-        }
-        if(sig) posMap[t] = sig;
-      }
-
-      if(typeof showResultModalAll === "function"){
-        showResultModalAll(symbol, posMap);
-      }else{
-        toast("통합 예측 모달(showResultModalAll)이 없습니다.", "danger");
-      }
-
-    }catch(e){
-      console.error(e);
-      toast("통합 예측 중 오류가 발생했습니다.", "danger");
-    }finally{
-      if(btn){
-        btn.disabled = false;
-        btn.textContent = "통합 예측(6전략) 실행";
-      }
-    }
-  };
-
-  // "AI 추천 60 (즉시 스캔)" 버튼은 실사용상 autoScanUniverseAll로 통일
-  window.quickAnalyzeAllAndShow = async function(){
-    try{
-      if(typeof refreshUniverseAndGlobals === "function"){
-        await refreshUniverseAndGlobals();
-      }
-      openScanModal();
-      await autoScanUniverseAll();
-    }catch(e){
-      console.error(e);
-      toast("즉시 스캔 중 오류", "danger");
-    }
-  };
-
-  /* -----------------------------
-     ✅ Backtest 실행 (60코인×6전략) — 오류 없는 버전으로 재정의
-     - 진행상황은 bt-modal 내부에 표시
-     - 승률은 "확신 점수 상위 구간 자동 선택"으로 65% 목표 설계
-  ----------------------------- */
-  window.runBacktestAll = async function(){
-    ensureRuntimeState();
-
-    openBacktestModal();
-
-    const startBtn = $("bt-start-btn");
-    if(startBtn){
-      startBtn.disabled = true;
-      startBtn.textContent = "백테스트 진행중...";
-    }
-
-    const opToken = beginOperation();
-
-    try{
-      const tfs = (Array.isArray(window.STRATEGY_TFS) && window.STRATEGY_TFS.length) ? window.STRATEGY_TFS : ["15","30","60","240","D","W"];
-      const symbols = (state.universe || []).map(x=>x.s).slice(0,60);
-
-      backtestProgress = { running:true, percent:0, step:0, total: symbols.length * tfs.length, current:"시작..." };
-      renderBacktestModal();
-
-      const limitFor = (tfRaw)=>{
-        const t = String(tfRaw);
-        if(t === "15") return 520;
-        if(t === "30") return 520;
-        if(t === "60") return 420;
-        if(t === "240") return 360;
-        if(t === "D") return 260;
-        if(t === "W") return 260;
-        return 320;
-      };
-
-      const allRows = [];
-      const bestByCoin = {};
-
-      let step = 0;
-      const total = symbols.length * tfs.length;
-
-      for(const sym of symbols){
-        const candlesCache = {};
-        for(const tfRaw of tfs){
-          checkCanceled(opToken);
-          step += 1;
-
-          backtestProgress.step = step;
-          backtestProgress.total = total;
-          backtestProgress.percent = step / total;
-          backtestProgress.current = `${sym} • ${tfLabelSafe(tfRaw)}`;
-          renderBacktestModal();
-
-          try{
-            // 필요한 TF 확보(각 coin별 캐시)
-            const t = String(tfRaw);
-            const need = new Set();
-            if(t === "60"){ ["60","240","D"].forEach(x=>need.add(x)); }
-            else if(t === "240"){ ["240","D"].forEach(x=>need.add(x)); }
-            else if(t === "D"){ ["D","W"].forEach(x=>need.add(x)); }
-            else if(t === "W"){ ["W","D"].forEach(x=>need.add(x)); }
-            else if(t === "15"){ ["15","30"].forEach(x=>need.add(x)); }
-            else if(t === "30"){ ["30","60"].forEach(x=>need.add(x)); }
-            else need.add(t);
-
-            for(const tf of Array.from(need)){
-              if(!candlesCache[tf]){
-                candlesCache[tf] = await fetchCandles(sym, tf, limitFor(tf));
-                await sleepCancelable(20, opToken);
-              }
-            }
-
-            let byTf = {};
-            let mode = "2TF";
-            if(t === "60"){
-              mode = "3TF";
-              byTf = { "60": candlesCache["60"], "240": candlesCache["240"], "D": candlesCache["D"] };
-            }else if(t === "240"){
-              byTf = { "240": candlesCache["240"], "D": candlesCache["D"] };
-            }else if(t === "D"){
-              byTf = { "D": candlesCache["D"], "W": candlesCache["W"] };
-            }else if(t === "W"){
-              byTf = { "W": candlesCache["W"], "D": candlesCache["D"] };
-            }else if(t === "15"){
-              byTf = { "15": candlesCache["15"], "30": candlesCache["30"] };
-            }else if(t === "30"){
-              byTf = { "30": candlesCache["30"], "60": candlesCache["60"] };
-            }
-
-            const sig = buildSignalFromCandles_MTF(sym, t, byTf, mode);
-            const score = Number(sig?.explain?.score ?? sig?.score ?? 0);
-            const winProb = Number(sig?.explain?.winProb ?? sig?.winProb ?? 0);
-            const type = sig?.type || "HOLD";
-
-            const row = {
-              symbol: sym,
-              tfRaw: t,
-              type,
-              score,
-              winProb,
-              isBest:false,
-              entry: sig?.entry ?? null,
-              tp: sig?.tp ?? null,
-              sl: sig?.sl ?? null,
-              tpPct: sig?.tpPct ?? null,
-              slPct: sig?.slPct ?? null,
-              explain: sig?.explain || {}
-            };
-
-            allRows.push(row);
-
-            // BEST 선정: winProb 우선, 동률이면 score
-            const cur = bestByCoin[sym];
-            if(!cur){
-              bestByCoin[sym] = row;
-            }else{
-              const a = Number(cur.winProb || 0);
-              const b = Number(row.winProb || 0);
-              if(b > a + 1e-9) bestByCoin[sym] = row;
-              else if(Math.abs(b - a) < 1e-9 && Number(row.score||0) > Number(cur.score||0)) bestByCoin[sym] = row;
-            }
-
-          }catch(e){
-            console.error("backtest step error:", e);
-          }
-        }
-      }
-
-      // BEST 플래그 반영
-      Object.keys(bestByCoin).forEach(sym=>{
-        const best = bestByCoin[sym];
-        if(best) best.isBest = true;
-      });
-
-      // ✅ 65% 목표: "확신 점수 상위 구간" 자동 선택
-      const rawCandidates = allRows.filter(r => (r.type === "LONG" || r.type === "SHORT") && Number.isFinite(r.winProb));
-      rawCandidates.sort((a,b)=>{
-        const aw = Number(a.winProb||0), bw = Number(b.winProb||0);
-        if(bw !== aw) return bw - aw;
-        return Number(b.score||0) - Number(a.score||0);
-      });
-
-      // 선택 개수를 늘리며 목표 승률(추정) 도달하려고 시도
-      const TARGET = 0.65;
-      let selected = [];
-      let selWin = 0;
-      for(let n=10; n<=rawCandidates.length; n+=5){
-        const slice = rawCandidates.slice(0,n);
-        const avg = slice.reduce((s,x)=>s+Number(x.winProb||0),0) / Math.max(1, slice.length);
-        selected = slice;
-        selWin = avg;
-        if(avg >= TARGET) break;
-      }
-
-      const rawWin = rawCandidates.reduce((s,x)=>s+Number(x.winProb||0),0) / Math.max(1, rawCandidates.length);
-
-      state.lastBacktestFull = {
-        ts: Date.now(),
-        viewMode: backtestViewMode || "BEST",
-        rows: allRows,
-        summary: {
-          target: TARGET,
-          selectedWinRate: selWin,
-          selectedTrades: selected.length,
-          rawWinRate: rawWin,
-          rawTrades: rawCandidates.length,
-          bestCount: Object.keys(bestByCoin).length
-        }
-      };
-      state.lastBacktestAt = state.lastBacktestFull.ts;
-
-      saveState();
-      renderBacktestModal();
-      toast("통합 백테스트 완료", "success");
-
-    }catch(e){
-      if(String(e?.message || "").includes("cancelled")){
-        toast("백테스트가 취소되었습니다.", "warn");
-      }else{
-        console.error(e);
-        toast("백테스트 중 오류가 발생했습니다.", "danger");
-      }
-    }finally{
-      backtestProgress = { running:false, percent:0, step:0, total:0, current:"" };
-      try{ endOperation(opToken); }catch(e){}
-      try{ renderBacktestModal(); }catch(e){}
-      if(startBtn){
-        startBtn.disabled = false;
-        startBtn.textContent = "60코인 전체 백테스트 시작";
-      }
-    }
-  };
-
-  /* -----------------------------
-     ✅ 전체 초기화: 스캔/백테스트 포함 (DOM/키 정합)
-  ----------------------------- */
-  window.resetAll = async function(){
-    ensureRuntimeState();
-    if(!requirePin("전체 초기화")) return;
-
-    try{ cancelOperation(); }catch(e){}
-    try{ closeModal(); }catch(e){}
-    try{ closeScanModal(); }catch(e){}
-    try{ closeBacktestModal(); }catch(e){}
-    try{ closeSyncModal(); }catch(e){}
-
-    state.history = { total: 0, win: 0 };
-    state.closedTrades = [];
-    state.activePositions = [];
-    state.lastSignalAt = {};
-    state.lastScanResults = [];
-    state.lastScanAt = 0;
-    state.lastScanFull = { ts:0, viewMode:"BEST", bestRows:[], allRows:[] };
-    state.lastBacktestAt = 0;
-    state.lastBacktestFull = { ts:0, viewMode:"BEST", rows:[], summary:null };
-
-    saveState();
-
-    try{ renderTrackingList(); }catch(e){}
-    try{ renderClosedTrades(); }catch(e){}
-    try{ renderScanResults(); }catch(e){}
-    try{ updateStatsUI(); }catch(e){}
-    try{ updateStrategyCountUI(); }catch(e){}
-    try{ updateCountdownTexts(); }catch(e){}
-    try{ renderScanModal(); }catch(e){}
-    try{ renderBacktestModal(); }catch(e){}
-
-    toast("전체 초기화 완료 (누적/추적/스캔/백테스트)", "success");
-  };
-
-  /* -----------------------------
-     ✅ PC↔모바일 동기화 (내보내기/가져오기)
-  ----------------------------- */
-  window.openSyncModal = function(){
-    const m = $("sync-modal");
-    if(!m) return;
-    m.style.display = "flex";
-    try{ exportSyncCode(); }catch(e){}
-  };
-
-  window.closeSyncModal = function(){
-    const m = $("sync-modal");
-    if(!m) return;
-    m.style.display = "none";
-  };
-
-  function b64EncodeUnicode(str){
-    try{
-      return btoa(unescape(encodeURIComponent(str)));
-    }catch(e){
-      // fallback
-      return btoa(str);
-    }
-  }
-  function b64DecodeUnicode(str){
-    try{
-      return decodeURIComponent(escape(atob(str)));
-    }catch(e){
-      return atob(str);
-    }
-  }
-
-  window.exportSyncCode = function(){
-    ensureRuntimeState();
-    const ta = $("sync-export");
-    if(!ta) return;
-
-    const payload = {
-      v: 1,
-      ts: Date.now(),
-      state: state
-    };
-    const json = JSON.stringify(payload);
-    const code = b64EncodeUnicode(json);
-    ta.value = code;
-    toast("내보내기 코드 생성 완료", "success");
-  };
-
-  window.copySyncCode = async function(){
-    const ta = $("sync-export");
-    if(!ta) return;
-    ta.select();
-    ta.setSelectionRange(0, ta.value.length);
-    try{
-      await navigator.clipboard.writeText(ta.value);
-      toast("복사 완료", "success");
-    }catch(e){
-      // 일부 브라우저 fallback
-      try{
-        document.execCommand("copy");
-        toast("복사 완료", "success");
-      }catch(err){
-        toast("복사 실패(수동으로 복사해주세요)", "warn");
-      }
-    }
-  };
-
-  window.clearSyncImport = function(){
-    const ta = $("sync-import");
-    if(ta) ta.value = "";
-  };
-
-  window.importSyncCode = function(){
-    ensureRuntimeState();
-
-    const ta = $("sync-import");
-    if(!ta) return;
-
-    const code = String(ta.value || "").trim();
-    if(!code){
-      toast("가져오기 코드가 비었습니다.", "warn");
-      return;
-    }
-
-    try{
-      const json = b64DecodeUnicode(code);
-      const payload = JSON.parse(json);
-
-      if(!payload || typeof payload !== "object" || !payload.state){
-        toast("코드 형식이 올바르지 않습니다.", "danger");
-        return;
-      }
-
-      // 주의: 상태 구조는 core에서 보정함
-      state = payload.state;
-
-      try{
-        if(typeof ensureCoreStateShape === "function") ensureCoreStateShape();
-      }catch(e){}
-
-      try{ saveState(); }catch(e){}
-
-      try{ initChart(); }catch(e){}
-      try{ renderUniverseList(); }catch(e){}
-      try{ renderTrackingList(); }catch(e){}
-      try{ renderClosedTrades(); }catch(e){}
-      try{ renderScanResults(); }catch(e){}
-      try{ updateStatsUI(); }catch(e){}
-      try{ updateCountdownTexts(); }catch(e){}
-      try{ renderScanModal(); }catch(e){}
-      try{ renderBacktestModal(); }catch(e){}
-
-      toast("동기화 적용 완료", "success");
-      closeSyncModal();
-
-    }catch(e){
-      console.error(e);
-      toast("가져오기 중 오류(코드 확인 필요)", "danger");
-    }
-  };
-
-  /* -----------------------------
-     DOM 바인딩 (버튼 무반응 방지)
-  ----------------------------- */
-  // expose renderers so existing code paths (autoScan/backtest) always hit the fixed DOM mapping
-  window.renderScanModal = renderScanModal;
-  window.renderBacktestModal = renderBacktestModal;
-
-  document.addEventListener("DOMContentLoaded", ()=>{
-    try{
-      const st = $("scan-toggle-view");
-      if(st) st.addEventListener("click", window.toggleScanView);
-
-      const bt = $("bt-toggle-view");
-      if(bt) bt.addEventListener("click", window.toggleBacktestView);
-    }catch(e){}
-  });
-
-  // HTML에서 직접 호출되는 함수들을 확실히 window에 바인딩
-  window.setTF = window.setTF || setTF;
-  window.switchCoin = window.switchCoin || switchCoin;
-  window.tryAuth = window.tryAuth || tryAuth;
-  window.confirmTrack = window.confirmTrack || confirmTrack;
-  window.confirmTrackSelected = window.confirmTrackSelected || confirmTrackSelected;
-  window.closeModal = window.closeModal || closeModal;
-
-  window.autoScanUniverseAll = window.autoScanUniverseAll || autoScanUniverseAll;
-  window.cancelOperation = window.cancelOperation || cancelOperation;
-
-  window.resetStatsUIAndData = window.resetStatsUIAndData || resetStatsUIAndData;
-  window.cancelAllTracking = window.cancelAllTracking || cancelAllTracking;
-
-})();
