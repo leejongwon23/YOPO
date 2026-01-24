@@ -449,25 +449,60 @@ async function marketTick(){
 
 /* =========================
    Candle Fetch
+   - Weekly(1W) = Daily(1D) EMA 흐름으로 대체 (API 추가 호출 방지)
+   - In-memory 캐시: 동일 심볼/TF 반복 호출(특히 D/W) 네트워크 중복 제거
 ========================= */
+
+const __CANDLE_CACHE = new Map();
+const __CANDLE_CACHE_TTL_MS = 60 * 1000; // 60s
+
 async function fetchCandles(symbol, tf, limit){
-  _ensureApiStateShape();
-  const token = _getOpToken();
-  if(_isCancelled(token)) return [];
+  // ✅ Weekly(1W)은 API를 늘리지 않기 위해 Daily(1D)로 대체한다.
+  //    (주봉 느낌은 app.core.js 내부의 EMA50/200 + 장기필터로 반영)
+  const rawTf = String(tf || "60");
+  let normTf = rawTf;
+  let normLimit = Number(limit || 300);
 
-  const res = await fetchJSON(BYBIT_KLINE(symbol, tf, limit), { timeoutMs: 9000, retry: 1 });
-  if(_isCancelled(token)) return [];
+  if(rawTf === "W"){
+    normTf = "D";
+    // W를 D로 대체할 때는 D와 함께 쓰이는 경우가 많으므로, 최소 D 수준으로 확보해 중복 호출을 줄인다.
+    normLimit = Math.max(normLimit, 260);
+  }
 
-  const kline = res?.result?.list || [];
-  const candles = kline.map(row => ({
-    t: Number(row[0]),
-    o: parseFloat(row[1]),
-    h: parseFloat(row[2]),
-    l: parseFloat(row[3]),
-    c: parseFloat(row[4]),
-    v: parseFloat(row[5])
-  })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
+  if(!(await ensureApiReady())) return [];
 
-  candles.sort((a,b)=> a.t - b.t);
-  return candles;
+  // ✅ cache (symbol|normTf) — 더 큰 limit으로 받아둔 데이터를 작은 limit 요청에 재사용
+  try{
+    const key = `${symbol}|${normTf}`;
+    const now = Date.now();
+    const cached = __CANDLE_CACHE.get(key);
+    if(cached && (now - cached.ts) < __CANDLE_CACHE_TTL_MS && Array.isArray(cached.candles)){
+      if((cached.limitFetched || 0) >= normLimit){
+        return cached.candles.slice(-normLimit);
+      }
+    }
+
+    const url = buildBybitKlineUrl(symbol, normTf, normLimit);
+    const j = await safeFetchJson(url);
+
+    if(!j || j.retCode !== 0 || !Array.isArray(j.result?.list)){
+      return [];
+    }
+
+    const candles = j.result.list.map(it => ({
+      t: Number(it[0]),
+      o: Number(it[1]),
+      h: Number(it[2]),
+      l: Number(it[3]),
+      c: Number(it[4]),
+      v: Number(it[5])
+    })).sort((a,b)=>a.t-b.t);
+
+    __CANDLE_CACHE.set(key, { ts: now, candles, limitFetched: normLimit });
+    return candles.slice(-normLimit);
+
+  }catch(e){
+    console.error("fetchCandles error:", e);
+    return [];
+  }
 }

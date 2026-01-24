@@ -87,7 +87,17 @@ const MTF_DISAGREE_PENALTY = 0.06; // 합의 부족이면 edge를 살짝 깎아 
 
 // TP/SL
 const RR = 2.0;
-const TF_MULT = { "15": 0.75, "30": 0.95, "60": 1.2, "240": 2.0, "D": 3.5, "W": 5.0 };
+// ✅ 6개 전략(15m/30m/1H/4H/1D/1W) 지원
+const STRATEGY_TFS = ["15","30","60","240","D","W"]; 
+
+const TF_MULT = {
+  "15": 0.8,
+  "30": 1.0,
+  "60": 1.2,
+  "240": 2.0,
+  "D": 3.5,
+  "W": 6.0
+};
 const ATR_MIN_PCT = 0.15;
 const TP_MAX_PCT = 20.0;
 
@@ -103,7 +113,14 @@ const TIME_MFE_MIN_PCT = 0.45;
 const TIME_MFE_TP_RATIO = 0.55;
 
 // cooldown
-const COOLDOWN_MS = { "60": 10 * 60 * 1000, "240": 30 * 60 * 1000, "D": 2 * 60 * 60 * 1000 };
+const COOLDOWN_MS = {
+  "15": 5 * 60 * 1000,
+  "30": 8 * 60 * 1000,
+  "60": 10 * 60 * 1000,
+  "240": 30 * 60 * 1000,
+  "D": 2 * 60 * 60 * 1000,
+  "W": 6 * 60 * 60 * 1000
+};
 
 // scan delay
 const SCAN_DELAY_MS = 650;
@@ -494,36 +511,9 @@ function tfToMs(tfRaw){
   if(tfRaw === "240") return 4 * 60 * 60 * 1000;
   if(tfRaw === "D") return 24 * 60 * 60 * 1000;
   if(tfRaw === "W") return 7 * 24 * 60 * 60 * 1000;
-  const n = Number(tfRaw);
-  if(Number.isFinite(n) && n > 0) return n * 60 * 1000;
+  // fallback: 일봉
   return 24 * 60 * 60 * 1000;
 }
-
-function tfLabel(tfRaw){
-  if(tfRaw === "15") return "15m";
-  if(tfRaw === "30") return "30m";
-  if(tfRaw === "60") return "1H";
-  if(tfRaw === "240") return "4H";
-  if(tfRaw === "D") return "1D";
-  if(tfRaw === "W") return "1W";
-  return String(tfRaw);
-}
-
-function getScanTFs6(){
-  return ["15","30","60","240","D","W"];
-}
-
-function getMTFSetDynamic(baseTfRaw){
-  const all = getScanTFs6();
-  const i = all.indexOf(baseTfRaw);
-  if(i === -1) return ["60","240","D"];
-  if(i <= 1) return ["15","30","60"];
-  if(i === 2) return ["30","60","240"];
-  if(i === 3) return ["60","240","D"];
-  if(i === 4) return ["240","D","W"];
-  return ["D","W"];
-}
-
 
 function formatRemain(ms){
   ms = Math.max(0, ms|0);
@@ -670,13 +660,24 @@ function ensureExpiryOnAllPositions(){
 function getMTFSet3(){ return ["60", "240", "D"]; }
 
 function getMTFSet2(baseTf){
+  // ✅ 6개 전략용 2TF 페어
+  if(baseTf === "15") return ["15", "30"];
+  if(baseTf === "30") return ["30", "60"];
   if(baseTf === "60") return ["60", "240"];
   if(baseTf === "240") return ["240", "D"];
-  return ["D", "240"];
+  if(baseTf === "D") return ["D", "W"];
+  if(baseTf === "W") return ["W", "D"];
+  return [baseTf, "60"]; // fallback
 }
 
 function tfName(tfRaw){
-  return tfRaw === "60" ? "1H" : tfRaw === "240" ? "4H" : "1D";
+  if(tfRaw === "15") return "15m";
+  if(tfRaw === "30") return "30m";
+  if(tfRaw === "60") return "1H";
+  if(tfRaw === "240") return "4H";
+  if(tfRaw === "D") return "1D";
+  if(tfRaw === "W") return "1W";
+  return String(tfRaw);
 }
 
 /* =========================
@@ -713,7 +714,15 @@ function computeSignalCore(symbol, tfRaw, candles){
   const volTrend = calcVolumeTrend(vols, 20);
   const ema20 = emaLast(closes, 20);
   const ema50 = emaLast(closes, 50);
+  const ema200 = emaLast(closes, 200);
   const trend = (ema20 >= ema50) ? 1 : -1;
+
+  // ✅ predboost indicators
+  const bb = calcBBands(closes, 20, 2);
+  const stochRsi = calcStochRSI(closes, 14, 14);
+  const vwap = calcVWAP(candles, 30);
+  const adxO = calcADX(highs, lows, closes, 14);
+  const sr = calcSupportResistance(closes, 120);
 
   const trendStrength = (atrRaw > 0) ? (Math.abs(ema20 - ema50) / atrRaw) : 0;
   const atrPct = (entry > 0) ? ((atrRaw / entry) * 100) : 0;
@@ -739,10 +748,45 @@ function computeSignalCore(symbol, tfRaw, candles){
   const rsiBias = clamp((50 - rsi) / 50, -1, 1);
   const macdBias = clamp(macd.hist * 6, -1, 1);
   const volBias = clamp(volTrend, -1, 1);
-  const trendBias = clamp(trend * 0.8, -1, 1);
+  // ADX가 약하면 추세 신뢰 낮음(횡보), 강하면 추세 신뢰 높음
+  const adxFactor = (adxO.adx >= 25) ? 1.25 : (adxO.adx <= 18 ? 0.75 : 1.0);
+  const trendBias = clamp(trend * 0.8 * adxFactor, -1, 1);
+
+  // 볼린저/스톡RSI: 과열↔과매도 위치(0~1). 0에 가까우면 과매도(롱 유리), 1에 가까우면 과열(숏 유리)
+  const bbBias = clamp((0.5 - bb.pos) * 2, -1, 1);
+  const stochBias = clamp((0.5 - stochRsi) * 2, -1, 1);
+
+  // VWAP: 가격이 VWAP 위면 롱 유리, 아래면 숏 유리
+  const vwapBias = clamp(vwap.distPct / 1.2, -1, 1); // ±1.2%면 거의 최대
+
+  // 큰 흐름(EMA50/200)
+  const macroBias = clamp(((ema50 - ema200) / Math.max(atrRaw, 1e-9)) * 0.35, -1, 1);
+
+  // S/R 페널티(저항 바로 밑 롱 / 지지 바로 위 숏은 감점)
+  let srLongAdj = 0, srShortAdj = 0;
+  if(sr.resistance !== null && sr.distResistancePct > 0){
+    if(sr.distResistancePct <= 0.8) srLongAdj -= 0.08;
+    else if(sr.distResistancePct <= 1.5) srLongAdj -= 0.05;
+  }
+  if(sr.support !== null && sr.distSupportPct > 0){
+    if(sr.distSupportPct <= 0.8) srShortAdj -= 0.08;
+    else if(sr.distSupportPct <= 1.5) srShortAdj -= 0.05;
+  }
+  // 지지 근처 롱/저항 근처 숏은 약한 가점
+  if(sr.support !== null && sr.distSupportPct > 0 && sr.distSupportPct <= 0.9) srLongAdj += 0.04;
+  if(sr.resistance !== null && sr.distResistancePct > 0 && sr.distResistancePct <= 0.9) srShortAdj += 0.04;
 
   longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
   shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
+
+  // predboost mix
+  longP  += (0.08 * bbBias) + (0.06 * stochBias) + (0.05 * vwapBias) + (0.06 * macroBias) + srLongAdj;
+  shortP += (-0.08 * bbBias) + (-0.06 * stochBias) + (-0.05 * vwapBias) + (-0.06 * macroBias) + srShortAdj;
+
+  // ADX가 너무 약하면 HOLD 쪽으로 살짝(기회는 막지 않되, 확신은 낮춤)
+  if(adxO.adx <= 16){
+    domHoldBoost += 1;
+  }
 
   longP  = 0.5 + (longP - 0.5) * domDamp;
   shortP = 0.5 + (shortP - 0.5) * domDamp;
@@ -771,8 +815,21 @@ function computeSignalCore(symbol, tfRaw, candles){
     volTrend,
     ema20,
     ema50,
+    ema200,
     trend,
     trendStrength,
+    bbPos: bb.pos,
+    bbWidthPct: bb.widthPct,
+    stochRsi,
+    vwap: vwap.vwap,
+    vwapDistPct: vwap.distPct,
+    adx: adxO.adx,
+    diPlus: adxO.diPlus,
+    diMinus: adxO.diMinus,
+    support: sr.support,
+    resistance: sr.resistance,
+    distSupportPct: sr.distSupportPct,
+    distResistancePct: sr.distResistancePct,
     btcDom: dom,
     btcDomUp: domUp,
     domHoldBoost
@@ -885,10 +942,9 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   let con = null;
   let mtfExplain = null;
 
-  if(mode === "3TF" || mode === "AUTO"){
+  if(mode === "3TF"){
     const cores = {};
-    const tfSet = (mode === "AUTO") ? getMTFSetDynamic(baseTfRaw) : getMTFSet3();
-    for(const tfRaw of tfSet){
+    for(const tfRaw of getMTFSet3()){
       const candles = candlesByTf[tfRaw];
       if(!candles || candles.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
       cores[tfRaw] = computeSignalCore(symbol, tfRaw, candles);
@@ -962,8 +1018,20 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     volTrend: base.volTrend,
     ema20: base.ema20,
     ema50: base.ema50,
+    ema200: base.ema200,
     trend: base.trend,
     trendStrength: base.trendStrength,
+    bbPos: base.bbPos,
+    bbWidthPct: base.bbWidthPct,
+    stochRsi: base.stochRsi,
+    vwapDistPct: base.vwapDistPct,
+    adx: base.adx,
+    diPlus: base.diPlus,
+    diMinus: base.diMinus,
+    support: base.support,
+    resistance: base.resistance,
+    distSupportPct: base.distSupportPct,
+    distResistancePct: base.distResistancePct,
     btcDom: base.btcDom,
     btcDomUp: base.btcDomUp,
 
@@ -1041,10 +1109,17 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
 
-  if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
-  if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
-  if(edgeAdj < HOLD_MIN_EDGE) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
-  if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
+  // ✅ 단기(15/30)는 노이즈가 많아서 너무 쉽게 HOLD가 되는 것을 완화(기회 유지)
+  const isShort = (baseTfRaw === "15" || baseTfRaw === "30");
+  const holdMinTopK = isShort ? Math.max(6, HOLD_MIN_TOPK - 2) : HOLD_MIN_TOPK;
+  const holdMinSim = isShort ? Math.max(52, HOLD_MIN_SIM_AVG - 3) : HOLD_MIN_SIM_AVG;
+  const holdMinEdge = isShort ? Math.max(0.020, HOLD_MIN_EDGE - 0.010) : HOLD_MIN_EDGE;
+  const holdMinTp = isShort ? Math.max(0.35, HOLD_MIN_TP_PCT - 0.20) : HOLD_MIN_TP_PCT;
+
+  if(con.simCount < holdMinTopK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
+  if(con.simAvg < holdMinSim) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
+  if(edgeAdj < holdMinEdge) holdReasons.push(`롱/숏 차이 작음(엣지 ${(edgeAdj*100).toFixed(1)}%)`);
+  if(tpPct < holdMinTp) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
 
   if(con.votes && con.votes.length >= 2){
     const agreeNeed = (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
@@ -1083,7 +1158,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   return {
     id: Date.now(),
     symbol,
-    tf: tfLabel(baseTfRaw),
+    tf: baseTfRaw === "60" ? "1H" : baseTfRaw === "240" ? "4H" : "1D",
     tfRaw: baseTfRaw,
     type: finalHold ? "HOLD" : type,
     entry,
@@ -1110,9 +1185,6 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
   const curStart = n - winLen;
   const curSeg = closes.slice(curStart, n);
   const curRet = returns(curSeg);
-  const rsiAll = calcRSISeries(closes, 14);
-  const curRsiSeg = rsiAll.slice(curStart, n);
-  const curRsi = normalizeSeries(curRsiSeg);
 
   const sims = [];
   const lastStart = n - winLen - futureH - 2;
@@ -1120,11 +1192,7 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
   for(let s=0; s<=lastStart; s+=step){
     const seg = closes.slice(s, s + winLen);
     const ret = returns(seg);
-    const rsiSeg = rsiAll.slice(s, s + winLen);
-    const rsiNorm = normalizeSeries(rsiSeg);
-    const simRet = zncc(curRet, ret);
-    const simRsi = zncc(curRsi, rsiNorm);
-    const sim = (Number.isFinite(simRet)?simRet:0) * 0.72 + (Number.isFinite(simRsi)?simRsi:0) * 0.28;
+    const sim = zncc(curRet, ret);
     if(!Number.isFinite(sim)) continue;
 
     const entry = closes[s + winLen - 1];
@@ -1214,38 +1282,6 @@ function calcRSI(closes, period=14){
     if(diff >= 0) gains += diff;
     else losses -= diff;
   }
-
-function calcRSISeries(closes, period=14){
-  const out = new Array(closes.length).fill(50);
-  if(!Array.isArray(closes) || closes.length < period + 2) return out;
-  let gain=0, loss=0;
-  for(let i=1;i<=period;i++){
-    const d = closes[i] - closes[i-1];
-    if(d>=0) gain += d; else loss -= d;
-  }
-  let avgG = gain/period;
-  let avgL = loss/period;
-  out[period] = (avgL===0) ? 100 : (100 - (100 / (1 + (avgG/avgL))));
-  for(let i=period+1;i<closes.length;i++){
-    const d = closes[i] - closes[i-1];
-    const g = d>0?d:0;
-    const l = d<0?-d:0;
-    avgG = (avgG*(period-1) + g)/period;
-    avgL = (avgL*(period-1) + l)/period;
-    out[i] = (avgL===0) ? 100 : (100 - (100 / (1 + (avgG/avgL))));
-  }
-  return out;
-}
-
-function normalizeSeries(arr){
-  if(!Array.isArray(arr) || arr.length===0) return [];
-  const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
-  let varSum=0;
-  for(const x of arr){ varSum += (x-mean)*(x-mean); }
-  const sd = Math.sqrt(varSum/Math.max(arr.length,1)) || 1;
-  return arr.map(x => (x-mean)/sd);
-}
-
   if(losses === 0) return 100;
   const rs = gains / losses;
   return 100 - (100 / (1 + rs));
@@ -1304,6 +1340,129 @@ function calcVolumeTrend(vols, lookback=20){
 function avg(arr){
   if(!arr.length) return 0;
   return arr.reduce((a,b)=>a+b,0) / arr.length;
+}
+
+// --- predboost indicators (BBands / StochRSI / VWAP / ADX / S/R) ---
+function calcStd(arr){
+  if(arr.length === 0) return 0;
+  const m = mean(arr);
+  let v = 0;
+  for(const x of arr){ v += (x-m)*(x-m); }
+  return Math.sqrt(v / arr.length);
+}
+
+function calcBBands(closes, period=20, k=2){
+  if(closes.length < period) return { mid: closes[closes.length-1]||0, upper:0, lower:0, pos:0.5, widthPct:0 };
+  const seg = closes.slice(-period);
+  const mid = avg(seg);
+  const sd = calcStd(seg);
+  const upper = mid + k*sd;
+  const lower = mid - k*sd;
+  const price = closes[closes.length-1] || 0;
+  const denom = Math.max(upper - lower, 1e-9);
+  const pos = clamp((price - lower) / denom, 0, 1);
+  const widthPct = (mid > 0) ? ((upper - lower) / mid) * 100 : 0;
+  return { mid, upper, lower, pos, widthPct };
+}
+
+function calcStochRSI(closes, rsiPeriod=14, stochPeriod=14){
+  // 간단형: 최근 RSI 변동 범위 대비 현재 RSI 위치
+  const need = rsiPeriod + stochPeriod + 5;
+  if(closes.length < need) return 0.5;
+
+  const rsis = [];
+  const start = closes.length - stochPeriod;
+  for(let i=start;i<closes.length;i++){
+    const seg = closes.slice(0, i+1);
+    rsis.push(calcRSI(seg, rsiPeriod));
+  }
+  const cur = rsis[rsis.length-1];
+  let rMin = Infinity, rMax = -Infinity;
+  for(const r of rsis){ rMin = Math.min(rMin, r); rMax = Math.max(rMax, r); }
+  const denom = Math.max(rMax - rMin, 1e-9);
+  return clamp((cur - rMin) / denom, 0, 1);
+}
+
+function calcVWAP(candles, lookback=30){
+  if(!candles || candles.length < 3) return { vwap: candles?.[candles.length-1]?.c ?? 0, distPct: 0 };
+  const seg = candles.slice(-Math.min(lookback, candles.length));
+  let pv = 0, vv = 0;
+  for(const c of seg){
+    const tp = (c.h + c.l + c.c) / 3;
+    const v = Math.max(0, c.v || 0);
+    pv += tp * v;
+    vv += v;
+  }
+  const vwap = (vv > 0) ? (pv / vv) : seg[seg.length-1].c;
+  const price = seg[seg.length-1].c;
+  const distPct = (vwap > 0) ? ((price - vwap) / vwap) * 100 : 0;
+  return { vwap, distPct };
+}
+
+function calcADX(highs, lows, closes, period=14){
+  // 간단형 (합산 기반): +DI/-DI/ADX
+  if(closes.length < period*2 + 2) return { adx: 0, diPlus: 0, diMinus: 0 };
+
+  const trs = [], pdm = [], mdm = [];
+  for(let i=1;i<closes.length;i++){
+    const upMove = highs[i] - highs[i-1];
+    const downMove = lows[i-1] - lows[i];
+    pdm.push((upMove > downMove && upMove > 0) ? upMove : 0);
+    mdm.push((downMove > upMove && downMove > 0) ? downMove : 0);
+    const tr = Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1]));
+    trs.push(tr);
+  }
+
+  const trSeg = trs.slice(-period);
+  const pSeg = pdm.slice(-period);
+  const mSeg = mdm.slice(-period);
+  const trSum = trSeg.reduce((a,b)=>a+b,0);
+  const pSum = pSeg.reduce((a,b)=>a+b,0);
+  const mSum = mSeg.reduce((a,b)=>a+b,0);
+  if(trSum <= 0) return { adx: 0, diPlus: 0, diMinus: 0 };
+
+  const diPlus = 100 * (pSum / trSum);
+  const diMinus = 100 * (mSum / trSum);
+  const dx = 100 * Math.abs(diPlus - diMinus) / Math.max(diPlus + diMinus, 1e-9);
+
+  // 최근 period개 DX 평균 (근사)
+  const dxs = [];
+  for(let j=trs.length - period; j<trs.length; j++){
+    const t = trs.slice(Math.max(0, j-period+1), j+1).reduce((a,b)=>a+b,0);
+    const p = pdm.slice(Math.max(0, j-period+1), j+1).reduce((a,b)=>a+b,0);
+    const m = mdm.slice(Math.max(0, j-period+1), j+1).reduce((a,b)=>a+b,0);
+    if(t <= 0) continue;
+    const dip = 100 * (p / t);
+    const dim = 100 * (m / t);
+    const dxx = 100 * Math.abs(dip - dim) / Math.max(dip + dim, 1e-9);
+    dxs.push(dxx);
+  }
+  const adx = dxs.length ? avg(dxs) : dx;
+  return { adx, diPlus, diMinus };
+}
+
+function calcSupportResistance(closes, lookback=120){
+  if(closes.length < 20) return { support: null, resistance: null, distSupportPct: 0, distResistancePct: 0 };
+  const seg = closes.slice(-Math.min(lookback, closes.length));
+  const price = seg[seg.length-1];
+
+  // pivot 기반(가벼운 근사): 최근 고점/저점들을 후보로 두고 가장 가까운 S/R 선택
+  const pivHi = [];
+  const pivLo = [];
+  for(let i=2;i<seg.length-2;i++){
+    const a = seg[i-2], b = seg[i-1], c = seg[i], d = seg[i+1], e = seg[i+2];
+    if(c > b && c > d && c > a && c > e) pivHi.push(c);
+    if(c < b && c < d && c < a && c < e) pivLo.push(c);
+  }
+
+  let resistance = null;
+  let support = null;
+  for(const x of pivHi){ if(x > price && (resistance === null || x < resistance)) resistance = x; }
+  for(const x of pivLo){ if(x < price && (support === null || x > support)) support = x; }
+
+  const distResistancePct = (resistance && resistance>0) ? ((resistance - price) / resistance) * 100 : 0;
+  const distSupportPct = (support && support>0) ? ((price - support) / support) * 100 : 0;
+  return { support, resistance, distSupportPct, distResistancePct };
 }
 
 /* =========================

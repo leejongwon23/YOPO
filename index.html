@@ -94,7 +94,7 @@
 
         <div class="market-list">
           <div class="section-title">
-            <span>유망 코인 30 (자동 선정)</span>
+            <span>유망 코인 60 (자동 선정)</span>
             <span class="right">
               <span class="status-dot" id="api-dot"></span>
               <span id="universe-ts">업데이트: --</span>
@@ -109,7 +109,7 @@
             </div>
             <div id="rec-container">
               <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
-                “통합 자동 스캔”을 누르면 단기/중기/장기를 한 번에 분석해서 결과를 보여줍니다.<br/>
+                “통합 자동 스캔(60코인×6전략)”을 누르면 전체 코인을 한 번에 분석해서 결과를 보여줍니다.<br/>
                 추천을 <b>클릭하면 즉시 분석</b> 후, 결과창에서 <b>전략을 선택</b>하여 <b>추적 등록</b>할 수 있습니다.
               </div>
             </div>
@@ -122,16 +122,19 @@
   </div>
   <div class="sidebar-bottom">
   <div class="analysis-controls">
-          <!-- ✅ 차트용 TF 선택은 유지 (차트 표시/수동 분석 기준 TF로도 사용 가능) -->
+          <!-- ✅ 차트용 TF 선택 (6전략) -->
           <div class="tf-selector">
-            <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
-            <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
-            <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
+            <button class="tf-btn" onclick="setTF('15', this)">15m</button>
+            <button class="tf-btn" onclick="setTF('30', this)">30m</button>
+            <button class="tf-btn active" onclick="setTF('60', this)">1H</button>
+            <button class="tf-btn" onclick="setTF('240', this)">4H</button>
+            <button class="tf-btn" onclick="setTF('D', this)">1D</button>
+            <button class="tf-btn" onclick="setTF('W', this)">1W</button>
           </div>
 
           <!-- ✅ 통합 예측(단/중/장 한번에) -->
           <button class="action-btn" id="predict-all-btn" onclick="executeAnalysisAll()">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행
+            <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(6전략) 실행
           </button>
 
           <!-- ✅ 진행 취소(분석/스캔/백테스트 공통) -->
@@ -143,42 +146,13 @@
             - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
           </div>
 
-          <!-- ✅ 기존 단일 TF 분석 버튼은 “고급”으로 남겨둠(원하면 제거 가능) -->
-          <button class="action-btn secondary" id="predict-btn" onclick="executeAnalysis()">
-            <i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석
-          </button>
-
           <div class="btn-row">
-            <!-- ✅ 통합 자동스캔(단/중/장 모두) -->
-            <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll()">
-              <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
+            <button class="action-btn secondary" id="scan-open-btn" onclick="openScanModal()">
+              <i class="fa-solid fa-binoculars"></i> 자동스캔 결과 열기
             </button>
-
-            <!-- 기존 -->
-            <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse()">
-              <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(기존)
+            <button class="action-btn secondary" id="bt-open-btn" onclick="openBacktestModal()">
+              <i class="fa-solid fa-flask"></i> 백테스트 결과 열기
             </button>
-            <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
-              <i class="fa-solid fa-flask"></i> 백테스트
-            </button>
-          </div>
-
-          <!-- 백테스트 결과 -->
-          <div class="bt-box" id="bt-box">
-            <div class="bt-title">
-              <span>백테스트 결과(필터 강화형)</span>
-              <span id="bt-range" style="font-weight:950;">--</span>
-            </div>
-            <div class="bt-metrics">
-              <div class="mini-box"><small>표본</small><div id="bt-n">--</div></div>
-              <div class="mini-box"><small>승률</small><div id="bt-win">--</div></div>
-              <div class="mini-box"><small>평균수익(%)</small><div id="bt-avg">--</div></div>
-            </div>
-            <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
-              - 백테스트는 “과거로 시험해보는 점수표”입니다.<br/>
-              - 이번 버전은 잡신호를 빼려고 <b>필터(확률/엣지/유사도)</b> 통과한 신호만 테스트합니다.<br/>
-              - 표본이 적으면 승률이 높아 보여도 믿기 어려우니, 표본도 같이 보세요.
-            </div>
           </div>
 
           <div class="tiny-note">
@@ -215,7 +189,7 @@
         <!-- ✅ NEW: 통합(단/중/장) 결과 영역 (features에서 채움) -->
         <div id="multi-results" style="display:none;">
           <div style="font-weight:950; margin:10px 0 6px; color:var(--text-main);">
-            전략별 결과(단·중·장) — 하나를 선택하세요
+            전략별 결과(6전략) — 하나를 선택하세요
           </div>
 
           <!-- 전략 카드 컨테이너 -->
@@ -243,6 +217,83 @@
         <button class="modal-btn secondary" onclick="closeModal()">닫기</button>
       </div>
     </div>
+
+    <!-- ✅ 자동스캔 모달 (60코인×6전략) -->
+    <div class="modal-overlay" id="scan-modal" style="display:none;">
+      <div class="big-modal">
+        <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div>
+            <div style="font-size:16px; font-weight:950;">자동스캔 결과 (60코인 × 6전략)</div>
+            <div style="font-size:12px; font-weight:900; color:var(--text-sub);" id="scan-modal-sub">마지막 스캔: --</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button class="action-btn secondary" id="scan-start-btn" onclick="autoScanUniverseAll()">
+              <i class="fa-solid fa-play"></i> 60코인 전체 스캔시작
+            </button>
+            <button class="action-btn secondary" onclick="refreshScanModal()">
+              <i class="fa-solid fa-rotate"></i> 새로고침
+            </button>
+            <button class="action-btn secondary" onclick="closeScanModal()">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="scan-progress">
+          <div class="scan-bar"><div id="scan-bar-fill" class="scan-bar-fill" style="width:0%;"></div></div>
+          <div class="scan-progress-text" id="scan-progress-text">대기</div>
+        </div>
+
+        <div id="scan-modal-body" class="big-modal-body">
+          <div id="scan-table" class="table-wrap"></div>
+        </div>
+
+        <div class="big-modal-footer">
+          <div style="font-size:12px; color:var(--text-sub); font-weight:900; line-height:1.45;">
+            - “보기”를 누르면 바로 예측창이 위에 뜨고, 그 안에서 전략 선택 → 추적 등록이 가능합니다.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ✅ 통합 백테스트 모달 (60코인×6전략) -->
+    <div class="modal-overlay" id="bt-modal" style="display:none;">
+      <div class="big-modal">
+        <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div>
+            <div style="font-size:16px; font-weight:950;">통합 백테스트 (60코인 × 6전략)</div>
+            <div style="font-size:12px; font-weight:900; color:var(--text-sub);" id="bt-modal-sub">마지막 백테스트: --</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button class="action-btn secondary" id="bt-start-btn" onclick="runBacktestAll()">
+              <i class="fa-solid fa-play"></i> 60코인 전체 백테스트
+            </button>
+            <button class="action-btn secondary" onclick="refreshBacktestModal()">
+              <i class="fa-solid fa-rotate"></i> 새로고침
+            </button>
+            <button class="action-btn secondary" onclick="closeBacktestModal()">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="scan-progress">
+          <div class="scan-bar"><div id="bt-bar-fill" class="scan-bar-fill" style="width:0%;"></div></div>
+          <div class="scan-progress-text" id="bt-progress-text">대기</div>
+        </div>
+
+        <div id="bt-modal-body" class="big-modal-body">
+          <div id="bt-summary" class="bt-summary"></div>
+          <div id="bt-table" class="table-wrap" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="big-modal-footer">
+          <div style="font-size:12px; color:var(--text-sub); font-weight:900; line-height:1.45;">
+            - 백테스트는 “과거로 시험해보는 점수표”입니다. 실제 시장은 다를 수 있습니다.
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- TradingView (전역 위젯) -->
@@ -254,3 +305,44 @@
   <script src="./app.features.js"></script>
 </body>
 </html>
+  <!-- ✅ SYNC MODAL (PC↔모바일 상태 동기화: 내보내기/가져오기) -->
+  <div class="modal-overlay" id="sync-modal">
+    <div class="analysis-modal sync-modal">
+      <div class="big-modal-head">
+        <div>
+          <div class="big-title">PC/모바일 동기화</div>
+          <div class="big-sub">서버 없이도 상태(누적/추적/스캔/백테스트)를 동일하게 맞추는 방법입니다.</div>
+        </div>
+        <button class="modal-close" onclick="closeSyncModal()">닫기</button>
+      </div>
+
+      <div class="big-modal-body">
+        <div class="sync-grid">
+          <div class="sync-col">
+            <div class="sync-label">내보내기 코드</div>
+            <textarea id="sync-export" class="sync-ta" readonly placeholder="아래 버튼을 누르면 코드가 생성됩니다."></textarea>
+            <div class="sync-actions">
+              <button class="action-btn" onclick="exportSyncCode()">내보내기 생성</button>
+              <button class="action-btn secondary" onclick="copySyncCode()">복사</button>
+            </div>
+          </div>
+
+          <div class="sync-col">
+            <div class="sync-label">가져오기 코드</div>
+            <textarea id="sync-import" class="sync-ta" placeholder="PC에서 복사한 코드를 여기에 붙여넣고 ‘가져오기 적용’"></textarea>
+            <div class="sync-actions">
+              <button class="action-btn success" onclick="importSyncCode()">가져오기 적용</button>
+              <button class="action-btn secondary" onclick="clearSyncImport()">지우기</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-foot" style="margin-top:12px;">
+          사용법: PC에서 <b>내보내기 생성</b> → <b>복사</b> → 휴대폰에서 <b>동기화</b> 열기 → 붙여넣기 → <b>가져오기 적용</b>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+
