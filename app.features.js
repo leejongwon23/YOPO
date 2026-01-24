@@ -700,16 +700,6 @@ async function executeAnalysisAll(){
       candlesByTf[tfRaw] = candles;
     }
 
-
-    // ✅ PredBoost: 정밀(단일 코인) 분석에서는 15m(분봉)도 추가 확인
-    try{
-      const c15 = await fetchCandles(symbol, "15", EXTENDED_LIMIT);
-      candlesByTf["15"] = c15;
-    }catch(e){
-      // 15m 실패해도 통합 예측은 계속
-      candlesByTf["15"] = [];
-    }
-
     // 3개 다 한 번에 계산
     const out = {};
     for(const baseTfRaw of ["60","240","D"]){
@@ -763,15 +753,6 @@ async function quickAnalyzeAllAndShow(symbol){
       checkCanceled(opToken);
       const candles = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
       candlesByTf[tfRaw] = candles;
-    }
-
-
-    // ✅ PredBoost: 정밀(단일 코인) 분석에서는 15m(분봉)도 추가 확인
-    try{
-      const c15 = await fetchCandles(symbol, "15", EXTENDED_LIMIT);
-      candlesByTf["15"] = c15;
-    }catch(e){
-      candlesByTf["15"] = [];
     }
 
     const out = {};
@@ -1276,11 +1257,6 @@ function trackPositions(symbol, currentPrice){
         pnlExitGross = ((pos.entry - px) / pos.entry) * 100;
       }
       const pnlExit = pnlExitGross - FEE_SAFE;
-
-      // ✅ 오답노트 업데이트(실패 기억) + 서명 기반 패턴 학습
-      if(typeof updateFailureMemoryFromTrade === "function"){
-        updateFailureMemoryFromTrade(pos, win);
-      }
 
       const record = {
         id: Date.now(),

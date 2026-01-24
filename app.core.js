@@ -250,139 +250,6 @@ function computePatternPenalty(meta){
   return { penalty, hardHold };
 }
 
-
-/* ==========================================================
-   ✅ NEW: 실패 기억(오답노트) - 태그 기반 감점
-   - patternDB(서명 기반)만으로는 "원인"이 흐려질 수 있음.
-   - failureMemory는 "왜 실패했나"를 태그로 남기고, 다음엔 같은 실수에 감점을 준다.
-   - 목표: HOLD를 늘리는 게 아니라, 같은 조건 반복 실패를 줄여 체감 성공률을 올린다.
-   ========================================================== */
-const FAILMEM_TAG_MIN_N = 8;      // 태그 통계 최소 표본
-const FAILMEM_BAD_WR    = 0.45;   // 이하면 감점 시작
-const FAILMEM_MAX_PENALTY = 0.06; // winProb 최대 감점(너무 막지 않기)
-
-function _fmKey(symbol, tfRaw){
-  return `${String(symbol||"").toUpperCase()}|${String(tfRaw||"")}`;
-}
-
-function _fmEnsureBucket(key){
-  ensureCoreStateShape();
-  if(!state.failureMemory.byKey[key]){
-    state.failureMemory.byKey[key] = { tags: {}, n: 0, win: 0 };
-  }else{
-    const b = state.failureMemory.byKey[key];
-    if(!b.tags || typeof b.tags !== "object") b.tags = {};
-    if(typeof b.n !== "number") b.n = 0;
-    if(typeof b.win !== "number") b.win = 0;
-  }
-  if(!state.failureMemory.global.tags || typeof state.failureMemory.global.tags !== "object"){
-    state.failureMemory.global.tags = {};
-  }
-  return state.failureMemory.byKey[key];
-}
-
-function _fmUpdateTag(store, tag, win){
-  const cur = store[tag] || { n: 0, win: 0 };
-  cur.n += 1;
-  if(win) cur.win += 1;
-  store[tag] = cur;
-}
-
-function extractFailureTags(type, ex){
-  const tags = [];
-
-  const t = String(type||"").toUpperCase();
-  const rsi = ex?.rsi ?? 50;
-  const st = ex?.stochK ?? 50;
-  const bbPos = ex?.bbPos ?? 0.5;
-
-  const dRes = ex?.distToResPct ?? 999;
-  const dSup = ex?.distToSupportPct ?? 999;
-
-  const regime = String(ex?.regime || "MIX");
-  const volClass = String(ex?.coinProfile?.volClass || "MID");
-  const trendClass = String(ex?.coinProfile?.trendClass || "MIX");
-
-  if(t === "LONG" && dRes <= 0.8) tags.push("NEAR_RES_LONG");
-  if(t === "SHORT" && dSup <= 0.8) tags.push("NEAR_SUP_SHORT");
-
-  if(t === "LONG" && (rsi >= 72 || st >= 85 || bbPos >= 0.90)) tags.push("OVERBOUGHT_LONG");
-  if(t === "SHORT" && (rsi <= 28 || st <= 15 || bbPos <= 0.10)) tags.push("OVERSOLD_SHORT");
-
-  if(regime === "RANGE" || trendClass === "CHOP") tags.push("CHOP_ZONE");
-  if(regime === "VOL" || volClass === "HIGH") tags.push("VOL_SPIKE");
-
-  // 멀티타임프레임 불일치/합의 낮음
-  if(Number.isFinite(ex?.mtf?.agree) && ex.mtf.agree <= 1) tags.push("MTF_WEAK");
-
-  return tags;
-}
-
-function recordFailureMemory(symbol, tfRaw, type, ex, win){
-  ensureCoreStateShape();
-  const key = _fmKey(symbol, tfRaw);
-  const b = _fmEnsureBucket(key);
-  b.n += 1;
-  if(win) b.win += 1;
-
-  const tags = extractFailureTags(type, ex);
-  for(const tag of tags){
-    _fmUpdateTag(b.tags, tag, win);
-    _fmUpdateTag(state.failureMemory.global.tags, tag, win);
-  }
-
-  state.failureMemory.lastUpdated = Date.now();
-  saveState();
-}
-
-function _fmPenaltyFromStats(stat){
-  const n = stat?.n ?? 0;
-  const win = stat?.win ?? 0;
-  if(n < FAILMEM_TAG_MIN_N) return 0;
-  const wr = n > 0 ? (win / n) : 1;
-  if(wr >= FAILMEM_BAD_WR) return 0;
-  const bad = clamp((FAILMEM_BAD_WR - wr) / FAILMEM_BAD_WR, 0, 1);
-  const nW  = clamp((n - FAILMEM_TAG_MIN_N) / 40, 0, 1);
-  return clamp(FAILMEM_MAX_PENALTY * bad * (0.55 + 0.45 * nW), 0, FAILMEM_MAX_PENALTY);
-}
-
-function computeFailureMemoryPenalty(symbol, tfRaw, type, ex){
-  ensureCoreStateShape();
-  const key = _fmKey(symbol, tfRaw);
-  const b = state.failureMemory.byKey?.[key];
-  const g = state.failureMemory.global?.tags;
-
-  const tags = extractFailureTags(type, ex);
-  let penalty = 0;
-
-  for(const tag of tags){
-    const p1 = _fmPenaltyFromStats(b?.tags?.[tag]);
-    const p2 = _fmPenaltyFromStats(g?.[tag]);
-    penalty += Math.max(p1, p2) * 0.65; // 태그 여러개면 누적(단, 너무 커지지 않게)
-  }
-
-  return clamp(penalty, 0, FAILMEM_MAX_PENALTY);
-}
-
-// ✅ features에서 바로 호출할 수 있게 공개(정밀추적 종료 → 오답노트 기록)
-function updateFailureMemoryFromTrade(pos, win){
-  try{
-    const symbol = pos?.symbol;
-    const tfRaw = pos?.tfRaw;
-    const type = pos?.type;
-    const ex = pos?.explain || {};
-    recordFailureMemory(symbol, tfRaw, type, ex, !!win);
-
-    // patternDB(서명 기반)도 같이 업데이트(핵심: 같은 실수 반복 방지)
-    if(pos?.sig){
-      recordPatternOutcome(pos.sig, !!win);
-    }
-  }catch(e){
-    console.error("updateFailureMemoryFromTrade error:", e);
-  }
-}
-
-
 /* ==========================================================
    ✅ NEW: "통합예측(단/중/장)" 합의 규칙
    ========================================================== */
@@ -502,12 +369,6 @@ let state = loadState() || {
   lastScanResults: [],
   lastPrices: {},
 
-  lastPrices: {},
-
-  /* ✅ NEW: 실패 기억(오답노트) + 코인 성격(프로필) */
-  failureMemory: { global: { tags: {} }, byKey: {}, lastUpdated: 0 },
-  coinProfileMap: {},
-
   /* ✅ NEW: 공통 작업 취소 플래그/토큰 */
   op: { cancel: false, token: 0 }
 };
@@ -538,12 +399,6 @@ function ensureCoreStateShape(){
       lastScanAt: 0,
       lastScanResults: [],
       lastPrices: {},
-
-  lastPrices: {},
-
-  /* ✅ NEW: 실패 기억(오답노트) + 코인 성격(프로필) */
-  failureMemory: { global: { tags: {} }, byKey: {}, lastUpdated: 0 },
-  coinProfileMap: {},
       op: { cancel: false, token: 0 }
     };
     changed = true;
@@ -562,35 +417,7 @@ function ensureCoreStateShape(){
   if(!Array.isArray(state.closedTrades)){ state.closedTrades = []; changed = true; }
   if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){ state.lastSignalAt = {}; changed = true; }
   if(!Array.isArray(state.lastScanResults)){ state.lastScanResults = []; changed = true; }
-  if(!state.lastPrices || typeof state.lastPrices !== "object"){ state.lastPrices = {}
-  // ✅ NEW: failureMemory / coinProfileMap (누락 보정)
-  if(!state.failureMemory || typeof state.failureMemory !== "object"){
-    state.failureMemory = { global: {}, byKey: {}, lastUpdated: 0 };
-    changed = true;
-  }else{
-    if(!state.failureMemory.global || typeof state.failureMemory.global !== "object"){
-      state.failureMemory.global = { tags: {} };
-      changed = true;
-    }
-    if(!state.failureMemory.global.tags || typeof state.failureMemory.global.tags !== "object"){
-      state.failureMemory.global.tags = {};
-      changed = true;
-    }
-    if(!state.failureMemory.byKey || typeof state.failureMemory.byKey !== "object"){
-      state.failureMemory.byKey = {};
-      changed = true;
-    }
-    if(typeof state.failureMemory.lastUpdated !== "number"){
-      state.failureMemory.lastUpdated = 0;
-      changed = true;
-    }
-  }
-
-  if(!state.coinProfileMap || typeof state.coinProfileMap !== "object"){
-    state.coinProfileMap = {};
-    changed = true;
-  }
-; changed = true; }
+  if(!state.lastPrices || typeof state.lastPrices !== "object"){ state.lastPrices = {}; changed = true; }
 
   if(!state.op || typeof state.op !== "object"){
     state.op = { cancel: false, token: 0 };
@@ -848,39 +675,19 @@ function computeSignalCore(symbol, tfRaw, candles){
 
   const entry = closes[closes.length - 1];
 
-  // 기존 지표
   const rsi = calcRSI(closes, 14);
   const macd = calcMACD(closes);
   const atrRaw = calcATR(highs, lows, closes, 14);
   const volTrend = calcVolumeTrend(vols, 20);
-
-  const ema20  = emaLast(closes, 20);
-  const ema50  = emaLast(closes, 50);
-  const ema200 = emaLast(closes, 200);
-
+  const ema20 = emaLast(closes, 20);
+  const ema50 = emaLast(closes, 50);
   const trend = (ema20 >= ema50) ? 1 : -1;
+
   const trendStrength = (atrRaw > 0) ? (Math.abs(ema20 - ema50) / atrRaw) : 0;
   const atrPct = (entry > 0) ? ((atrRaw / entry) * 100) : 0;
 
-  // ✅ PredBoost 지표(정밀 강화)
-  const bb = calcBBands(closes, 20, 2);
-  const stoch = calcStochRSI(closes, 14, 14);
-  const vw = calcVWAP(highs, lows, closes, vols, 30);
-  const adxObj = calcADX(highs, lows, closes, 14);
-  const sr = calcSupportResistance(highs, lows, closes, 80);
-
-  // ✅ 시장 상황(추세/횡보/변동성) 분류
-  const regimeObj = classifyMarketRegime({
-    adx: adxObj.adx,
-    atrPct,
-    bbWidthPct: bb.widthPct,
-    trendStrength
-  });
-
-  // ✅ 유사도 기반 확률(패턴)
   const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
 
-  // ✅ BTC 도미넌스(알트 보수)
   const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
   const domPrev = (typeof state.btcDomPrev === "number") ? state.btcDomPrev : null;
   const domUp = (dom !== null && domPrev !== null) ? (dom - domPrev) : 0;
@@ -894,82 +701,20 @@ function computeSignalCore(symbol, tfRaw, candles){
     if(isAlt && dom > 53) { domDamp *= 0.82; domHoldBoost += 1; }
   }
 
-  // ✅ 코인 성격(프로필): 변동성/추세성에 따라 "조금만" 보정
-  const profile = getCoinProfile(symbol, { atrPct, trendStrength });
-
   let longP = sim.longProb;
   let shortP = sim.shortProb;
 
-  // 기존 바이어스
-  const rsiBias   = clamp((50 - rsi) / 50, -1, 1);
-  const macdBias  = clamp(macd.hist * 6, -1, 1);
-  const volBias   = clamp(volTrend, -1, 1);
+  const rsiBias = clamp((50 - rsi) / 50, -1, 1);
+  const macdBias = clamp(macd.hist * 6, -1, 1);
+  const volBias = clamp(volTrend, -1, 1);
   const trendBias = clamp(trend * 0.8, -1, 1);
 
-  // PredBoost 바이어스
-  const bbBias     = clamp((0.5 - bb.pos) * 2, -1, 1);         // 하단(0)일수록 +LONG
-  const stochBias  = clamp((50 - (stoch.k ?? 50)) / 50, -1, 1); // 낮을수록 +LONG
-  const vwapBias   = clamp((vw.distPct ?? 0) / 1.5, -1, 1);     // 위면 +LONG
-  const diBiasRaw  = clamp(((adxObj.diPlus - adxObj.diMinus) / 40), -1, 1);
-  const diBias     = clamp((adxObj.adx >= 18) ? diBiasRaw : (diBiasRaw * 0.35), -1, 1);
+  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
+  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
 
-  // “주봉 느낌” 보정(일봉 EMA50/200 계열): 과도하게 쓰지 않고 미세하게만
-  const weeklyBias = (ema50 >= ema200) ? 1 : -1;
-
-  // ✅ 시장 상황별 가중치 조절(예측을 막지 않고, 잘못된 상황에서만 감점)
-  let W = {
-    rsi: 0.12,
-    macd: 0.10,
-    vol: 0.06,
-    trend: 0.08,
-    bb: 0.07,
-    stoch: 0.06,
-    vwap: 0.05,
-    di: 0.08,
-    weekly: 0.04
-  };
-
-  if(regimeObj.regime === "TREND"){
-    W.trend += 0.05;
-    W.di    += 0.04;
-    W.bb    -= 0.02;
-    W.stoch -= 0.02;
-  }else if(regimeObj.regime === "RANGE"){
-    W.bb    += 0.04;
-    W.stoch += 0.04;
-    W.trend -= 0.04;
-    W.di    -= 0.03;
-  }else if(regimeObj.regime === "VOL"){
-    // 변동성 폭발: 진입을 막지 않고, 리스크만 감점(지지/저항 가까우면 감점 증가)
-    W.trend -= 0.02;
-    W.bb    += 0.02;
-  }
-
-  // 코인 성격: 변동성 큰 코인은 "조금만" 보수(확률/엣지 과신 방지)
-  const strict = profile.strictness ?? 0.35;
-  const strictW = clamp((strict - 0.35) * 0.25, -0.06, 0.06);
-
-  longP  += (W.rsi * rsiBias) + (W.macd * macdBias) + (W.vol * volBias) + (W.trend * trendBias)
-          + (W.bb * bbBias) + (W.stoch * stochBias) + (W.vwap * vwapBias) + (W.di * diBias)
-          + (W.weekly * weeklyBias);
-
-  shortP += (-W.rsi * rsiBias) + (-W.macd * macdBias) + (-W.vol * volBias) + (-W.trend * trendBias)
-          + (-W.bb * bbBias) + (-W.stoch * stochBias) + (-W.vwap * vwapBias) + (-W.di * diBias)
-          + (-W.weekly * weeklyBias);
-
-  // ✅ 지지/저항 리스크(가까울수록 감점): 예측은 유지하되 확신만 깎는다.
-  const nearRes = clamp((0.9 - (sr.distToResPct ?? 999)) / 0.9, 0, 1);     // 0.9% 이내면 리스크↑
-  const nearSup = clamp((0.9 - (sr.distToSupportPct ?? 999)) / 0.9, 0, 1);
-
-  // 방향이 "저항/지지"에 불리하면 감점
-  longP  = longP  - (0.05 + strictW) * nearRes + 0.015 * nearSup;
-  shortP = shortP - (0.05 + strictW) * nearSup + 0.015 * nearRes;
-
-  // 도미넌스 보정
   longP  = 0.5 + (longP - 0.5) * domDamp;
   shortP = 0.5 + (shortP - 0.5) * domDamp;
 
-  // 정규화
   const sum = Math.max(longP + shortP, 1e-9);
   longP /= sum; shortP /= sum;
 
@@ -985,10 +730,8 @@ function computeSignalCore(symbol, tfRaw, candles){
     longP,
     shortP,
     edge,
-
     simAvg: sim.avgSim,
     simCount: sim.count,
-
     rsi,
     macdHist: macd.hist,
     atrRaw,
@@ -996,26 +739,8 @@ function computeSignalCore(symbol, tfRaw, candles){
     volTrend,
     ema20,
     ema50,
-    ema200,
     trend,
     trendStrength,
-
-    // PredBoost
-    bbPos: bb.pos,
-    bbWidthPct: bb.widthPct,
-    stochK: stoch.k,
-    vwapDistPct: vw.distPct,
-    adx: adxObj.adx,
-    diPlus: adxObj.diPlus,
-    diMinus: adxObj.diMinus,
-    support: sr.support,
-    resistance: sr.resistance,
-    distToSupportPct: sr.distToSupportPct,
-    distToResPct: sr.distToResPct,
-    regime: regimeObj.regime,
-    regimeReason: regimeObj.reason,
-    coinProfile: profile,
-
     btcDom: dom,
     btcDomUp: domUp,
     domHoldBoost
@@ -1114,7 +839,26 @@ function applyConfidenceTpSl(tpDist, winProb, edge){
 }
 
 function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
-  const baseCandles = candlesByTf[baseTfRaw];
+// Guard: if base timeframe candles are missing (CORS/API issue), do not crash; return HOLD safely.
+candlesByTf = candlesByTf || {};
+const _baseCandlesSafe = candlesByTf[baseTfRaw] || [];
+if (!Array.isArray(_baseCandlesSafe) || _baseCandlesSafe.length < 120) {
+  return {
+    symbol,
+    tf: baseTfRaw,
+    type: "HOLD",
+    side: "HOLD",
+    p: 0,
+    score: 0,
+    entry: 0,
+    tp: 0,
+    sl: 0,
+    reason: "데이터 부족(캔들)",
+    explain: { msg: "캔들 데이터가 부족해서 안전하게 HOLD 처리" }
+  };
+}
+
+  const baseCandles = _baseCandlesSafe;
   const base = computeSignalCore(symbol, baseTfRaw, baseCandles);
 
   const entry = base.entry;
@@ -1204,27 +948,10 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     volTrend: base.volTrend,
     ema20: base.ema20,
     ema50: base.ema50,
-    ema200: base.ema200,
     trend: base.trend,
     trendStrength: base.trendStrength,
     btcDom: base.btcDom,
     btcDomUp: base.btcDomUp,
-    
-    // ✅ PredBoost 지표/상황(정밀 강화)
-    bbPos: base.bbPos,
-    bbWidthPct: base.bbWidthPct,
-    stochK: base.stochK,
-    vwapDistPct: base.vwapDistPct,
-    adx: base.adx,
-    diPlus: base.diPlus,
-    diMinus: base.diMinus,
-    support: base.support,
-    resistance: base.resistance,
-    distToSupportPct: base.distToSupportPct,
-    distToResPct: base.distToResPct,
-    regime: base.regime,
-    regimeReason: base.regimeReason,
-    coinProfile: base.coinProfile,
 
     conf: null,
     mtf: {
@@ -1251,35 +978,6 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     pattern: null
   };
 
-
-  // ✅ 15m(분봉) 미세 합의: 단일 코인 정밀분석에서만 candlesByTf["15"]를 넘겨준다.
-  // - 방향이 같으면 소폭 가산, 반대면 소폭 감산 (예측을 막지 않기 위한 "미세 조정")
-  if(candlesByTf["15"] && candlesByTf["15"].length >= (SIM_WINDOW + FUTURE_H + 80)){
-    try{
-      const micro = computeSignalCore(symbol, "15", candlesByTf["15"]);
-      explainBase.micro = { tf: "15m", type: micro.type, winProb: micro.winProb, edge: micro.edge, regime: micro.regime };
-
-      if(micro.type === type){
-        winProbAdj = clamp(winProbAdj + 0.015, 0.50, 0.99);
-        edgeAdj = clamp(edgeAdj + 0.010, 0, 0.90);
-        holdReasons.push(`(분봉 합의 +) 15m 방향 일치`);
-      }else{
-        winProbAdj = clamp(winProbAdj - 0.015, 0.50, 0.99);
-        edgeAdj = Math.max(0, edgeAdj - 0.010);
-        holdReasons.push(`(분봉 합의 -) 15m 방향 반대`);
-      }
-
-      // signature에도 반영되도록 갱신
-      explainBase.winProb = winProbAdj;
-      explainBase.edge = edgeAdj;
-    }catch(e){
-      console.warn("micro(15m) check failed:", e);
-      explainBase.micro = null;
-    }
-  }else{
-    explainBase.micro = null;
-  }
-
   const sigForPenalty = buildPatternSignature(symbol, baseTfRaw, type, explainBase);
   const avoidMeta = getAvoidMeta(sigForPenalty);
   const pp = computePatternPenalty(avoidMeta);
@@ -1288,15 +986,6 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     winProbAdj = clamp(winProbAdj - pp.penalty, 0.50, 0.99);
     edgeAdj = Math.max(0, edgeAdj - (pp.penalty * PATTERN_PENALTY_EDGE_W));
   }
-
-// ✅ 오답노트(실패기억) 감점: 태그 기반으로 "같은 실수"를 반복하지 않게 한다.
-  const fmPenalty = computeFailureMemoryPenalty(symbol, baseTfRaw, type, explainBase);
-  if(fmPenalty > 0){
-    winProbAdj = clamp(winProbAdj - fmPenalty, 0.50, 0.99);
-    edgeAdj = Math.max(0, edgeAdj - (fmPenalty * 0.55));
-    holdReasons.push(`(오답노트 감점 적용: -${(fmPenalty*100).toFixed(1)}%p)`);
-  }
-  explainBase.failMem = { penalty: fmPenalty, tags: extractFailureTags(type, explainBase) };
 
   explainBase.pattern = avoidMeta ? {
     sig: sigForPenalty,
@@ -1564,225 +1253,6 @@ function avg(arr){
   return arr.reduce((a,b)=>a+b,0) / arr.length;
 }
 
-
-/* =========================
-   ✅ PredBoost indicators (BBands / StochRSI / VWAP / ADX(+DI/-DI) / S-R)
-   - 예측을 "막는" 게 아니라, 더 넓게/촘촘하게 보고 점수(확률)를 보정한다.
-========================= */
-function calcBBands(closes, period=20, mult=2){
-  if(!Array.isArray(closes) || closes.length < period+5){
-    return { mid: closes?.[closes?.length-1] ?? 0, upper: 0, lower: 0, widthPct: 0, pos: 0.5 };
-  }
-  const seg = closes.slice(-period);
-  const m = mean(seg);
-  let v = 0;
-  for(const x of seg){
-    v += (x - m) * (x - m);
-  }
-  const sd = Math.sqrt(v / Math.max(seg.length, 1));
-  const upper = m + mult * sd;
-  const lower = m - mult * sd;
-  const last = closes[closes.length-1];
-  const width = Math.max(upper - lower, 1e-9);
-  const pos = clamp((last - lower) / width, 0, 1); // 0=하단, 1=상단
-  const widthPct = (m > 0) ? (width / m) * 100 : 0;
-  return { mid: m, upper, lower, widthPct, pos };
-}
-
-function calcStochRSI(closes, rsiPeriod=14, stochPeriod=14){
-  if(!Array.isArray(closes) || closes.length < (rsiPeriod + stochPeriod + 10)){
-    return { k: 50, d: 50 };
-  }
-  // RSI series
-  const rsiSeries = [];
-  for(let i = rsiPeriod; i < closes.length; i++){
-    const seg = closes.slice(0, i+1);
-    rsiSeries.push(calcRSI(seg, rsiPeriod));
-  }
-  if(rsiSeries.length < stochPeriod+3) return { k: 50, d: 50 };
-
-  const window = rsiSeries.slice(-stochPeriod);
-  const rsiMin = Math.min(...window);
-  const rsiMax = Math.max(...window);
-  const cur = window[window.length-1];
-  const denom = Math.max(rsiMax - rsiMin, 1e-9);
-  const st = clamp(((cur - rsiMin) / denom) * 100, 0, 100);
-
-  // smooth K/D (simple)
-  const k = st;
-  const d = (window.length >= 3)
-    ? ( (clamp(((window[window.length-1]-rsiMin)/denom)*100,0,100)
-        +clamp(((window[window.length-2]-rsiMin)/denom)*100,0,100)
-        +clamp(((window[window.length-3]-rsiMin)/denom)*100,0,100))/3 )
-    : st;
-
-  return { k, d };
-}
-
-function calcVWAP(highs, lows, closes, vols, lookback=30){
-  if(!Array.isArray(closes) || closes.length < lookback+5) return { vwap: closes?.[closes?.length-1] ?? 0, distPct: 0 };
-  const n = closes.length;
-  const start = Math.max(0, n - lookback);
-  let pv = 0, vv = 0;
-  for(let i=start;i<n;i++){
-    const tp = (highs[i] + lows[i] + closes[i]) / 3;
-    const v = Number.isFinite(vols[i]) ? vols[i] : 0;
-    pv += tp * v;
-    vv += v;
-  }
-  const vwap = (vv > 0) ? (pv / vv) : closes[n-1];
-  const last = closes[n-1];
-  const distPct = (vwap > 0) ? ((last - vwap) / vwap) * 100 : 0; // +면 위
-  return { vwap, distPct };
-}
-
-function calcADX(highs, lows, closes, period=14){
-  // Wilder's ADX (간단 구현)
-  if(!Array.isArray(closes) || closes.length < period + 20){
-    return { adx: 18, diPlus: 20, diMinus: 20 };
-  }
-
-  const n = closes.length;
-  const tr = [];
-  const dmP = [];
-  const dmM = [];
-
-  for(let i=1;i<n;i++){
-    const up = highs[i] - highs[i-1];
-    const down = lows[i-1] - lows[i];
-
-    dmP.push((up > down && up > 0) ? up : 0);
-    dmM.push((down > up && down > 0) ? down : 0);
-
-    const tr1 = highs[i] - lows[i];
-    const tr2 = Math.abs(highs[i] - closes[i-1]);
-    const tr3 = Math.abs(lows[i] - closes[i-1]);
-    tr.push(Math.max(tr1, tr2, tr3));
-  }
-
-  function wilderSmooth(arr){
-    const out = [];
-    let sum = 0;
-    for(let i=0;i<arr.length;i++){
-      const v = arr[i];
-      if(i < period){
-        sum += v;
-        if(i === period-1) out.push(sum);
-      }else{
-        sum = out[out.length-1] - (out[out.length-1]/period) + v;
-        out.push(sum);
-      }
-    }
-    return out;
-  }
-
-  const trS = wilderSmooth(tr);
-  const pS  = wilderSmooth(dmP);
-  const mS  = wilderSmooth(dmM);
-
-  const len = Math.min(trS.length, pS.length, mS.length);
-  if(len <= 5) return { adx: 18, diPlus: 20, diMinus: 20 };
-
-  const diPlusArr = [];
-  const diMinusArr = [];
-  const dxArr = [];
-
-  for(let i=0;i<len;i++){
-    const trv = Math.max(trS[i], 1e-9);
-    const dip = (pS[i] / trv) * 100;
-    const dim = (mS[i] / trv) * 100;
-    diPlusArr.push(dip);
-    diMinusArr.push(dim);
-
-    const dx = (Math.abs(dip - dim) / Math.max(dip + dim, 1e-9)) * 100;
-    dxArr.push(dx);
-  }
-
-  // ADX = Wilder smooth of DX
-  const adxS = wilderSmooth(dxArr);
-  const adx = adxS.length ? (adxS[adxS.length-1] / period) : 18;
-
-  const diPlus = diPlusArr[diPlusArr.length-1];
-  const diMinus = diMinusArr[diMinusArr.length-1];
-
-  return { adx: clamp(adx, 1, 80), diPlus: clamp(diPlus, 0, 80), diMinus: clamp(diMinus, 0, 80) };
-}
-
-function calcSupportResistance(highs, lows, closes, lookback=80){
-  if(!Array.isArray(closes) || closes.length < lookback+10){
-    const last = closes?.[closes?.length-1] ?? 0;
-    return { support: last, resistance: last, distToSupportPct: 0, distToResPct: 0 };
-  }
-  const n = closes.length;
-  const start = Math.max(0, n - lookback);
-
-  // 최근 구간에서 "가까운" 지지/저항을 단순 추정: 최근 low/ high 분위수(10%, 90%)
-  const segH = highs.slice(start);
-  const segL = lows.slice(start);
-
-  const sortedH = segH.slice().sort((a,b)=>a-b);
-  const sortedL = segL.slice().sort((a,b)=>a-b);
-
-  const q = (arr, p) => {
-    const idx = Math.floor((arr.length-1) * p);
-    return arr[Math.max(0, Math.min(arr.length-1, idx))];
-  };
-
-  const support = q(sortedL, 0.10);
-  const resistance = q(sortedH, 0.90);
-
-  const last = closes[n-1];
-  const distToSupportPct = (last > 0) ? ((last - support) / last) * 100 : 0; // +면 지지 위
-  const distToResPct = (last > 0) ? ((resistance - last) / last) * 100 : 0;  // +면 저항 위쪽 거리
-
-  return { support, resistance, distToSupportPct, distToResPct };
-}
-
-function classifyMarketRegime(metrics){
-  const adx = metrics?.adx ?? 18;
-  const atrPct = metrics?.atrPct ?? 0;
-  const bbWidthPct = metrics?.bbWidthPct ?? 0;
-  const ts = metrics?.trendStrength ?? 0;
-
-  // ✅ 기준: 너무 빡세게 막지 않도록, "조정" 용도
-  const isTrend = (adx >= 23 && ts >= 0.7);
-  const isRange = (adx <= 18 && bbWidthPct <= 4.0);
-  const isVol   = (atrPct >= 2.8 || bbWidthPct >= 7.5);
-
-  if(isVol)   return { regime: "VOL", reason: "ATR/BB 폭 큼" };
-  if(isTrend) return { regime: "TREND", reason: "ADX/추세 강함" };
-  if(isRange) return { regime: "RANGE", reason: "ADX 낮고 밴드 좁음" };
-  return { regime: "MIX", reason: "혼합" };
-}
-
-function getCoinProfile(symbol, baseCore){
-  const sym = String(symbol || "").toUpperCase();
-  const majors = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","BNBUSDT"]);
-  const isMajor = majors.has(sym);
-
-  const atrPct = baseCore?.atrPct ?? 0;
-  const ts = baseCore?.trendStrength ?? 0;
-
-  let volClass = "MID";
-  if(atrPct >= 3.2) volClass = "HIGH";
-  else if(atrPct <= 1.2) volClass = "LOW";
-
-  let trendClass = "MIX";
-  if(ts >= 1.0) trendClass = "TRENDY";
-  else if(ts <= 0.45) trendClass = "CHOP";
-
-  // strictness: 0(관대) ~ 1(엄격)
-  let strictness = 0.35;
-  if(isMajor) strictness -= 0.08;           // 메이저는 조금 관대(기회 유지)
-  if(volClass === "HIGH") strictness += 0.14; // 변동성 큰 코인은 조금만 엄격
-  if(trendClass === "CHOP") strictness += 0.10;
-
-  strictness = clamp(strictness, 0.10, 0.65);
-
-  return { isMajor, volClass, trendClass, strictness };
-}
-
-
 /* =========================
    Protections (공용)
 ========================= */
@@ -1821,38 +1291,63 @@ async function fetchWithTimeout(url, timeoutMs=7000){
   }
 }
 
-async function fetchJSON(url, opt={}){
-  const timeoutMs = opt.timeoutMs ?? 7000;
-  const retry = opt.retry ?? 0;
+/* YOPO: network helpers (GitHub Pages CORS/Rate-limit safe) */
+let __YOPO_FETCH_LAST_TS = 0;
+async function _yopoThrottle(minGapMs) {
+  const gap = Number(minGapMs || 0);
+  if (!gap) return;
+  const now = Date.now();
+  const wait = (__YOPO_FETCH_LAST_TS + gap) - now;
+  if (wait > 0) await sleep(wait);
+  __YOPO_FETCH_LAST_TS = Date.now();
+}
+function _yopoProxyUrls(url) {
+  if (!url || typeof url !== "string") return [url];
+  if (url.startsWith("data:") || url.startsWith("blob:")) return [url];
+  const lower = url.toLowerCase();
+  // Avoid double proxying
+  if (lower.includes("allorigins.win") || lower.includes("corsproxy.io")) return [url];
+  // Proxies (best-effort). If direct works, we stop early.
+  const enc = encodeURIComponent(url);
+  return [
+    url,
+    `https://api.allorigins.win/raw?url=${enc}`,
+    `https://corsproxy.io/?${enc}`
+  ];
+}
+
+async function fetchJSON(url, opt = {}) {
+  const timeoutMs = opt.timeoutMs ?? 12000;
+  const retry = opt.retry ?? 2;
+  const minGapMs = opt.minGapMs ?? (window?.YOPO_API_GAP_MS ?? 140);
+  const noProxy = !!opt.noProxy;
 
   let lastErr = null;
-  for(let i=0;i<=retry;i++){
-    try{
-      const data = await fetchWithTimeout(url, timeoutMs);
+  const candidates = noProxy ? [url] : _yopoProxyUrls(url);
 
-      try{
-        state.lastApiHealth = "ok";
-        saveState();
-      }catch(e){}
-
-      return data;
-    }catch(e){
-      lastErr = e;
-
-      try{
-        state.lastApiHealth = "warn";
-        saveState();
-      }catch(_e){}
-
-      if(i < retry){
-        const wait = 250 * Math.pow(2, i);
-        await sleep(wait);
+  for (let i = 0; i <= retry; i++) {
+    for (let k = 0; k < candidates.length; k++) {
+      const u = candidates[k];
+      try {
+        await _yopoThrottle(minGapMs);
+        const res = await fetchWithTimeout(u, { ...opt, timeoutMs });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const ct = (res.headers.get("content-type") || "").toLowerCase();
+        if (!ct.includes("application/json") && !ct.includes("text/json")) {
+          const txt = await res.text();
+          try { return JSON.parse(txt); } catch { throw new Error("Non-JSON response"); }
+        }
+        return await res.json();
+      } catch (e) {
+        lastErr = e;
+        // If direct failed, try proxy in same retry cycle; otherwise backoff.
+        if (k === candidates.length - 1) await sleep(250 + i * 400);
       }
     }
   }
-
   throw lastErr || new Error("fetchJSON failed");
 }
+
 
 /* =========================
    Core bootstrap (가벼운 초기화)
