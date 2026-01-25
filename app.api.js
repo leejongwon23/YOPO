@@ -52,60 +52,6 @@ const safeLog10 = (typeof window !== "undefined" && typeof window.safeLog10 === 
       return Math.log10(v);
     };
 
-
-/* =========================
-   ✅ Candle helpers / cache
-   - 누락되면: 예측/스캔/백테스트가 전부 멈춤 (ReferenceError)
-========================= */
-const __CANDLE_CACHE = new Map();     // key -> {ts, data}
-const __CANDLE_INFLIGHT = new Map();  // key -> Promise
-
-function _cKey(symbol, tfRaw, limit){
-  return `${String(symbol||"")}|${String(tfRaw||"")}|${Number(limit)||0}`;
-}
-
-function _tfToBinanceInterval(tfRaw){
-  const v = String(tfRaw || "").trim();
-  const u = v.toUpperCase();
-
-  // Bybit style minutes string -> Binance interval
-  if(u === "15" || u === "15M") return "15m";
-  if(u === "30" || u === "30M") return "30m";
-  if(u === "60" || u === "1H" || u === "60M") return "1h";
-  if(u === "120"|| u === "2H") return "2h";
-  if(u === "240"|| u === "4H") return "4h";
-  if(u === "360"|| u === "6H") return "6h";
-  if(u === "720"|| u === "12H") return "12h";
-  if(u === "D"  || u === "1D" || u === "DAY") return "1d";
-  if(u === "W"  || u === "1W" || u === "WEEK") return "1w";
-  return null;
-}
-
-function _fixCandles(candles){
-  // Normalize: sort asc by time, remove bad rows, dedupe
-  if(!Array.isArray(candles)) return [];
-  const out = [];
-  for(const c of candles){
-    if(!c) continue;
-    const t = Number(c.t);
-    const o = Number(c.o), h = Number(c.h), l = Number(c.l), cc = Number(c.c), v = Number(c.v);
-    if(!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(cc)) continue;
-    out.push({ t, o, h, l, c: cc, v: Number.isFinite(v) ? v : 0 });
-  }
-  out.sort((a,b)=> a.t - b.t);
-  // Deduplicate by timestamp (keep last)
-  const dedup = [];
-  for(let i=0;i<out.length;i++){
-    const cur = out[i];
-    if(dedup.length && dedup[dedup.length-1].t === cur.t){
-      dedup[dedup.length-1] = cur;
-    }else{
-      dedup.push(cur);
-    }
-  }
-  return dedup;
-}
-
 function _isBadUniverseSymbol(sym){
   const s = String(sym || "").toUpperCase();
   // 스테이블/래핑/미러/레버리지 등 잡음 최소 필터(가벼운 수준)
@@ -206,18 +152,17 @@ async function refreshUniverseAndGlobals(){
     }
 
     // 2) Bybit 심볼 목록(교차 검증용)
-    // Bybit tickers are helpful but optional (GitHub Pages often blocks CORS).
-let tickers = [];
-let bybitSet = new Set();
-try {
-  const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
-  tickers = by?.result?.list || [];
-  bybitSet = new Set(tickers.map(t => t.symbol));
-} catch (e) {
-  console.warn("[YOPO] Bybit tickers unavailable (CORS/rate-limit). Continue with CoinGecko only.", e);
-  tickers = [];
-  bybitSet = new Set();
-}    // 3) CoinGecko 마켓(상위 200)
+    const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
+
+    const tickers = by?.result?.list || [];
+    const bybitSet = new Set(
+      tickers
+        .map(t => String(t.symbol || "").toUpperCase())
+        .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
+    );
+
+    // 3) CoinGecko 마켓(상위 200)
     //    ✅ 24h + 7d + 30d 변동률까지 받아서 “AI 추천 30종”을 추가 선정
     const marketsUrl = _buildCgMarketsUrl();
     const markets = await fetchJSON(marketsUrl, { timeoutMs: 7000, retry: 1 });
@@ -379,85 +324,68 @@ try {
   }
 }
 
-async function fallbackUniverseFromBybit(max = 30){
+async function fallbackUniverseFromBybit(token = _getOpToken()){
+  _ensureApiStateShape();
+  const apiDot = document.getElementById("api-dot");
   try{
-    let rows = [];
+    if(_isCancelled(token)) return;
 
-    // 1) Try Bybit first
-    try{
-      const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
-      const tickers = by?.result?.list || [];
-      rows = tickers
-        .map(t => {
-          const symbol = t.symbol;
-          const last = parseFloat(t.lastPrice || "0");
-          const chg = parseFloat(t.price24hPcnt || "0") * 100;
-          const turn =
-            parseFloat(t.turnover24h || "0") ||
-            parseFloat(t.turnover || "0") ||
-            parseFloat(t.volume24h || "0") ||
-            parseFloat(t.volume || "0") || 0;
-          return { symbol, last, chg, turn };
-        })
-        .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
-    }catch(e){
-      console.warn("[YOPO] fallbackUniverse: Bybit tickers failed, trying Binance futures.", e);
-      rows = [];
-    }
+    const json = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
 
-    // 2) If Bybit unavailable, try Binance futures (CORS friendly via proxy)
-    if(!rows.length){
-      const bn = await fetchJSON(BINANCE_FUT_TICKERS, { timeoutMs: 9000, retry: 1 });
-      if(Array.isArray(bn)){
-        rows = bn
-          .map(t => {
-            const symbol = t.symbol;
-            const last = parseFloat(t.lastPrice || "0");
-            const chg = parseFloat(t.priceChangePercent || "0");
-            const turn = parseFloat(t.quoteVolume || "0") || 0; // quoteVolume ~ turnover
-            return { symbol, last, chg, turn };
-          })
-          .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
-      }
-    }
+    const tickers = json?.result?.list || [];
 
-    // 3) As last resort, try Binance spot
-    if(!rows.length){
-      const bn = await fetchJSON(BINANCE_SPOT_TICKERS, { timeoutMs: 9000, retry: 1 });
-      if(Array.isArray(bn)){
-        rows = bn
-          .map(t => {
-            const symbol = t.symbol;
-            const last = parseFloat(t.lastPrice || "0");
-            const chg = parseFloat(t.priceChangePercent || "0");
-            const turn = parseFloat(t.quoteVolume || "0") || 0;
-            return { symbol, last, chg, turn };
-          })
-          .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
-      }
-    }
+    const rows = tickers
+      .map(t => {
+        const symbol = String(t.symbol || "").toUpperCase();
+        const last = parseFloat(t.lastPrice || "0");
+        const chg = parseFloat(t.price24hPcnt || "0") * 100;
+        const turn =
+          parseFloat(t.turnover24h || "0") ||
+          parseFloat(t.turnover || "0") ||
+          parseFloat(t.volume24h || "0") ||
+          parseFloat(t.volume || "0") || 0;
+        return { symbol, last, chg, turn };
+      })
+      .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
 
     rows.sort((a,b)=> (b.turn - a.turn));
-    const top = rows.slice(0, max);
+    const top = rows.slice(0, 240);
 
-    state.universe = top.map(r => ({
-      symbol: r.symbol,
-      cg_id: null,
-      name: r.symbol.replace("USDT",""),
-      rank: 999,
-      last: r.last,
-      chg24h: r.chg,
-      turn24h: r.turn
-    }));
-    state.universe_ts = Date.now();
-    state.api_dot = "good";
-    renderUniverseList();
+    // ✅ 총 60개로 확대(자동 30 + AI 추천 30과 동일 규모)
+    const picked = [];
+    for(const r of top){
+      if(_isCancelled(token)) return;
+      if(picked.length >= UNIVERSE_TOTAL_LIMIT) break;
+      if(picked.some(x=>x.s===r.symbol)) continue;
+      picked.push({
+        s: r.symbol,
+        n: r.symbol.replace("USDT",""),
+        cg: null,
+        chg: r.chg,
+        turn: r.turn,
+        score: safeLog10(r.turn)
+      });
+    }
+
+    if(_isCancelled(token)) return;
+
+    state.universe = picked.slice(0, UNIVERSE_TOTAL_LIMIT);
+    state.lastUniverseAt = Date.now();
+    state.lastApiHealth = "warn"; // fallback이니 warn 유지
+    saveState();
+
+    const tsEl = document.getElementById("universe-ts");
+    if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+
+    if(apiDot) apiDot.className = "status-dot warn";
+
+    if(typeof renderUniverseList === "function") renderUniverseList();
   }catch(e){
-    console.error("[YOPO] fallbackUniverseFromBybit failed:", e);
-    state.api_dot = "bad";
+    console.error("Bybit fallback universe failed:", e);
+    if(apiDot) apiDot.className = "status-dot bad";
   }
 }
-
 
 /* =========================
    Market tick + tracking
@@ -522,90 +450,106 @@ async function marketTick(){
 /* =========================
    Candle Fetch
 ========================= */
-async function fetchCandles(symbol, tfRaw, limit = 300) {
-  const key = _cKey(symbol, tfRaw, limit);
+async function _fetchCandlesBybit(symbol, tf, limit){
+  _ensureApiStateShape();
+  const token = _getOpToken();
+  if(_isCancelled(token)) return [];
 
-  // Short cache (helps re-run scan/predict without re-pulling immediately)
-  const cached = __CANDLE_CACHE.get(key);
-  if (cached && (Date.now() - cached.ts) < 25000 && Array.isArray(cached.data) && cached.data.length) {
-    return cached.data;
-  }
-  if (__CANDLE_INFLIGHT.has(key)) return await __CANDLE_INFLIGHT.get(key);
+  const res = await fetchJSON(BYBIT_KLINE(symbol, tf, limit), { timeoutMs: 9000, retry: 1 });
+  if(_isCancelled(token)) return [];
 
-  const p = (async () => {
-    const tf = String(tfRaw);
-    const wantLimit = Math.max(80, Math.min(Number(limit) || 300, 1500));
-    let candles = [];
+  const kline = res?.result?.list || [];
+  const candles = kline.map(row => ({
+    t: Number(row[0]),
+    o: parseFloat(row[1]),
+    h: parseFloat(row[2]),
+    l: parseFloat(row[3]),
+    c: parseFloat(row[4]),
+    v: parseFloat(row[5])
+  })).filter(x => Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
 
-    // 1) Prefer Binance (CORS-friendly on many hosts; plus proxy fallback via fetchJSON)
-    const interval = _tfToBinanceInterval(tfRaw);
-    if (interval) {
-      try {
-        const _BIN_FUT = (typeof BINANCE_FUT_KLINE === "string") ? BINANCE_FUT_KLINE : "https://fapi.binance.com/fapi/v1/klines";
-        const url = `${_BIN_FUT}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${wantLimit}`;
-        const arr = await fetchJSON(url, { timeoutMs: 9000, retry: 1 });
-        if (Array.isArray(arr)) {
-          candles = arr.map(k => ({
-            t: Number(k[0]),
-            o: Number(k[1]),
-            h: Number(k[2]),
-            l: Number(k[3]),
-            c: Number(k[4]),
-            v: Number(k[5])
-          }));
-        }
-      } catch (e) { /* ignore */ }
-
-      if (!candles.length) {
-        try {
-          const _BIN_SPOT = (typeof BINANCE_SPOT_KLINE === "string") ? BINANCE_SPOT_KLINE : "https://api.binance.com/api/v3/klines";
-          const url = `${_BIN_SPOT}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${wantLimit}`;
-          const arr = await fetchJSON(url, { timeoutMs: 9000, retry: 1 });
-          if (Array.isArray(arr)) {
-            candles = arr.map(k => ({
-              t: Number(k[0]),
-              o: Number(k[1]),
-              h: Number(k[2]),
-              l: Number(k[3]),
-              c: Number(k[4]),
-              v: Number(k[5])
-            }));
-          }
-        } catch (e) { /* ignore */ }
-      }
-    }
-
-    // 2) Fallback: Bybit (often blocked by CORS; fetchJSON will auto-proxy)
-    if (!candles.length) {
-      try {
-        const url = (typeof BYBIT_KLINE === "function")
-          ? BYBIT_KLINE(symbol, tf, wantLimit)
-          : `${BYBIT_KLINE}?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tf)}&limit=${wantLimit}`;
-        const by = await fetchJSON(url, { timeoutMs: 11000, retry: 1 });
-        const list = by?.result?.list || [];
-        candles = list.map(k => ({
-          t: Number(k[0]),
-          o: Number(k[1]),
-          h: Number(k[2]),
-          l: Number(k[3]),
-          c: Number(k[4]),
-          v: Number(k[5])
-        }));
-      } catch (e) {
-        candles = [];
-      }
-    }
-
-    candles = _fixCandles(candles);
-    __CANDLE_CACHE.set(key, { ts: Date.now(), data: candles });
-    return candles;
-  })();
-
-  __CANDLE_INFLIGHT.set(key, p);
-  try {
-    return await p;
-  } finally {
-    __CANDLE_INFLIGHT.delete(key);
-  }
+  candles.sort((a,b)=> a.t - b.t);
+  return candles;
 }
 
+async function fetchCandles(symbol, tf, limit){
+  _ensureApiStateShape();
+  const token = _getOpToken();
+  if(_isCancelled(token)) return [];
+  const lim = Number(limit)||380;
+  const key = _cKey(symbol, tf, lim);
+  const now = Date.now();
+  const cached = __CANDLE_CACHE.get(key);
+  if(cached && (now - cached.t) < 25000 && Array.isArray(cached.v) && cached.v.length){
+    return cached.v;
+  }
+  if(__CANDLE_INFLIGHT.has(key)) return __CANDLE_INFLIGHT.get(key);
+
+  const p = (async ()=>{
+    try{
+      const iv = _tfToBinanceInterval(tf);
+      const url = BINANCE_FUT_KLINE(symbol, iv, lim);
+      const r = await fetchJSON(url, {timeoutMs: 9000, retry: 1});
+      if(Array.isArray(r) && r.length){
+        const c = _fixCandles(r.map(x=>({t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5]})));
+        if(c.length){ __CANDLE_CACHE.set(key,{t:Date.now(),v:c}); return c; }
+      }
+    }catch(e){}
+    if(_isCancelled(token)) return [];
+    try{
+      const iv = _tfToBinanceInterval(tf);
+      const url = BINANCE_SPOT_KLINE(symbol, iv, lim);
+      const r = await fetchJSON(url, {timeoutMs: 9000, retry: 1});
+      if(Array.isArray(r) && r.length){
+        const c = _fixCandles(r.map(x=>({t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5]})));
+        if(c.length){ __CANDLE_CACHE.set(key,{t:Date.now(),v:c}); return c; }
+      }
+    }catch(e){}
+    if(_isCancelled(token)) return [];
+    try{
+      const c = _fixCandles(await _fetchCandlesBybit(symbol, tf, lim));
+      if(c.length){ __CANDLE_CACHE.set(key,{t:Date.now(),v:c}); return c; }
+    }catch(e){}
+    return [];
+  })().finally(()=>{ __CANDLE_INFLIGHT.delete(key); });
+
+  __CANDLE_INFLIGHT.set(key,p);
+  return p;
+}
+
+
+/* === Binance Klines (ADD) === */
+const BINANCE_FUT_KLINE = (symbol, interval, limit)=>`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
+const BINANCE_SPOT_KLINE = (symbol, interval, limit)=>`https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
+
+function _tfToBinanceInterval(tf){
+  if(tf==="15") return "15m";
+  if(tf==="30") return "30m";
+  if(tf==="60") return "1h";
+  if(tf==="240") return "4h";
+  if(tf==="D") return "1d";
+  if(tf==="W") return "1w";
+  const n = Number(tf);
+  if(Number.isFinite(n) && n>0) return `${n}m`;
+  return "1h";
+}
+
+const __CANDLE_CACHE = new Map();
+const __CANDLE_INFLIGHT = new Map();
+function _cKey(symbol, tf, limit){ return `${String(symbol).toUpperCase()}|${tf}|${limit}`; }
+
+function _fixCandles(arr){
+  const out = (Array.isArray(arr)?arr:[]).map(x=>{
+    const t = Number(x.t ?? x[0]);
+    const o = Number(x.o ?? x[1]);
+    const h = Number(x.h ?? x[2]);
+    const l = Number(x.l ?? x[3]);
+    const c = Number(x.c ?? x[4]);
+    const v = Number(x.v ?? x[5] ?? 0);
+    return { t, o, h, l, c, v };
+  }).filter(x=>Number.isFinite(x.t) && Number.isFinite(x.c) && Number.isFinite(x.h) && Number.isFinite(x.l));
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+
+async function fetchCandlesSafe(symbol, tf, limit){ return await fetchCandles(symbol, tf, limit); }

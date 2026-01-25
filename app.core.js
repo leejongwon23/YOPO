@@ -61,11 +61,6 @@ function loadState(){
 const BYBIT_TICKERS = "https://api.bybit.com/v5/market/tickers?category=linear";
 const BYBIT_KLINE = (symbol, interval, limit) =>
   `https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
-// ✅ Binance (CORS-friendly; candle fallback)
-const BINANCE_FUT_KLINE  = "https://fapi.binance.com/fapi/v1/klines";
-const BINANCE_SPOT_KLINE = "https://api.binance.com/api/v3/klines";
-
-
 
 const CG_MARKETS = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h";
 const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
@@ -844,26 +839,7 @@ function applyConfidenceTpSl(tpDist, winProb, edge){
 }
 
 function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
-// Guard: if base timeframe candles are missing (CORS/API issue), do not crash; return HOLD safely.
-candlesByTf = candlesByTf || {};
-const _baseCandlesSafe = candlesByTf[baseTfRaw] || [];
-if (!Array.isArray(_baseCandlesSafe) || _baseCandlesSafe.length < 120) {
-  return {
-    symbol,
-    tf: baseTfRaw,
-    type: "HOLD",
-    side: "HOLD",
-    p: 0,
-    score: 0,
-    entry: 0,
-    tp: 0,
-    sl: 0,
-    reason: "데이터 부족(캔들)",
-    explain: { msg: "캔들 데이터가 부족해서 안전하게 HOLD 처리" }
-  };
-}
-
-  const baseCandles = _baseCandlesSafe;
+  const baseCandles = candlesByTf[baseTfRaw];
   const base = computeSignalCore(symbol, baseTfRaw, baseCandles);
 
   const entry = base.entry;
@@ -877,6 +853,20 @@ if (!Array.isArray(_baseCandlesSafe) || _baseCandlesSafe.length < 120) {
   let con = null;
   let mtfExplain = null;
 
+  if(mode === "6TF"){
+    const cores = {};
+    for(const tfRaw of getMTFSet6()){
+      const candles = candlesByTf[tfRaw];
+      if(!candles || candles.length < (SIM_WINDOW + FUTURE_H + 40)) continue;
+      cores[tfRaw] = computeSignalCore(symbol, tfRaw, candles);
+    }
+    const have = Object.keys(cores).length;
+    if(have >= 3){
+      const con6 = consensusMultiTF(cores, getMTFSet6());
+      if(con6) con = con6;
+      mtfExplain = cores;
+    }
+  }
   if(mode === "3TF"){
     const cores = {};
     for(const tfRaw of getMTFSet3()){
@@ -1284,7 +1274,7 @@ function sleep(ms){
   return new Promise(res => setTimeout(res, ms));
 }
 
-async function fetchWithTimeout(url, timeoutMs=12000){
+async function fetchWithTimeout(url, timeoutMs=7000){
   const ctrl = new AbortController();
   const t = setTimeout(()=> ctrl.abort(), Math.max(1000, timeoutMs|0));
   try{
@@ -1296,63 +1286,38 @@ async function fetchWithTimeout(url, timeoutMs=12000){
   }
 }
 
-/* YOPO: network helpers (GitHub Pages CORS/Rate-limit safe) */
-let __YOPO_FETCH_LAST_TS = 0;
-async function _yopoThrottle(minGapMs) {
-  const gap = Number(minGapMs || 0);
-  if (!gap) return;
-  const now = Date.now();
-  const wait = (__YOPO_FETCH_LAST_TS + gap) - now;
-  if (wait > 0) await sleep(wait);
-  __YOPO_FETCH_LAST_TS = Date.now();
-}
-function _yopoProxyUrls(url) {
-  if (!url || typeof url !== "string") return [url];
-  if (url.startsWith("data:") || url.startsWith("blob:")) return [url];
-  const lower = url.toLowerCase();
-  // Avoid double proxying
-  if (lower.includes("allorigins.win") || lower.includes("corsproxy.io")) return [url];
-  // Proxies (best-effort). If direct works, we stop early.
-  const enc = encodeURIComponent(url);
-  return [
-    url,
-    `https://api.allorigins.win/raw?url=${enc}`,
-    `https://corsproxy.io/?${enc}`
-  ];
-}
-
-async function fetchJSON(url, opt = {}) {
-  const timeoutMs = opt.timeoutMs ?? 12000;
-  const retry = opt.retry ?? 2;
-  const minGapMs = opt.minGapMs ?? (window?.YOPO_API_GAP_MS ?? 140);
-  const noProxy = !!opt.noProxy;
+async function fetchJSON(url, opt={}){
+  const timeoutMs = opt.timeoutMs ?? 7000;
+  const retry = opt.retry ?? 0;
 
   let lastErr = null;
-  const candidates = noProxy ? [url] : _yopoProxyUrls(url);
+  for(let i=0;i<=retry;i++){
+    try{
+      const data = await fetchWithTimeout(url, timeoutMs);
 
-  for (let i = 0; i <= retry; i++) {
-    for (let k = 0; k < candidates.length; k++) {
-      const u = candidates[k];
-      try {
-        await _yopoThrottle(minGapMs);
-        const res = await fetchWithTimeout(u, { ...opt, timeoutMs });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const ct = (res.headers.get("content-type") || "").toLowerCase();
-        if (!ct.includes("application/json") && !ct.includes("text/json")) {
-          const txt = await res.text();
-          try { return JSON.parse(txt); } catch { throw new Error("Non-JSON response"); }
-        }
-        return await res.json();
-      } catch (e) {
-        lastErr = e;
-        // If direct failed, try proxy in same retry cycle; otherwise backoff.
-        if (k === candidates.length - 1) await sleep(250 + i * 400);
+      try{
+        state.lastApiHealth = "ok";
+        saveState();
+      }catch(e){}
+
+      return data;
+    }catch(e){
+      lastErr = e;
+
+      try{
+        state.lastApiHealth = "warn";
+        saveState();
+      }catch(_e){}
+
+      if(i < retry){
+        const wait = 250 * Math.pow(2, i);
+        await sleep(wait);
       }
     }
   }
+
   throw lastErr || new Error("fetchJSON failed");
 }
-
 
 /* =========================
    Core bootstrap (가벼운 초기화)
@@ -1378,3 +1343,28 @@ async function fetchJSON(url, opt = {}) {
     }
   }catch(e){}
 })();
+
+
+function getMTFSet6(){ return ['15','30','60','240','D','W']; }
+
+function consensusMultiTF(cores, order){
+  const wMap = { '15':0.8, '30':0.9, '60':1.0, '240':1.1, 'D':1.2, 'W':1.25 };
+  let wSum=0, lSum=0, sSum=0, edgeSum=0, simSum=0, n=0;
+  for(const tf of order){
+    const c = cores[tf];
+    if(!c) continue;
+    const w = wMap[tf] ?? 1.0;
+    const lp = Number(c.longP ?? 0.5), sp = Number(c.shortP ?? 0.5);
+    lSum += lp*w; sSum += sp*w; wSum += w;
+    edgeSum += Number(c.edge ?? 0)*w;
+    simSum += Number(c.simAvg ?? 0)*w;
+    n++;
+  }
+  if(wSum<=0 || n===0) return null;
+  const longP = lSum/wSum, shortP=sSum/wSum;
+  const type = (longP>=shortP) ? 'LONG' : 'SHORT';
+  const winProb = Math.max(longP, shortP);
+  return { longP, shortP, type, winProb, edge: edgeSum/wSum, simAvg: simSum/wSum, nTF:n };
+}
+
+const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard
