@@ -94,7 +94,7 @@
 
         <div class="market-list">
           <div class="section-title">
-            <span>유망 코인 30 (자동 선정)</span>
+            <span>유망 코인 60 (자동 선정)</span>
             <span class="right">
               <span class="status-dot" id="api-dot"></span>
               <span id="universe-ts">업데이트: --</span>
@@ -105,7 +105,10 @@
           <div class="recommend-box">
             <div class="recommend-title">
               <span>추천 TOP (자동 스캔 결과)</span>
-              <span id="scan-status" style="font-weight:950;">대기</span>
+              <span class="right">
+                <button class="mini-link" onclick="openScanListModal()">전체 스캔목록</button>
+                <span id="scan-status" style="font-weight:950;">대기</span>
+              </span>
             </div>
             <div id="rec-container">
               <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
@@ -249,5 +252,49 @@
   <script src="./app.core.js"></script>
   <script src="./app.api.js"></script>
   <script src="./app.features.js"></script>
+
+    <!-- ✅ 통합 스캔 목록 모달 (전체 60종 + BEST 6전략) -->
+    <div class="modal-overlay" id="scan-list-modal">
+      <div class="wide-modal">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
+          <div>
+            <div style="font-size:16px; font-weight:950; color:var(--primary);">통합 스캔 목록 (전체)</div>
+            <div id="scanlist-sub" style="margin-top:4px; font-size:12px; font-weight:900; color:var(--text-sub);">-</div>
+          </div>
+          <button class="modal-btn secondary" style="width:auto; padding:10px 12px;" onclick="closeScanListModal()">닫기</button>
+        </div>
+
+        <div class="modal-actions">
+          <button class="action-btn" style="max-width:280px;" onclick="autoScanUniverseAll({ openModal:true })">
+            <i class="fa-solid fa-binoculars"></i> 다시 스캔(6전략)
+          </button>
+          <button class="action-btn secondary" style="max-width:280px;" onclick="renderScanListModal()">
+            <i class="fa-solid fa-rotate"></i> 표 새로고침
+          </button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>심볼</th>
+                <th>BEST</th>
+                <th>성공확률</th>
+                <th>엣지</th>
+                <th>MTF 합의</th>
+                <th>CONF</th>
+                <th>RISK</th>
+              </tr>
+            </thead>
+            <tbody id="scanlist-body"></tbody>
+          </table>
+        </div>
+
+        <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
+          행을 클릭하면 해당 코인의 <b>통합 예측(6전략)</b> 선택창이 바로 뜹니다.
+        </div>
+      </div>
+    </div>
+
 </body>
 </html>

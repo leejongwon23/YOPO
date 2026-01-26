@@ -962,10 +962,19 @@ function showResultModalAll(symbol, posMap){
   chooseBtn.style.opacity = "0.65";
   chooseBtn.textContent = "선택한 전략으로 추적 등록";
 
-  const tfOrder = ["60","240","D"];
+  const tfOrder = (typeof getMTFSet6==="function") ? getMTFSet6() : ["15","30","60","240","D","W"];
+  const tfLabel = {
+    "15":"초단기 15M",
+    "30":"단기 30M",
+    "60":"단기 1H",
+    "240":"중기 4H",
+    "D":"장기 1D",
+    "W":"초장기 1W"
+  };
+
   cards.innerHTML = tfOrder.map(tfRaw => {
     const p = posMap?.[tfRaw] || null;
-    const label = (tfRaw === "60") ? "단기 1H" : (tfRaw === "240") ? "중기 4H" : "장기 1D";
+    const label = tfLabel[tfRaw] || tfRaw;
 
     if(!p){
       return `
@@ -987,24 +996,28 @@ function showResultModalAll(symbol, posMap){
     const conf = ex?.conf?.tier ?? "-";
 
     const isHold = (p.type === "HOLD");
-    const isLong = (p.type === "LONG");
-    const color = isHold ? "var(--text-sub)" : (isLong ? "var(--success)" : "var(--danger)");
-    const dup = hasActivePosition(p.symbol, p.tfRaw);
-
     const riskHold = isPatternBlockedHold(p);
-    const riskTag = (isHold && riskHold) ? "RISK 가능" : (isHold ? "HOLD" : p.type);
+
+    // HOLD인데 “패턴경고”가 있으면 RISK로 선택 허용(기존 지침 유지)
+    const selectable = (!isHold) || (!!riskHold);
+
+    const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
+    const showType = isHold ? (riskHold ? inferredType : "HOLD") : p.type;
+
+    const riskTag = riskHold ? `<span style="margin-left:6px; color:var(--danger); font-weight:950;">RISK</span>` : "";
+    const style = selectable ? "" : "opacity:.6; cursor:not-allowed;";
+    const onClickAttr = selectable ? `onclick="selectMulti('${tfRaw}')"` : "";
 
     return `
-      <div class="mini-box" data-tf="${tfRaw}"
-           style="cursor:${dup ? "not-allowed" : "pointer"}; opacity:${dup ? .45 : 1}; border:2px solid transparent;"
-           onclick="selectMultiTf('${tfRaw}')">
+      <div class="mini-box" data-tf="${tfRaw}" style="${style}" ${onClickAttr}>
         <small>${label}</small>
-        <div style="color:${color}; font-weight:950;">
-          ${riskTag}${dup ? " (이미 추적중)" : ""}
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+          <div style="font-size:14px; font-weight:950;">${showType}${riskTag}</div>
+          <div style="font-size:12px; font-weight:950; color:var(--text-sub);">${p.tf || tfRaw}</div>
         </div>
-        <div style="margin-top:6px; font-size:11px; color:var(--text-sub); font-weight:900; line-height:1.35;">
+        <div style="margin-top:6px; font-size:12px; color:var(--text-sub); font-weight:900; line-height:1.4;">
           성공확률 ${wp}% · 엣지 ${edge}%<br/>
-          유사도 ${sim}% · MTF ${mtf} · CONF ${conf}
+          유사도 ${sim}% · ${mtf} · ${conf}
         </div>
       </div>
     `;
