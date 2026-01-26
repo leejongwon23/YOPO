@@ -97,19 +97,13 @@ function ensureRuntimeState(){
   if(typeof state.history !== "object" || !state.history){
     state.history = { total: 0, win: 0 };
   }
+
   if(!Number.isFinite(state.history.total)) state.history.total = 0;
   if(!Number.isFinite(state.history.win)) state.history.win = 0;
 
   if(!Array.isArray(state.universe)) state.universe = [];
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
-
-  // ✅ 누락 시 전체 기능이 연쇄로 죽는 런타임 상태들(통합예측/스캔/백테스트 공통)
-  if(typeof state.lastSignalAt !== "object" || !state.lastSignalAt) state.lastSignalAt = {};
-  if(!Array.isArray(state.lastScanResults)) state.lastScanResults = [];
-  if(!Array.isArray(state.lastScanFullList)) state.lastScanFullList = [];
-  if(!Number.isFinite(state.lastScanAt)) state.lastScanAt = 0;
 }
-
 
 /* ==========================================================
    ✅ NEW: 운영 버튼 기능 (누적 리셋 / 추적 전체취소 / 전체 초기화)
@@ -1735,7 +1729,7 @@ function shiftPosEntryTo(pos, newEntry){
   return pos;
 }
 
-async function runBacktestLegacy(){
+async function runBacktest(){
   ensureRuntimeState();
 
   const opToken = beginOperation("BACKTEST");
@@ -1968,7 +1962,7 @@ async function _poolMap(items, limit, worker, onProgress){
 }
 
 // 통합 예측(6전략 전부 표시)
-window.executeAnalysisAll_LEGACY = async function(){
+window.executeAnalysisAll = async function(){
   ensureRuntimeState();
   const opToken = beginOperation("ANALYSIS_ALL_6TF");
   const btn = document.getElementById("predict-all-btn");
@@ -2002,7 +1996,7 @@ window.executeAnalysis = async function(){ return window.executeAnalysisAll(); }
 window.autoScanUniverse = async function(){ return window.autoScanUniverseAll(); };
 
 // 통합 스캔(6전략) — 1회 전체 스캔 유지 + 속도 최적화(동시성/파생TF)
-window.autoScanUniverseAll_LEGACY = async function(){
+window.autoScanUniverseAll = async function(){
   ensureRuntimeState();
   const opToken = beginOperation("SCAN_ALL_6TF");
   const scanBtn = document.getElementById("scan-all-btn");
