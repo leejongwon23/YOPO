@@ -408,6 +408,7 @@ function settleExpiredPositions(){
     }
 
     try{ recordTradeToPatternDB(pos, win); }catch(e){}
+    try{ metaRecordFromPosition(pos, win, reason); }catch(e){}
 
     state.history.total++;
     if(win) state.history.win++;
@@ -1262,6 +1263,7 @@ function trackPositions(symbol, currentPrice){
 
     if(close){
       try{ recordTradeToPatternDB(pos, win); }catch(e){}
+      try{ metaRecordFromPosition(pos, win, exitReason); }catch(e){}
 
       state.history.total++;
       if(win) state.history.win++;

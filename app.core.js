@@ -303,6 +303,114 @@ function consensusAll3Signals(sig60, sig240, sigD){
   };
 }
 
+
+/* ==========================================================
+   ✅ BRAIN UPGRADE v4: META BRAIN (경험 학습)
+   - 예측이 끝날 때마다 (TP/SL 기준) 결과를 저장
+   - 다음 예측에서 '비슷한 상황'의 승률을 보정에 활용
+   - ❌ 예측을 줄이는 필터가 아니라, ✅ 뇌의 선택/확률을 더 똑똑하게 만드는 구조
+   ========================================================== */
+const META_BRAIN_VERSION = 1;
+const META_MIN_SAMPLES = 12;      // 이 이상부터 의미있게 반영
+const META_PRIOR_N = 18;          // 베이지안 완충(초기 흔들림 방지)
+const META_PRIOR_WR = 0.55;       // 초기 기대 승률
+const META_ALPHA_MAX = 0.18;      // winProb 보정 최대치(과대반영 방지)
+
+function ensureMetaBrain(){
+  if(!state.metaBrain || typeof state.metaBrain !== "object"){
+    state.metaBrain = { v: META_BRAIN_VERSION, stats: {} };
+    saveState();
+    return;
+  }
+  if(state.metaBrain.v !== META_BRAIN_VERSION){
+    state.metaBrain = { v: META_BRAIN_VERSION, stats: {} };
+    saveState();
+    return;
+  }
+  if(!state.metaBrain.stats || typeof state.metaBrain.stats !== "object") state.metaBrain.stats = {};
+}
+
+// feature bin helper (단순/안정)
+function _mbin(x, step, min=-9999, max=9999){
+  const v = Number.isFinite(x) ? x : 0;
+  const s = Math.max(step, 1e-9);
+  const b = Math.floor(v / s);
+  return Math.max(min, Math.min(max, b));
+}
+
+function buildMetaKey(symbol, tfRaw, type, regime, ex){
+  // 너무 세밀하면 표본이 쪼개지므로 "굵게" 묶는다.
+  const atrB = _mbin(ex?.atrPct ?? 0, 0.6, -50, 50);
+  const tsB  = _mbin(ex?.trendStrength ?? 0, 0.25, -50, 50);
+  const adxB = _mbin(ex?.adx ?? 0, 5.0, -50, 50);
+  const bwB  = _mbin((ex?.bbWidth ?? 0)*100, 2.0, -50, 50);
+  const vspB = _mbin(ex?.volSpike ?? 0, 0.25, -50, 50);
+  const domB = _mbin(ex?.btcDomUp ?? 0, 0.2, -50, 50);
+
+  return [
+    symbol, tfRaw, type,
+    (regime || "UNK"),
+    `a${atrB}`, `t${tsB}`, `x${adxB}`, `b${bwB}`, `v${vspB}`, `d${domB}`
+  ].join("|");
+}
+
+function metaGetStats(key){
+  ensureMetaBrain();
+  return state.metaBrain.stats[key] || null;
+}
+
+function metaGetWinRate(key){
+  const s = metaGetStats(key);
+  if(!s) return null;
+  const n = Number(s.n || 0);
+  const w = Number(s.w || 0);
+  if(n <= 0) return null;
+  // 베이지안 스무딩
+  const wr = (w + META_PRIOR_WR*META_PRIOR_N) / (n + META_PRIOR_N);
+  return { wr, n, w };
+}
+
+function metaUpdate(key, win){
+  ensureMetaBrain();
+  if(!key) return;
+  const s = state.metaBrain.stats[key] || { n: 0, w: 0 };
+  s.n += 1;
+  if(win) s.w += 1;
+  state.metaBrain.stats[key] = s;
+  saveState();
+}
+
+// 포지션이 종료될 때 features.js에서 호출
+function metaRecordFromPosition(pos, win, reason){
+  try{
+    const ex = pos?.explain || {};
+    const key = ex?.metaKey || null;
+    if(!key) return;
+    // 성공 정의(B): TP가 먼저 닿으면 성공, SL이 먼저 닿으면 실패
+    // TIME 종료는 '불완전'이라 메타 학습에 약하게만 반영(또는 제외)
+    if(reason === "TP" || reason === "SL"){
+      metaUpdate(key, !!win);
+    }else{
+      // TIME 기반은 너무 noisy: 0.35 가중치로만 반영(정수만 저장되므로 1회 중 1회만 반영)
+      // 간단히: TIME은 기록하지 않음(안전)
+    }
+  }catch(e){}
+}
+
+function applyMetaAdjustment(winProb, key){
+  const m = metaGetWinRate(key);
+  if(!m) return { winProb, meta: null };
+
+  const n = m.n;
+  if(n < META_MIN_SAMPLES) return { winProb, meta: { ...m, alpha: 0 } };
+
+  // 샘플이 쌓일수록 alpha ↑ (최대 META_ALPHA_MAX)
+  const alpha = Math.min(META_ALPHA_MAX, (n - META_MIN_SAMPLES) / 80 * META_ALPHA_MAX);
+  const adj = clamp((1-alpha)*winProb + alpha*m.wr, 0.50, 0.99);
+  return { winProb: adj, meta: { ...m, alpha } };
+}
+
+
 function scoreUnifiedSignal(unified){
   const w = Number(unified?.winProbAvg ?? 0);
   const e = Number(unified?.edgeAvg ?? 0);
@@ -719,6 +827,18 @@ function computeSignalCore(symbol, tfRaw, candles){
   const rsi = calcRSI(closes, 14);
   const macd = calcMACD(closes);
   const atrRaw = calcATR(highs, lows, closes, 14);
+  const atrChg = calcATRChange(highs, lows, closes, 14, 14);
+  const bbWidth = calcBollingerBandwidth(closes, 20, 2);
+  const adxPack = calcADX(highs, lows, closes, 14);
+  const adx = adxPack.adx;
+  const plusDI = adxPack.plusDI;
+  const minusDI = adxPack.minusDI;
+
+  const obv = calcOBV(closes, vols);
+  const vroc = calcVolumeROC(vols, 20);
+  const vsp = detectVolumeSpike(vols, 30);
+  const volSpike = vsp.spike;
+
   const volTrend = calcVolumeTrend(vols, 20);
   const ema20 = emaLast(closes, 20);
   const ema50 = emaLast(closes, 50);
@@ -752,8 +872,24 @@ function computeSignalCore(symbol, tfRaw, candles){
   const volBias = clamp(volTrend, -1, 1);
   const trendBias = clamp(trend * 0.8, -1, 1);
 
-  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias);
-  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias);
+  // ✅ v4 추가: 추세강도/변동성구조/거래량 힌트 (가벼운 보정)
+  const adxBias = clamp((adx - 18) / 25, -1, 1); // 18 이하 약함, 40 이상 강함
+  const diBias = clamp((plusDI - minusDI) / 40, -1, 1); // +면 롱, -면 숏 힘
+  const bbBias = clamp((bbWidth - 0.03) / 0.08, -1, 1); // 폭이 넓으면 추세/폭발 가능
+  const atrChgBias = clamp(atrChg * 1.5, -1, 1); // 변동성 급증/급감
+  const volSpikeBias = clamp(volSpike * 1.0, 0, 1); // 스파이크는 방향보다 확신/엣지에 영향
+
+  longP  += (0.12 * rsiBias) + (0.10 * macdBias) + (0.06 * volBias) + (0.08 * trendBias)
+         + (0.05 * adxBias) + (0.06 * diBias) + (0.03 * bbBias) + (0.02 * atrChgBias);
+  shortP += (-0.12 * rsiBias) + (-0.10 * macdBias) + (-0.06 * volBias) + (-0.08 * trendBias)
+         + (0.05 * adxBias) + (-0.06 * diBias) + (0.03 * bbBias) + (0.02 * atrChgBias);
+
+  // 거래량 스파이크는 '확신/엣지' 쪽으로만 약하게 반영 (방향 강제 X)
+  if(volSpikeBias > 0){
+    const bump = 0.02 * volSpikeBias;
+    longP = 0.5 + (longP - 0.5) * (1 + bump);
+    shortP = 0.5 + (shortP - 0.5) * (1 + bump);
+  }
 
   longP  = 0.5 + (longP - 0.5) * domDamp;
   shortP = 0.5 + (shortP - 0.5) * domDamp;
@@ -785,6 +921,14 @@ function computeSignalCore(symbol, tfRaw, candles){
     ema50,
     trend,
     trendStrength,
+    adx,
+    plusDI,
+    minusDI,
+    bbWidth,
+    atrChg,
+    obv,
+    vroc,
+    volSpike,
     btcDom: dom,
     btcDomUp: domUp,
     domHoldBoost
@@ -1037,6 +1181,13 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     ema50: base.ema50,
     trend: base.trend,
     trendStrength: base.trendStrength,
+    adx: base.adx,
+    plusDI: base.plusDI,
+    minusDI: base.minusDI,
+    bbWidth: base.bbWidth,
+    atrChg: base.atrChg,
+    volSpike: base.volSpike,
+    vroc: base.vroc,
     btcDom: base.btcDom,
     btcDomUp: base.btcDomUp,
 
@@ -1066,6 +1217,10 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     pattern: null
   };
 
+  // ✅ v4 META: 현재 상황(레짐/변동성/추세강도/거래량/도미넌스)을 키로 묶어 학습
+  const metaKey = buildMetaKey(symbol, baseTfRaw, type, regime, explainBase);
+  explainBase.metaKey = metaKey;
+
   const sigForPenalty = buildPatternSignature(symbol, baseTfRaw, type, explainBase);
   const avoidMeta = getAvoidMeta(sigForPenalty);
   const pp = computePatternPenalty(avoidMeta);
@@ -1074,6 +1229,16 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     winProbAdj = clamp(winProbAdj - pp.penalty, 0.50, 0.99);
     edgeAdj = Math.max(0, edgeAdj - (pp.penalty * PATTERN_PENALTY_EDGE_W));
   }
+  // ✅ v4 META: 비슷한 상황의 과거 성적(메타 브레인)을 winProb에 반영
+  try{
+    const mAdj = applyMetaAdjustment(winProbAdj, explainBase.metaKey);
+    winProbAdj = mAdj.winProb;
+    explainBase.meta = mAdj.meta;
+  }catch(e){
+    explainBase.meta = null;
+  }
+
+
 
   explainBase.pattern = avoidMeta ? {
     sig: sigForPenalty,
@@ -1114,6 +1279,25 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
       : (entry + (newTpDist/Math.max(rrUsed, 1.01)));
     slPct = Math.abs((sl - entry) / entry) * 100;
   }
+  // ✅ v4: TP/SL '먼저 도달' 경험 확률 (목표=B)
+  // - 과거 캔들에서 'TP 먼저'가 얼마나 자주 나왔는지 추정하여 winProb에 반영
+  try{
+    const baseForProb = baseCandles || candlesByTf[baseTfRaw];
+    const est = estimateTpSlFirstProb(baseForProb, type, tpPct, slPct, FUTURE_H);
+    if(est && typeof est.pTpFirst === "number" && Number.isFinite(est.pTpFirst)){
+      const alphaTp = 0.32; // 과대반영 방지(0~1)
+      winProbAdj = clamp((1-alphaTp)*winProbAdj + alphaTp*est.pTpFirst, 0.50, 0.99);
+      // 엣지도 아주 약하게 보강(승률이 0.5에서 멀수록)
+      edgeAdj = Math.max(0, edgeAdj + (est.pTpFirst - 0.5) * 0.10);
+      explainBase.tpFirst = { pTpFirst: est.pTpFirst, n: est.n, alpha: alphaTp };
+    }else{
+      explainBase.tpFirst = { pTpFirst: null, n: (est && est.n) ? est.n : 0, alpha: 0 };
+    }
+  }catch(e){
+    explainBase.tpFirst = { pTpFirst: null, n: 0, alpha: 0 };
+  }
+
+
 
   if(con.simCount < HOLD_MIN_TOPK) holdReasons.push(`유사패턴 표본 부족(${con.simCount}개)`);
   if(con.simAvg < HOLD_MIN_SIM_AVG) holdReasons.push(`유사도 평균 낮음(${con.simAvg.toFixed(1)}%)`);
@@ -1358,6 +1542,161 @@ function calcATR(highs, lows, closes, period=14){
   const sum = slice.reduce((a,b)=>a+b,0);
   return sum / slice.length;
 }
+
+
+/* ==========================================================
+   ✅ BRAIN UPGRADE v4: 추가 피처(거래량/변동성구조/추세강도)
+   - 브라우저에서 얻는 캔들만으로 계산 가능
+   ========================================================== */
+function calcOBV(closes, vols){
+  const n = Math.min(closes.length, vols.length);
+  if(n < 2) return 0;
+  let obv = 0;
+  for(let i=1;i<n;i++){
+    const v = Number(vols[i] || 0);
+    if(closes[i] > closes[i-1]) obv += v;
+    else if(closes[i] < closes[i-1]) obv -= v;
+  }
+  return obv;
+}
+
+function calcVolumeROC(vols, period=20){
+  if(vols.length < period+1) return 0;
+  const a = Number(vols[vols.length-1] || 0);
+  const b = Number(vols[vols.length-1-period] || 0);
+  if(b <= 0) return 0;
+  return (a - b) / b; // ratio
+}
+
+function detectVolumeSpike(vols, lookback=30){
+  const n = vols.length;
+  if(n < lookback+1) return { spike: 0, z: 0 };
+  const slice = vols.slice(n-lookback);
+  const mean = slice.reduce((s,x)=>s+Number(x||0),0)/lookback;
+  const varr = slice.reduce((s,x)=>{const d=Number(x||0)-mean; return s+d*d;},0)/lookback;
+  const sd = Math.sqrt(Math.max(varr, 1e-9));
+  const last = Number(vols[n-1]||0);
+  const z = (sd>0) ? (last-mean)/sd : 0;
+  // spike: 0~1 (z>2부터 증가)
+  const spike = clamp((z-2)/3, 0, 1);
+  return { spike, z };
+}
+
+function calcBollingerBandwidth(closes, period=20, mult=2){
+  if(closes.length < period) return 0;
+  const slice = closes.slice(closes.length-period);
+  const mean = slice.reduce((s,x)=>s+x,0)/period;
+  const varr = slice.reduce((s,x)=>{const d=x-mean; return s+d*d;},0)/period;
+  const sd = Math.sqrt(Math.max(varr, 0));
+  if(mean === 0) return 0;
+  const upper = mean + mult*sd;
+  const lower = mean - mult*sd;
+  return (upper - lower) / mean; // ratio
+}
+
+function calcATRChange(highs, lows, closes, period=14, lookback=14){
+  if(closes.length < period + lookback + 2) return 0;
+  const atrNow = calcATR(highs, lows, closes, period);
+  const subCloses = closes.slice(0, closes.length-lookback);
+  const subHighs  = highs.slice(0, highs.length-lookback);
+  const subLows   = lows.slice(0, lows.length-lookback);
+  const atrPrev = calcATR(subHighs, subLows, subCloses, period);
+  if(atrPrev <= 0) return 0;
+  return (atrNow - atrPrev) / atrPrev; // ratio
+}
+
+function calcADX(highs, lows, closes, period=14){
+  // Lightweight ADX (Wilder)
+  const n = closes.length;
+  if(n < period + 2) return { adx: 0, plusDI: 0, minusDI: 0 };
+  let tr14=0, plusDM14=0, minusDM14=0;
+  // init
+  for(let i=1;i<=period;i++){
+    const up = highs[i]-highs[i-1];
+    const dn = lows[i-1]-lows[i];
+    const plusDM = (up>dn && up>0) ? up : 0;
+    const minusDM = (dn>up && dn>0) ? dn : 0;
+    const tr = Math.max(
+      highs[i]-lows[i],
+      Math.abs(highs[i]-closes[i-1]),
+      Math.abs(lows[i]-closes[i-1])
+    );
+    tr14 += tr; plusDM14 += plusDM; minusDM14 += minusDM;
+  }
+  let plusDI = (tr14>0) ? (100*(plusDM14/tr14)) : 0;
+  let minusDI = (tr14>0) ? (100*(minusDM14/tr14)) : 0;
+  let dx = (plusDI+minusDI>0) ? (100*Math.abs(plusDI-minusDI)/(plusDI+minusDI)) : 0;
+  let adx = dx;
+
+  // smooth
+  for(let i=period+1;i<n;i++){
+    const up = highs[i]-highs[i-1];
+    const dn = lows[i-1]-lows[i];
+    const plusDM = (up>dn && up>0) ? up : 0;
+    const minusDM = (dn>up && dn>0) ? dn : 0;
+    const tr = Math.max(
+      highs[i]-lows[i],
+      Math.abs(highs[i]-closes[i-1]),
+      Math.abs(lows[i]-closes[i-1])
+    );
+    tr14 = tr14 - (tr14/period) + tr;
+    plusDM14 = plusDM14 - (plusDM14/period) + plusDM;
+    minusDM14 = minusDM14 - (minusDM14/period) + minusDM;
+
+    plusDI = (tr14>0) ? (100*(plusDM14/tr14)) : 0;
+    minusDI = (tr14>0) ? (100*(minusDM14/tr14)) : 0;
+    dx = (plusDI+minusDI>0) ? (100*Math.abs(plusDI-minusDI)/(plusDI+minusDI)) : 0;
+    adx = adx - (adx/period) + dx;
+  }
+  adx = adx / period; // normalize smoothing output
+  return { adx, plusDI, minusDI };
+}
+
+/* ==========================================================
+   ✅ BRAIN UPGRADE v4: TP/SL '먼저 도달' 확률(경험적 추정)
+   - 목표(B): TP 먼저 닿으면 성공, SL 먼저 닿으면 실패
+   ========================================================== */
+function estimateTpSlFirstProb(candles, dir, tpPct, slPct, horizonBars){
+  const n = candles.length;
+  if(n < 50) return { pTpFirst: null, pSlFirst: null, n: 0 };
+  const tpR = Math.max(0.0001, Number(tpPct||0)/100);
+  const slR = Math.max(0.0001, Number(slPct||0)/100);
+  const H = Math.max(5, Math.min(200, Number(horizonBars||48)));
+
+  const maxSamples = 220;
+  const step = 3;
+  let tpFirst=0, slFirst=0, cnt=0;
+
+  for(let i=Math.max(10, n - (maxSamples*step) - H - 2); i < n - H - 2; i+=step){
+    const entry = candles[i].c;
+    if(!Number.isFinite(entry) || entry<=0) continue;
+
+    const tp = (dir==="LONG") ? entry*(1+tpR) : entry*(1-tpR);
+    const sl = (dir==="LONG") ? entry*(1-slR) : entry*(1+slR);
+
+    let hit = null; // "TP"|"SL"|null
+    for(let j=i+1; j<=i+H; j++){
+      const h = candles[j].h, l = candles[j].l;
+      if(dir==="LONG"){
+        if(h >= tp){ hit="TP"; break; }
+        if(l <= sl){ hit="SL"; break; }
+      }else{
+        if(l <= tp){ hit="TP"; break; }
+        if(h >= sl){ hit="SL"; break; }
+      }
+    }
+    if(hit==="TP") tpFirst++;
+    else if(hit==="SL") slFirst++;
+    cnt++;
+  }
+
+  const denom = tpFirst + slFirst;
+  if(denom <= 10) return { pTpFirst: null, pSlFirst: null, n: denom };
+  const pTpFirst = tpFirst/denom;
+  const pSlFirst = slFirst/denom;
+  return { pTpFirst, pSlFirst, n: denom };
+}
+
 
 function calcVolumeTrend(vols, lookback=20){
   if(vols.length < lookback*2) return 0;
