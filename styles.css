@@ -926,3 +926,88 @@ body{
   #market-list-container{ max-height:none; overflow:visible; }
   #history-container{ max-height:none; overflow:visible; padding-right:0; }
 }
+
+
+/* =========================
+   ✅ Wide Modal + Tables (Scan list / Backtest)
+========================= */
+.mini-link{
+  border:0;
+  background:transparent;
+  color:var(--primary);
+  font-weight:950;
+  cursor:pointer;
+  padding:2px 6px;
+  border-radius:10px;
+}
+.mini-link:hover{ background:var(--primary-light); }
+
+.wide-modal{
+  width:min(980px, 94vw);
+  max-height:86vh;
+  overflow:auto;
+  background:var(--card-bg);
+  border-radius:18px;
+  padding:18px;
+  box-shadow:var(--shadow);
+}
+
+.modal-actions{
+  display:flex;
+  gap:10px;
+  margin-top:10px;
+  flex-wrap:wrap;
+}
+
+.table-wrap{
+  margin-top:12px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  overflow:hidden;
+}
+
+.data-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+.data-table thead th{
+  text-align:left;
+  padding:10px 10px;
+  background:var(--secondary);
+  color:var(--text-sub);
+  font-weight:950;
+  border-bottom:1px solid var(--border);
+}
+.data-table tbody td{
+  padding:10px 10px;
+  border-bottom:1px solid var(--border);
+  font-weight:850;
+}
+.data-table tbody tr{
+  cursor:pointer;
+}
+.data-table tbody tr:hover{
+  background:rgba(0,82,255,.06);
+}
+
+.badge-pill{
+  display:inline-block;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:950;
+  border:1px solid var(--border);
+  background:#fff;
+}
+.badge-pill.long{ color:var(--success); }
+.badge-pill.short{ color:var(--danger); }
+.badge-pill.hold{ color:var(--text-sub); }
+
+.bt-summary{
+  margin-top:10px;
+  font-size:12px;
+  font-weight:900;
+  color:var(--text-sub);
+  line-height:1.5;
+}

@@ -638,13 +638,23 @@ function ensureExpiryOnAllPositions(){
 function getMTFSet3(){ return ["60", "240", "D"]; }
 
 function getMTFSet2(baseTf){
-  if(baseTf === "60") return ["60", "240"];
-  if(baseTf === "240") return ["240", "D"];
-  return ["D", "240"];
+  if(baseTf === "15") return ["15","30"];
+  if(baseTf === "30") return ["30","60"];
+  if(baseTf === "60") return ["60","240"];
+  if(baseTf === "240") return ["240","D"];
+  if(baseTf === "D") return ["D","W"];
+  if(baseTf === "W") return ["W","D"];
+  return ["60","240"];
 }
 
 function tfName(tfRaw){
-  return tfRaw === "60" ? "1H" : tfRaw === "240" ? "4H" : "1D";
+  if(tfRaw === "15") return "15M";
+  if(tfRaw === "30") return "30M";
+  if(tfRaw === "60") return "1H";
+  if(tfRaw === "240") return "4H";
+  if(tfRaw === "D") return "1D";
+  if(tfRaw === "W") return "1W";
+  return String(tfRaw);
 }
 
 /* =========================
@@ -953,7 +963,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
       mode,
       agree: con.agree,
       votes: con.votes,
-      weights: (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
+      weights: (mode === "6TF") ? (con.weights || Object.fromEntries(getMTFSet6().map(tf=>[tf,1.0]))) : (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
       detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
         k,
         {
@@ -1028,7 +1038,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   if(tpPct < HOLD_MIN_TP_PCT) holdReasons.push(`목표수익 너무 작음(+${tpPct.toFixed(2)}%)`);
 
   if(con.votes && con.votes.length >= 2){
-    const agreeNeed = (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
+    const agreeNeed = (con.votes.length >= 6) ? Math.max(2, Math.ceil(con.votes.length * 0.60)) : (con.votes.length === 3) ? MTF_MIN_AGREE : 2;
     if(con.agree < agreeNeed){
       holdReasons.push(`타임프레임 합의 부족(${mtfVotes})`);
     }
@@ -1064,7 +1074,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   return {
     id: Date.now(),
     symbol,
-    tf: baseTfRaw === "60" ? "1H" : baseTfRaw === "240" ? "4H" : "1D",
+    tf: tfName(baseTfRaw),
     tfRaw: baseTfRaw,
     type: finalHold ? "HOLD" : type,
     entry,
@@ -1348,23 +1358,50 @@ async function fetchJSON(url, opt={}){
 function getMTFSet6(){ return ['15','30','60','240','D','W']; }
 
 function consensusMultiTF(cores, order){
-  const wMap = { '15':0.8, '30':0.9, '60':1.0, '240':1.1, 'D':1.2, 'W':1.25 };
-  let wSum=0, lSum=0, sSum=0, edgeSum=0, simSum=0, n=0;
+  // 6TF 합의용(가중평균 + 투표/합의수)
+  const wMap = { '15':0.80, '30':0.90, '60':1.00, '240':1.10, 'D':1.20, 'W':1.25 };
+  let wSum=0, lSum=0, sSum=0, edgeSum=0, simSum=0, countSum=0;
+  const votes = [];
+  const weights = {};
   for(const tf of order){
     const c = cores[tf];
     if(!c) continue;
     const w = wMap[tf] ?? 1.0;
+    weights[tf] = w;
     const lp = Number(c.longP ?? 0.5), sp = Number(c.shortP ?? 0.5);
     lSum += lp*w; sSum += sp*w; wSum += w;
     edgeSum += Number(c.edge ?? 0)*w;
     simSum += Number(c.simAvg ?? 0)*w;
-    n++;
+    countSum += Number(c.simCount ?? 0)*w;
+    votes.push(c.type);
   }
-  if(wSum<=0 || n===0) return null;
-  const longP = lSum/wSum, shortP=sSum/wSum;
+  if(wSum<=0 || votes.length===0) return null;
+
+  let longP = lSum/wSum, shortP = sSum/wSum;
+  const sum = Math.max(longP + shortP, 1e-9);
+  longP /= sum; shortP /= sum;
+
   const type = (longP>=shortP) ? 'LONG' : 'SHORT';
   const winProb = Math.max(longP, shortP);
-  return { longP, shortP, type, winProb, edge: edgeSum/wSum, simAvg: simSum/wSum, nTF:n };
+  let edge = Math.abs(longP - shortP);
+
+  let agree = 0;
+  for(const v of votes){ if(v === type) agree++; }
+
+  // 6TF는 최소 60% 합의(6개면 4개) 정도를 요구
+  const need = Math.max(2, Math.ceil(votes.length * 0.60));
+  if(agree < need){
+    edge = Math.max(0, edge - (MTF_DISAGREE_PENALTY * 0.9));
+  }
+
+  return {
+    longP, shortP, type, winProb, edge,
+    simAvg: simSum/wSum,
+    simCount: Math.round(countSum/wSum),
+    agree,
+    votes,
+    weights
+  };
 }
 
 const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard

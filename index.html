@@ -124,9 +124,12 @@
   <div class="analysis-controls">
           <!-- ✅ 차트용 TF 선택은 유지 (차트 표시/수동 분석 기준 TF로도 사용 가능) -->
           <div class="tf-selector">
-            <button class="tf-btn active" onclick="setTF('60', this)">1H (단기)</button>
-            <button class="tf-btn" onclick="setTF('240', this)">4H (중기)</button>
-            <button class="tf-btn" onclick="setTF('D', this)">1D (장기)</button>
+            <button class="tf-btn" onclick="setTF('15', this)">15M</button>
+            <button class="tf-btn" onclick="setTF('30', this)">30M</button>
+            <button class="tf-btn active" onclick="setTF('60', this)">1H</button>
+            <button class="tf-btn" onclick="setTF('240', this)">4H</button>
+            <button class="tf-btn" onclick="setTF('D', this)">1D</button>
+            <button class="tf-btn" onclick="setTF('W', this)">1W</button>
           </div>
 
           <!-- ✅ 통합 예측(단/중/장 한번에) -->
@@ -142,16 +145,10 @@
           <div class="tiny-note" style="margin-top:8px;">
             - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
           </div>
-
-          <!-- ✅ 기존 단일 TF 분석 버튼은 “고급”으로 남겨둠(원하면 제거 가능) -->
-          <button class="action-btn secondary" id="predict-btn" onclick="executeAnalysis()">
-            <i class="fa-solid fa-microchip"></i> (고급) 현재 TF만 분석
-          </button>
-
-          <div class="btn-row">
+<div class="btn-row">
             <!-- ✅ 통합 자동스캔(단/중/장 모두) -->
             <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll?.()">
-              <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(단·중·장)
+              <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(6전략)
             </button>
 
             <!-- 기존 -->
@@ -215,7 +212,7 @@
         <!-- ✅ NEW: 통합(단/중/장) 결과 영역 (features에서 채움) -->
         <div id="multi-results" style="display:none;">
           <div style="font-weight:950; margin:10px 0 6px; color:var(--text-main);">
-            전략별 결과(단·중·장) — 하나를 선택하세요
+            전략별 결과(6전략) — 하나를 선택하세요
           </div>
 
           <!-- 전략 카드 컨테이너 -->
