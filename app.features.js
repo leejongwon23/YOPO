@@ -1006,7 +1006,7 @@ function showResultModalAll(symbol, posMap){
 
     const riskTag = riskHold ? `<span style="margin-left:6px; color:var(--danger); font-weight:950;">RISK</span>` : "";
     const style = selectable ? "" : "opacity:.6; cursor:not-allowed;";
-    const onClickAttr = selectable ? `onclick="selectMulti('${tfRaw}')"` : "";
+    const onClickAttr = selectable ? `onclick="selectMultiTf('${tfRaw}')"` : "";
 
     return `
       <div class="mini-box" data-tf="${tfRaw}" style="${style}" ${onClickAttr}>
@@ -1025,6 +1025,10 @@ function showResultModalAll(symbol, posMap){
 
   modal.style.display = "flex";
 }
+
+
+// ✅ 호환: 과거 onclick="selectMulti(...)" 대응
+function selectMulti(tfRaw){ return selectMultiTf(tfRaw); }
 
 /* 카드 선택 */
 function selectMultiTf(tfRaw){
@@ -1566,6 +1570,7 @@ async function autoScanUniverseAll(opts={}){
           if(!best || item._score > best._score) best = item;
         }
 
+        // ✅ 목록에는 60종 전부 남긴다(추천이 없더라도 표에서 확인 가능)
         if(best){
           fullList.push({
             symbol: best.symbol,
@@ -1579,10 +1584,25 @@ async function autoScanUniverseAll(opts={}){
             confTier: best.confTier,
             isRisk: best.isRisk
           });
-
-          // ✅ 상세 결과는 메모리 캐시에만 보관(로컬스토리지 용량 보호)
-          window.__SCAN_DETAIL_CACHE.set(coin.s, { out, ts: Date.now() });
+        }else{
+          // 추천/베스트가 없으면 HOLD로 기록(스캔 자체는 했다는 뜻)
+          fullList.push({
+            symbol: coin.s,
+            bestTf: "-",
+            bestTfRaw: "-",
+            bestType: "HOLD",
+            winProb: 0.5,
+            edge: 0,
+            mtfAgree: 0,
+            mtfVotes: "",
+            confTier: "-",
+            isRisk: false
+          });
         }
+
+        // ✅ 상세 결과는 메모리 캐시에만 보관(클릭 시 스캔 결과 일치)
+        // - best가 없더라도 out은 저장(모달에서 6전략 카드 표시용)
+        window.__SCAN_DETAIL_CACHE.set(coin.s, { out, ts: Date.now() });
       }catch(e){}
     }
 
@@ -1608,7 +1628,11 @@ async function autoScanUniverseAll(opts={}){
     saveState();
 
     renderScanResults();
-    renderScanListModal?.();
+    // 모달이 열려있거나 요청되면 즉시 최신화
+    try{ renderScanListModal?.(); }catch(e){}
+    if(opts && opts.openModal){
+      try{ openScanListModal(); }catch(e){}
+    }
     if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
   }catch(e){
     if(String(e?.message || "").includes("CANCELLED")){
@@ -1863,6 +1887,7 @@ window.setTF = setTF;
 window.executeAnalysisAll = executeAnalysisAll;
 window.quickAnalyzeAllAndShow = quickAnalyzeAllAndShow;
 window.selectMultiTf = selectMultiTf;
+window.selectMulti = selectMultiTf;
 window.confirmTrackSelected = confirmTrackSelected;
 
 // 스캔
@@ -2044,7 +2069,22 @@ function renderScanListModal(){
   const sub = document.getElementById("scanlist-sub");
   if(!body) return;
 
-  const list = state.lastScanFullList || [];
+  let list = state.lastScanFullList || [];
+  if((!list || !list.length) && Array.isArray(state.lastScanResults) && state.lastScanResults.length){
+    // 폴백: TOP 결과만이라도 표에 노출
+    list = state.lastScanResults.map(x=>({
+      symbol:x.symbol,
+      bestTf:x.tf,
+      bestTfRaw:x.tfRaw,
+      bestType:x.type,
+      winProb:x.winProb,
+      edge:x.edge,
+      mtfAgree:x.mtfAgree,
+      mtfVotes:x.mtfVotes,
+      confTier:x.confTier,
+      isRisk:x.isRisk
+    }));
+  }
   const ts = state.lastScanAt ? new Date(state.lastScanAt) : null;
   if(sub){
     sub.textContent = ts ? `업데이트: ${ts.toLocaleString()} · 총 ${list.length}개` : `총 ${list.length}개`;
@@ -2090,6 +2130,7 @@ async function openFromScanListOrSidebar(symbol){
     const cache = window.__SCAN_DETAIL_CACHE?.get(symbol);
     if(cache && cache.out){
       showResultModalAll(symbol, cache.out);
+      endOperation(opToken);
       return;
     }
 
@@ -2160,6 +2201,8 @@ async function runBacktest(opts={}){
 
     let done=0;
     const totalJobs = (state.universe.length || 0) * tfSet.length;
+    const btProg = document.getElementById("bt-progress");
+    if(btProg) btProg.textContent = totalJobs ? "0%" : "-";
 
     for(let i=0;i<state.universe.length;i++){
       checkCanceled(opToken);
@@ -2242,6 +2285,10 @@ async function runBacktest(opts={}){
         });
 
         done++;
+        if(btProg){
+          const pct = totalJobs ? Math.floor((done/totalJobs)*100) : 0;
+          btProg.textContent = `${pct}%`;
+        }
         if(sum){
           sum.textContent = `진행: ${done}/${totalJobs} · 현재 행: ${sym} ${tfName(baseTf)}`;
         }
@@ -2285,6 +2332,8 @@ async function runBacktest(opts={}){
       btBtn.disabled = false;
       btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
     }
+    const btProg = document.getElementById("bt-progress");
+    if(btProg) btProg.textContent = "";
     endOperation(opToken);
   }
 }

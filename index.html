@@ -153,14 +153,10 @@
             <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll?.()">
               <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(6전략)
             </button>
-
-            <!-- 기존 -->
-            <button class="action-btn secondary" id="scan-btn" onclick="autoScanUniverse()">
-              <i class="fa-solid fa-magnifying-glass-chart"></i> 자동 스캔(기존)
-            </button>
-            <button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
+<button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
               <i class="fa-solid fa-flask"></i> 백테스트
             </button>
+            <span id="bt-progress" class="mini-progress"></span>
           </div>
 
           <!-- 백테스트 결과 -->
@@ -253,7 +249,53 @@
   <script src="./app.api.js"></script>
   <script src="./app.features.js"></script>
 
-    <!-- ✅ 통합 스캔 목록 모달 (전체 60종 + BEST 6전략) -->
+    
+    <!-- ✅ 백테스트 결과 모달 (전체 60종 × 6전략) -->
+    <div class="modal-overlay" id="bt-modal" style="display:none;">
+      <div class="wide-modal">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
+          <div>
+            <div style="font-size:16px; font-weight:950; color:var(--primary);">백테스트 결과 (전체)</div>
+            <div id="bt-summary" style="margin-top:4px; font-size:12px; font-weight:900; color:var(--text-sub);">-</div>
+          </div>
+          <button class="modal-btn secondary" style="width:auto; padding:10px 12px;" onclick="closeBacktestModal()">닫기</button>
+        </div>
+
+        <div class="modal-actions">
+          <button class="action-btn" style="max-width:280px;" onclick="runBacktest({ openModal:true })">
+            <i class="fa-solid fa-flask"></i> 다시 백테스트(6전략)
+          </button>
+          <button class="action-btn secondary" style="max-width:280px;" onclick="openBacktestModal()">
+            <i class="fa-solid fa-window-restore"></i> 창 유지
+          </button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>심볼</th>
+                <th>전략</th>
+                <th>표본</th>
+                <th>승률</th>
+                <th>평균</th>
+                <th>메모</th>
+              </tr>
+            </thead>
+            <tbody id="bt-body">
+              <tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">아직 결과가 없습니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tiny-note" style="margin-top:10px;">
+          - 표는 <b>표본 많은 순 → 승률 높은 순</b>으로 정렬됩니다.<br/>
+          - 행을 클릭하는 기능은 없습니다(결과 확인 전용).
+        </div>
+      </div>
+    </div>
+
+<!-- ✅ 통합 스캔 목록 모달 (전체 60종 + BEST 6전략) -->
     <div class="modal-overlay" id="scan-list-modal">
       <div class="wide-modal">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
