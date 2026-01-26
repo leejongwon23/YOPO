@@ -674,6 +674,37 @@ function getRecentWinRate(symbol, tfRaw, n=20){
   return clamp(hit / total, 0.0, 1.0);
 }
 
+
+// ✅ BRAIN UPGRADE v3: 멀티 윈도우 유사도 앙상블(과적합 완화 + 안정성)
+function calcSimilarityStatsEnsemble(closes, winLen, futureH, step, topK){
+  const w1 = Math.max(25, Math.round(winLen * 0.8));
+  const w2 = Math.max(30, winLen);
+  const w3 = Math.max(35, Math.round(winLen * 1.2));
+
+  const a = calcSimilarityStats(closes, w1, futureH, step, topK);
+  const b = calcSimilarityStats(closes, w2, futureH, step, topK);
+  const c = calcSimilarityStats(closes, w3, futureH, step, topK);
+
+  const wa = Math.max(1, a.count);
+  const wb = Math.max(1, b.count) * 1.15; // 기준 윈도우를 약간 우대
+  const wc = Math.max(1, c.count);
+
+  const sum = wa + wb + wc;
+
+  const longProb = (a.longProb*wa + b.longProb*wb + c.longProb*wc) / sum;
+  const shortProb = (a.shortProb*wa + b.shortProb*wb + c.shortProb*wc) / sum;
+
+  const avgSim = (a.avgSim*wa + b.avgSim*wb + c.avgSim*wc) / sum;
+  const count = Math.round((a.count + b.count + c.count) / 3);
+
+  // 분산(윈도우 간 충돌)을 간단히 계산해서 품질 페널티에 사용
+  const lp = [a.longProb, b.longProb, c.longProb];
+  const mp = (lp[0]+lp[1]+lp[2])/3;
+  const varP = ((lp[0]-mp)**2 + (lp[1]-mp)**2 + (lp[2]-mp)**2)/3;
+
+  return { longProb, shortProb, avgSim, count, varP };
+}
+
 /* =========================
    Signal core (지표/유사도/합의)
 ========================= */
@@ -696,7 +727,9 @@ function computeSignalCore(symbol, tfRaw, candles){
   const trendStrength = (atrRaw > 0) ? (Math.abs(ema20 - ema50) / atrRaw) : 0;
   const atrPct = (entry > 0) ? ((atrRaw / entry) * 100) : 0;
 
-  const sim = calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
+  const sim = (typeof calcSimilarityStatsEnsemble === 'function')
+    ? calcSimilarityStatsEnsemble(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK)
+    : calcSimilarityStats(closes, SIM_WINDOW, FUTURE_H, SIM_STEP, SIM_TOPK);
 
   const dom = (typeof state.btcDom === "number") ? state.btcDom : null;
   const domPrev = (typeof state.btcDomPrev === "number") ? state.btcDomPrev : null;
@@ -742,6 +775,7 @@ function computeSignalCore(symbol, tfRaw, candles){
     edge,
     simAvg: sim.avgSim,
     simCount: sim.count,
+    simVar: (typeof sim.varP === 'number') ? sim.varP : null,
     rsi,
     macdHist: macd.hist,
     atrRaw,
@@ -931,7 +965,49 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
   let edgeAdj = con.edge;
 
   const recent = getRecentWinRate(symbol, baseTfRaw, RECENT_CALIB_N);
-  winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProbAdj + RECENT_CALIB_ALPHA * recent, 0.5, 0.99);
+  const recentDir = getRecentWinRateDir(symbol, baseTfRaw, type, Math.max(8, Math.floor(RECENT_CALIB_N/2)));
+  // 기본 최근성공률 + 방향성 최근성공률을 함께 반영(과도한 흔들림 방지 위해 혼합)
+  const recentMix = clamp(0.65*recent + 0.35*recentDir, 0.0, 1.0);
+  winProbAdj = clamp((1 - RECENT_CALIB_ALPHA) * winProbAdj + RECENT_CALIB_ALPHA * recentMix, 0.5, 0.99);
+  // ✅ NEW: 합의 강도 + 시장상황(regime) 보정
+  const agreeN = Number(con?.agree || 1);
+  // 합의가 높으면 약간 보너스(과대평가 방지로 아주 작게)
+  if(mode === "6TF"){
+    winProbAdj = clamp(winProbAdj + Math.max(0, Math.min(4, agreeN-2)) * 0.006, 0.50, 0.99);
+    edgeAdj = Math.max(0, edgeAdj + Math.max(0, Math.min(4, agreeN-2)) * 0.04);
+    // 합의가 너무 낮으면(충돌) 약간 패널티
+    if(agreeN <= 2) winProbAdj = clamp(winProbAdj - 0.012, 0.50, 0.99);
+  }
+  const regime = classifyRegime(base.trendStrength, base.atrPct);
+  const regAdj = applyRegimeAdjustment(winProbAdj, edgeAdj, regime, agreeN);
+  winProbAdj = regAdj.winProb;
+  edgeAdj = regAdj.edge;
+
+  // ✅ BRAIN UPGRADE v3: 유사도 품질(표본/충돌) 페널티
+  const baseSimCount = Number(base.simCount || 0);
+  const baseSimAvg = Number(con.simAvg || 0);
+  const simVar = (typeof base.simVar === "number") ? base.simVar : null;
+
+  // 표본이 너무 적으면 과신 방지
+  if(baseSimCount <= 1){
+    winProbAdj = clamp(winProbAdj - 0.025, 0.50, 0.99);
+    edgeAdj = Math.max(0, edgeAdj - 0.10);
+  }else if(baseSimCount <= 2){
+    winProbAdj = clamp(winProbAdj - 0.012, 0.50, 0.99);
+    edgeAdj = Math.max(0, edgeAdj - 0.06);
+  }
+
+  // 윈도우 간 충돌(분산 높음) -> 확률/엣지 소폭 감점
+  if(simVar !== null && Number.isFinite(simVar) && simVar > 0.004){
+    const p = clamp((simVar - 0.004) / 0.010, 0, 1); // 0~1
+    winProbAdj = clamp(winProbAdj - 0.018*p, 0.50, 0.99);
+    edgeAdj = Math.max(0, edgeAdj - 0.08*p);
+  }
+
+  // avgSim이 낮은데 확률이 높은 경우 억제
+  if(baseSimAvg < 58 && winProbAdj > 0.62){
+    winProbAdj = clamp(winProbAdj - 0.012, 0.50, 0.99);
+  }
 
   const holdReasons = [];
   const mtfVotes = (con.votes || []).join("/");
@@ -940,11 +1016,17 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
     winProb: winProbAdj,
     winProbRaw: winProbRaw,
     recentWinRate: recent,
+    recentWinRateDir: recentDir,
     longP: con.longP,
     shortP: con.shortP,
     edge: edgeAdj,
     simAvg: con.simAvg,
     simCount: con.simCount,
+    simVar: (typeof base.simVar === 'number') ? base.simVar : null,
+
+    // ✅ NEW: 합의/시장상황
+    agreeN: Number(con?.agree || 1),
+    regime: (typeof regime === "string") ? regime : null,
 
     rsi: base.rsi,
     macdHist: base.macdHist,
@@ -964,6 +1046,7 @@ function buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, mode="3TF"){
       agree: con.agree,
       votes: con.votes,
       weights: (mode === "6TF") ? (con.weights || Object.fromEntries(getMTFSet6().map(tf=>[tf,1.0]))) : (mode === "3TF") ? MTF_WEIGHTS_3TF : MTF_WEIGHTS_2TF,
+      relWeights: (mode === "6TF") ? Object.fromEntries(getMTFSet6().map(tf=>[tf, (typeof getTFReliabilityWeight==='function')?getTFReliabilityWeight(tf):1.0])) : null,
       detail: Object.fromEntries(Object.entries(mtfExplain || {}).map(([k,v]) => ([
         k,
         {
@@ -1151,6 +1234,37 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
   return { longProb, shortProb, avgSim, count };
 }
 
+
+// ✅ BRAIN UPGRADE v3: 멀티 윈도우 유사도 앙상블(과적합 완화 + 안정성)
+function calcSimilarityStatsEnsemble(closes, winLen, futureH, step, topK){
+  const w1 = Math.max(25, Math.round(winLen * 0.8));
+  const w2 = Math.max(30, winLen);
+  const w3 = Math.max(35, Math.round(winLen * 1.2));
+
+  const a = calcSimilarityStats(closes, w1, futureH, step, topK);
+  const b = calcSimilarityStats(closes, w2, futureH, step, topK);
+  const c = calcSimilarityStats(closes, w3, futureH, step, topK);
+
+  const wa = Math.max(1, a.count);
+  const wb = Math.max(1, b.count) * 1.15; // 기준 윈도우를 약간 우대
+  const wc = Math.max(1, c.count);
+
+  const sum = wa + wb + wc;
+
+  const longProb = (a.longProb*wa + b.longProb*wb + c.longProb*wc) / sum;
+  const shortProb = (a.shortProb*wa + b.shortProb*wb + c.shortProb*wc) / sum;
+
+  const avgSim = (a.avgSim*wa + b.avgSim*wb + c.avgSim*wc) / sum;
+  const count = Math.round((a.count + b.count + c.count) / 3);
+
+  // 분산(윈도우 간 충돌)을 간단히 계산해서 품질 페널티에 사용
+  const lp = [a.longProb, b.longProb, c.longProb];
+  const mp = (lp[0]+lp[1]+lp[2])/3;
+  const varP = ((lp[0]-mp)**2 + (lp[1]-mp)**2 + (lp[2]-mp)**2)/3;
+
+  return { longProb, shortProb, avgSim, count, varP };
+}
+
 function returns(seg){
   const out = [];
   for(let i=1;i<seg.length;i++){
@@ -1280,6 +1394,51 @@ function clamp(x, a, b){
   return Math.max(a, Math.min(b, x));
 }
 
+
+/* =========================
+   Regime helpers (NEW)
+   - 시장 상태를 단순 분류해서 (추세/횡보/과변동/저변동)
+     승률/엣지 보정에 사용한다.
+========================= */
+function classifyRegime(trendStrength, atrPct){
+  const ts = Number(trendStrength)||0;
+  const ap = Number(atrPct)||0;
+
+  // ✅ 매우 단순 4분류 (과도한 복잡화 금지)
+  // - TREND: 추세가 확실
+  // - RANGE: 추세 약 + ATR 보통
+  // - VOLATILE: 변동성 과다(휩쏘 위험)
+  // - CALM: 변동성 낮음(수익폭 작음/미세노이즈)
+  if(ts >= 0.55 && ap >= 0.45) return "TREND";
+  if(ap >= 1.25) return "VOLATILE";
+  if(ap <= 0.25) return "CALM";
+  return "RANGE";
+}
+
+function applyRegimeAdjustment(winProb, edge, regime, agree){
+  let wp = Number(winProb); let ed = Number(edge);
+  const ag = Number(agree)||1;
+
+  if(regime === "TREND"){
+    // 추세장이면 합의(agree)가 높을수록 약간 보너스
+    wp = clamp(wp + Math.min(4, Math.max(0, ag-2)) * 0.006, 0.50, 0.99);
+    ed = Math.max(0, ed + Math.min(4, Math.max(0, ag-2)) * 0.05);
+  }else if(regime === "VOLATILE"){
+    // 과변동은 휩쏘 위험 → 승률/엣지 약간 다운 (단, 합의가 높으면 완화)
+    const k = clamp(1 - Math.min(3, ag-1)*0.18, 0.45, 1.0); // agree 높을수록 완화
+    wp = clamp(wp - 0.02 * k, 0.50, 0.99);
+    ed = Math.max(0, ed - 0.12 * k);
+  }else if(regime === "CALM"){
+    // 저변동은 수익폭 작고 노이즈 많음 → 엣지 중심으로 살짝 다운
+    wp = clamp(wp - 0.01, 0.50, 0.99);
+    ed = Math.max(0, ed - 0.08);
+  }else{
+    // RANGE(횡보): 합의 낮으면 약간 패널티
+    if(ag <= 2) wp = clamp(wp - 0.015, 0.50, 0.99);
+  }
+  return { winProb: wp, edge: ed };
+}
+
 function sleep(ms){
   return new Promise(res => setTimeout(res, ms));
 }
@@ -1366,7 +1525,9 @@ function consensusMultiTF(cores, order){
   for(const tf of order){
     const c = cores[tf];
     if(!c) continue;
-    const w = wMap[tf] ?? 1.0;
+    const w0 = wMap[tf] ?? 1.0;
+    const wRel = (typeof getTFReliabilityWeight === 'function') ? getTFReliabilityWeight(tf) : 1.0;
+    const w = w0 * wRel;
     weights[tf] = w;
     const lp = Number(c.longP ?? 0.5), sp = Number(c.shortP ?? 0.5);
     lSum += lp*w; sSum += sp*w; wSum += w;
