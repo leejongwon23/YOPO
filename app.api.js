@@ -86,12 +86,13 @@ function _mapCgToBybitSymbol(cgSymUpper, bybitSet){
 }
 
 /* =========================
-   ✅ Universe sizing (자동 + AI 추천)
-   - 기본 자동 선정 30 + AI 추천 30 = 총 60
+   ✅ Universe sizing (고정 30종)
+   - 목적: 유망 코인 30종만 고정 사용하여
+           통합예측/자동스캔/백테스트가 레이트리밋/지연 없이 안정적으로 동작.
 ========================= */
 const UNIVERSE_BASE_LIMIT  = 30;
-const UNIVERSE_AI_EXTRA    = 30;
-const UNIVERSE_TOTAL_LIMIT = UNIVERSE_BASE_LIMIT + UNIVERSE_AI_EXTRA;
+const UNIVERSE_AI_EXTRA    = 0;
+const UNIVERSE_TOTAL_LIMIT = 30;
 
 // CoinGecko: 24h + 7d + 30d 변동률까지 받아서 “AI 추천(모멘텀)” 스코어를 만든다.
 function _buildCgMarketsUrl(){
@@ -132,35 +133,15 @@ function _momentumScore(m){
 ========================= */
 async function refreshUniverseAndGlobals(){
   _ensureApiStateShape();
-  const token = _getOpToken();
+  const token = _getOpToken(); // ✅ 이 작업 시작 시점 토큰
   const apiDot = document.getElementById("api-dot");
 
-  // ✅ 이 함수는 "절대" 전체를 죽이지 않는다.
-  //   - CoinGecko/외부 API가 막혀도(지연/제한) 최소 유니버스(60)를 구성해
-  //     통합예측/스캔/백테스트가 계속 돌아가게 한다.
   try{
     if(_isCancelled(token)) return;
 
-    // 0) Bybit 티커는 가장 기본 데이터(유니버스/가격)라서 먼저 시도
-    let tickers = [];
+    // 1) BTC 도미넌스 (실패해도 앱은 계속 동작)
     try{
-      const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
-      if(_isCancelled(token)) return;
-      tickers = by?.result?.list || [];
-    }catch(e){
-      tickers = [];
-    }
-
-    // Bybit 심볼 셋(검증/필터)
-    const bybitSet = new Set(
-      (Array.isArray(tickers) ? tickers : [])
-        .map(t => String(t.symbol || "").toUpperCase())
-        .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
-    );
-
-    // 1) (옵션) BTC 도미넌스: 실패해도 치명상 아님
-    try{
-      const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 0 });
+      const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 5000, retry: 0 });
       if(_isCancelled(token)) return;
       const dom = g?.data?.market_cap_percentage?.btc;
       if(typeof dom === "number"){
@@ -174,163 +155,238 @@ async function refreshUniverseAndGlobals(){
       // ignore
     }
 
-    // 2) 기본 유니버스(최소 보장): Bybit 티커만으로 60개 만들기
-    //    - CoinGecko가 막혀도 "스캔/예측/백테스트"가 동작해야 한다.
-    const baseBybit = (Array.isArray(tickers) ? tickers : [])
-      .map(t=>{
-        const s = String(t.symbol || "").toUpperCase();
-        if(!s || !s.endsWith("USDT") || _isBadUniverseSymbol(s)) return null;
-        // Bybit v5: turnover24h / volume24h
-        const turn = Number(t.turnover24h ?? t.turnover_24h ?? t.quoteVolume ?? 0) || 0;
-        const vol  = Number(t.volume24h   ?? t.volume_24h   ?? t.volume      ?? 0) || 0;
-        const chg  = Number(t.price24hPcnt ?? t.price24hPcnt ?? t.priceChangePercent ?? 0) || 0;
-        const score = safeLog10(Math.max(turn,1))*0.65 + safeLog10(Math.max(vol,1))*0.30 + Math.min(Math.abs(chg)*100, 20)*0.05;
-        return { s, n: s.replace("USDT",""), turn, vol, score };
-      })
-      .filter(Boolean)
-      .sort((a,b)=> (b.score - a.score));
+    // 2) Bybit 심볼 목록(교차 검증용)
+    const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
 
-    let basePicked = baseBybit.slice(0, UNIVERSE_TOTAL_LIMIT).map(x=>({ s:x.s, n:x.n, turn:x.turn }));
+    const tickers = by?.result?.list || [];
+    const bybitSet = new Set(
+      tickers
+        .map(t => String(t.symbol || "").toUpperCase())
+        .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
+    );
 
-    // 3) (가능하면) CoinGecko로 이름/모멘텀 보강해서 "더 좋은 60"으로 업데이트
-    //    - 실패해도 basePicked 유지
-    try{
-      const marketsUrl = _buildCgMarketsUrl();
-      const markets = await fetchJSON(marketsUrl, { timeoutMs: 7000, retry: 0 });
-      if(_isCancelled(token)) return;
-
-      const scored = (Array.isArray(markets) ? markets : [])
-        .map(m => {
-          const mc = m?.market_cap ?? 0;
-          const vol = m?.total_volume ?? 0;
-          const chg = m?.price_change_percentage_24h ?? 0;
-
-          const cgSym = String(m?.symbol || "").toUpperCase();
-          const sym = _mapCgToBybitSymbol(cgSym, bybitSet);
-          if(!sym) return null;
-          if(_isBadUniverseSymbol(sym)) return null;
-
-          const score =
-            safeLog10(mc) * 0.48 +
-            safeLog10(vol) * 0.42 +
-            Math.min(Math.abs(chg), 20) * 0.10;
-
-          return {
-            s: sym,
-            n: m?.name || cgSym || sym.replace("USDT",""),
-            cg: m?.id || null,
-            mc, vol, chg,
-            turn: vol,
-            score
-          };
-        })
-        .filter(Boolean)
-        .sort((a,b)=> b.score - a.score);
-
-      const pickedBase = scored.slice(0, UNIVERSE_BASE_LIMIT);
-      const exclude = new Set(pickedBase.map(x => x.s));
-
-      const aiCandidates = (Array.isArray(markets) ? markets : [])
-        .map(m => {
-          const vol = m?.total_volume ?? 0;
-          const cgSym = String(m?.symbol || "").toUpperCase();
-          const sym = _mapCgToBybitSymbol(cgSym, bybitSet);
-
-          if(!sym) return null;
-          if(_isBadUniverseSymbol(sym)) return null;
-          if(exclude.has(sym)) return null;
-          if(!(vol > 5_000_000)) return null;
-
-          const aiScore = _momentumScore(m);
-          if(!(aiScore > 0)) return null;
-
-          return {
-            s: sym,
-            n: m?.name || cgSym || sym.replace("USDT",""),
-            cg: m?.id || null,
-            vol,
-            aiScore
-          };
-        })
-        .filter(Boolean)
-        .sort((a,b)=> b.aiScore - a.aiScore);
-
-      const pickedAI = aiCandidates.slice(0, UNIVERSE_AI_EXTRA);
-
-      const merged = [...pickedBase, ...pickedAI]
-        .slice(0, UNIVERSE_TOTAL_LIMIT)
-        .map(x=>({ s:x.s, n:x.n, cg:x.cg || null, turn: x.turn ?? x.vol ?? 0 }));
-
-      // CG가 성공하면 merged로 교체 (단, 너무 적으면 base 유지)
-      if(Array.isArray(merged) && merged.length >= 20){
-        basePicked = merged;
+    /* =========================================================
+       ✅ FIXED UNIVERSE MODE (30)
+       - CoinGecko markets 호출(상위200 + 7d/30d...)을 완전히 제거하여
+         레이트리밋/지연에 의한 '통합예측/자동스캔/백테스트' 먹통을 방지.
+       - core(app.core.js)의 DEFAULT_CANDIDATES(30)를 그대로 사용.
+       ========================================================= */
+    if(!Array.isArray(state.universe) || state.universe.length === 0){
+      if(Array.isArray(window.DEFAULT_CANDIDATES)){
+        state.universe = window.DEFAULT_CANDIDATES.map(x => ({...x}));
       }
-    }catch(e){
-      // ignore
     }
 
-    // 4) 최종 유니버스 확정
-    //    - 빈 배열이면 최소 하드코딩 TOP(안전장치)
-    if(!Array.isArray(basePicked) || basePicked.length === 0){
-      basePicked = [
-        {s:"BTCUSDT", n:"Bitcoin"},
-        {s:"ETHUSDT", n:"Ethereum"},
-        {s:"BNBUSDT", n:"BNB"},
-        {s:"SOLUSDT", n:"Solana"},
-        {s:"XRPUSDT", n:"XRP"},
-        {s:"ADAUSDT", n:"Cardano"},
-        {s:"DOGEUSDT", n:"Dogecoin"},
-        {s:"AVAXUSDT", n:"Avalanche"},
-        {s:"LINKUSDT", n:"Chainlink"},
-        {s:"MATICUSDT", n:"Polygon"},
-      ];
+    const tMap = new Map();
+    for(const t of tickers){
+      const sym = String(t.symbol || "").toUpperCase();
+      if(!sym || !sym.endsWith("USDT")) continue;
+      if(_isBadUniverseSymbol(sym)) continue;
+      const last = parseFloat(t.lastPrice || "0") || 0;
+      if(!(last > 0)) continue;
+      const chg = (parseFloat(t.price24hPcnt || "0") || 0) * 100;
+      const turn =
+        parseFloat(t.turnover24h || "0") ||
+        parseFloat(t.turnover || "0") ||
+        parseFloat(t.volume24h || "0") ||
+        parseFloat(t.volume || "0") || 0;
+      tMap.set(sym, { last, chg, turn });
     }
 
-    // 중복 제거 + 길이 제한
-    const seen = new Set();
-    const finalUni = [];
-    for(const x of basePicked){
-      const s = String(x?.s || "").toUpperCase();
-      if(!s || seen.has(s)) continue;
-      if(_isBadUniverseSymbol(s)) continue;
-      seen.add(s);
-      finalUni.push({ s, n: x?.n || s.replace("USDT",""), cg: x?.cg || null, turn: x?.turn || 0 });
-      if(finalUni.length >= UNIVERSE_TOTAL_LIMIT) break;
+    // universe 30종을 Bybit 티커 기반으로 업데이트
+    const updated = [];
+    let missing = 0;
+    for(const u of (state.universe || [])){
+      const s = String(u?.s || u?.symbol || "").toUpperCase();
+      if(!s) continue;
+      const r = tMap.get(s);
+      if(!r){
+        missing++;
+        updated.push({ ...u, s });
+        continue;
+      }
+      state.lastPrices[s] = r.last;
+      updated.push({
+        ...u,
+        s,
+        last: r.last,
+        chg: r.chg,
+        turn: r.turn,
+      });
     }
 
-    state.universe = finalUni;
+    state.universe = updated.slice(0, UNIVERSE_TOTAL_LIMIT);
+    state.lastUniverseAt = Date.now();
+    state.lastApiHealth = (missing >= 8) ? "warn" : "ok";
     saveState();
 
-    if(apiDot){
-      apiDot.classList.remove("bad");
-      apiDot.classList.add("ok");
-    }
-  }catch(e){
-    // ✅ 마지막 방어: 어떤 예외가 나도 "빈 유니버스"로 끝내지 않는다.
-    console.error("refreshUniverseAndGlobals fatal:", e);
+    const tsEl = document.getElementById("universe-ts");
+    if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()} · ${state.universe.length}개`;
 
-    try{
-      if(!Array.isArray(state.universe) || state.universe.length === 0){
-        state.universe = [
-          {s:"BTCUSDT", n:"Bitcoin"},
-          {s:"ETHUSDT", n:"Ethereum"},
-          {s:"BNBUSDT", n:"BNB"},
-          {s:"SOLUSDT", n:"Solana"},
-          {s:"XRPUSDT", n:"XRP"},
-          {s:"ADAUSDT", n:"Cardano"},
-          {s:"DOGEUSDT", n:"Dogecoin"},
-          {s:"AVAXUSDT", n:"Avalanche"},
-          {s:"LINKUSDT", n:"Chainlink"},
-          {s:"MATICUSDT", n:"Polygon"},
-        ];
-        saveState();
+    if(apiDot) apiDot.className = (state.lastApiHealth === "ok") ? "status-dot ok" : "status-dot warn";
+    if(typeof renderUniverseList === "function") renderUniverseList();
+    return;
+
+    // 3) CoinGecko 마켓(상위 200)
+    //    ✅ 24h + 7d + 30d 변동률까지 받아서 “AI 추천 30종”을 추가 선정
+    const marketsUrl = _buildCgMarketsUrl();
+    const markets = await fetchJSON(marketsUrl, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
+
+    // (A) 기본 30개: 시총 + 거래량 + 변동성(24h) 가중치
+    const scored = (Array.isArray(markets) ? markets : [])
+      .map(m => {
+        const mc = m?.market_cap ?? 0;
+        const vol = m?.total_volume ?? 0;
+        const chg = m?.price_change_percentage_24h ?? 0;
+
+        const cgSym = String(m?.symbol || "").toUpperCase();
+        const sym = _mapCgToBybitSymbol(cgSym, bybitSet);
+
+        if(!sym) return null;
+        if(_isBadUniverseSymbol(sym)) return null;
+
+        const score =
+          safeLog10(mc) * 0.48 +
+          safeLog10(vol) * 0.42 +
+          Math.min(Math.abs(chg), 20) * 0.10;
+
+        return {
+          s: sym,
+          n: m?.name || cgSym || sym.replace("USDT",""),
+          cg: m?.id || null,
+          mc, vol, chg,
+          turn: vol,
+          score
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=> b.score - a.score);
+
+    const basePicked = scored.slice(0, UNIVERSE_BASE_LIMIT);
+    const exclude = new Set(basePicked.map(x => x.s));
+
+    // (B) AI 추천 30개: 유동성 + 상승 모멘텀(24h/7d/30d) 기준
+    const aiCandidates = (Array.isArray(markets) ? markets : [])
+      .map(m => {
+        const vol = m?.total_volume ?? 0;
+        const cgSym = String(m?.symbol || "").toUpperCase();
+        const sym = _mapCgToBybitSymbol(cgSym, bybitSet);
+
+        if(!sym) return null;
+        if(_isBadUniverseSymbol(sym)) return null;
+        if(exclude.has(sym)) return null;
+
+        // 최소 유동성(USD) 필터: 너무 작은 코인 잡음 방지
+        if(!(vol > 5_000_000)) return null;
+
+        const aiScore = _momentumScore(m);
+        if(!(aiScore > 0)) return null;
+
+        return {
+          s: sym,
+          n: m?.name || cgSym || sym.replace("USDT",""),
+          cg: m?.id || null,
+          mc: m?.market_cap ?? 0,
+          vol,
+          chg: (typeof m?.price_change_percentage_24h === "number") ? m.price_change_percentage_24h : 0,
+          chg7: _getCgPct(m, "price_change_percentage_7d_in_currency") || _getCgPct(m, "price_change_percentage_7d"),
+          chg30: _getCgPct(m, "price_change_percentage_30d_in_currency") || _getCgPct(m, "price_change_percentage_30d"),
+          turn: vol,
+          ai: true,
+          aiScore
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=> b.aiScore - a.aiScore);
+
+    let aiPicked = [];
+    for(const c of aiCandidates){
+      if(_isCancelled(token)) return;
+      if(aiPicked.length >= UNIVERSE_AI_EXTRA) break;
+      if(exclude.has(c.s)) continue;
+      exclude.add(c.s);
+      aiPicked.push(c);
+    }
+
+    // (C) AI 30개가 부족하면: scored(남은 후보)로 채우기
+    if(aiPicked.length < UNIVERSE_AI_EXTRA){
+      for(const c of scored){
+        if(_isCancelled(token)) return;
+        if(aiPicked.length >= UNIVERSE_AI_EXTRA) break;
+        if(exclude.has(c.s)) continue;
+        exclude.add(c.s);
+        aiPicked.push({ ...c, ai: true, aiScore: null });
       }
-    }catch(_e){}
-
-    if(apiDot){
-      apiDot.classList.remove("ok");
-      apiDot.classList.add("bad");
     }
+
+    // (D) 그래도 부족하면: Bybit 거래대금 상위로 마지막 보강
+    if(aiPicked.length < UNIVERSE_AI_EXTRA){
+      const rows = tickers
+        .map(t => {
+          const symbol = String(t.symbol || "").toUpperCase();
+          const last = parseFloat(t.lastPrice || "0");
+          const chg = parseFloat(t.price24hPcnt || "0") * 100;
+          const turn =
+            parseFloat(t.turnover24h || "0") ||
+            parseFloat(t.turnover || "0") ||
+            parseFloat(t.volume24h || "0") ||
+            parseFloat(t.volume || "0") || 0;
+          return { symbol, last, chg, turn };
+        })
+        .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol))
+        .sort((a,b)=> (b.turn - a.turn));
+
+      for(const r of rows){
+        if(_isCancelled(token)) return;
+        if(aiPicked.length >= UNIVERSE_AI_EXTRA) break;
+        if(exclude.has(r.symbol)) continue;
+        exclude.add(r.symbol);
+        aiPicked.push({
+          s: r.symbol,
+          n: r.symbol.replace("USDT",""),
+          cg: null,
+          chg: r.chg,
+          turn: r.turn,
+          mc: null,
+          vol: null,
+          ai: true,
+          aiScore: safeLog10(r.turn)
+        });
+      }
+    }
+
+    const picked = basePicked.concat(aiPicked).slice(0, UNIVERSE_TOTAL_LIMIT);
+
+    // 예외: 너무 적으면(제한/장애) fallback로 완전 대체
+    if(picked.length < 18){
+      console.warn("CG/Bybit cross universe too small -> full fallback");
+      await fallbackUniverseFromBybit(token);
+      if(apiDot) apiDot.className = "status-dot warn";
+      return;
+    }
+
+    if(_isCancelled(token)) return;
+
+    // 정상 반영
+    state.universe = picked.slice(0, UNIVERSE_TOTAL_LIMIT);
+    state.lastUniverseAt = Date.now();
+    state.lastApiHealth = "ok";
+    saveState();
+
+    const tsEl = document.getElementById("universe-ts");
+    if(tsEl) tsEl.innerText = `업데이트: ${new Date(state.lastUniverseAt).toLocaleTimeString()}`;
+
+    if(apiDot) apiDot.className = "status-dot ok";
+
+    if(typeof renderUniverseList === "function") renderUniverseList();
+  }catch(e){
+    console.warn("CoinGecko unavailable -> fallback to Bybit universe", e);
+    if(apiDot) apiDot.className = "status-dot warn";
+    state.lastApiHealth = "warn";
+    saveState();
+    await fallbackUniverseFromBybit(token);
   }
 }
 
@@ -529,8 +585,8 @@ async function fetchCandles(symbol, tf, limit){
 
 
 /* === Binance Klines (ADD) === */
-const BINANCE_FUT_KLINE = (symbol, interval, limit)=>`https://data-api.binance.vision/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
-const BINANCE_SPOT_KLINE = (symbol, interval, limit)=>`https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
+const BINANCE_FUT_KLINE = (symbol, interval, limit)=>`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
+const BINANCE_SPOT_KLINE = (symbol, interval, limit)=>`https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
 
 function _tfToBinanceInterval(tf){
   if(tf==="15") return "15m";

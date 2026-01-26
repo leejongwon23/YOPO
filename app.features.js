@@ -1572,7 +1572,7 @@ async function autoScanUniverseAll(opts={}){
           if(!best || item._score > best._score) best = item;
         }
 
-        // ✅ 목록에는 60종 전부 남긴다(추천이 없더라도 표에서 확인 가능)
+        // ✅ 목록에는 유니버스 전부 남긴다(추천이 없더라도 표에서 확인 가능)
         if(best){
           fullList.push({
             symbol: best.symbol,
