@@ -102,15 +102,6 @@ function ensureRuntimeState(){
   if(!Number.isFinite(state.history.win)) state.history.win = 0;
 
   if(!Array.isArray(state.universe)) state.universe = [];
-
-  // ✅ 유니버스 30종 고정(예전 60종/빈값 방지)
-  if(typeof normalizeUniverse === "function"){
-    const nu = normalizeUniverse(state.universe);
-    if(JSON.stringify(nu) !== JSON.stringify(state.universe)){
-      state.universe = nu;
-      try{ saveState(); }catch(e){}
-    }
-  }
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
 }
 
@@ -718,8 +709,15 @@ async function executeAnalysisAll(){
         out[baseTfRaw] = null;
         continue;
       }
-      const pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-      out[baseTfRaw] = pos;
+      try{
+        const pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+        out[baseTfRaw] = pos;
+      }catch(err){
+        // ✅ 특정 TF/보조TF 데이터가 부족하거나 계산 중 예외가 나도
+        // 전체 통합예측이 "오류"로 죽지 않도록 TF 단위로 무력화한다.
+        console.warn("buildSignalFromCandles_MTF failed:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
 
       // 쿨다운은 "통합 예측 실행 시점" 기준으로 동일하게 걸어둠(단일과 일관성)
       const key = `${symbol}|${baseTfRaw}`;
@@ -772,7 +770,12 @@ async function quickAnalyzeAllAndShow(symbol){
         out[baseTfRaw] = null;
         continue;
       }
-      out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      try{
+        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("buildSignalFromCandles_MTF failed:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
     }
 
     showResultModalAll(symbol, out);
@@ -1614,7 +1617,22 @@ async function autoScanUniverseAll(opts={}){
         // ✅ 상세 결과는 메모리 캐시에만 보관(클릭 시 스캔 결과 일치)
         // - best가 없더라도 out은 저장(모달에서 6전략 카드 표시용)
         window.__SCAN_DETAIL_CACHE.set(coin.s, { out, ts: Date.now() });
-      }catch(e){}
+      }catch(e){
+        // ✅ 개별 코인 실패도 "행"을 남겨서 (총 0개) 현상을 막는다
+        fullList.push({
+          symbol: coin?.s || "?",
+          bestTf: "-",
+          bestTfRaw: "-",
+          bestType: "HOLD",
+          winProb: 0,
+          edge: 0,
+          mtfAgree: 0,
+          mtfVotes: "",
+          confTier: "-",
+          isRisk: false,
+          memo: "API FAIL"
+        });
+      }
     }
 
     // ✅ TOP 추천(화면 박스용) — 상위 12개
@@ -2005,6 +2023,61 @@ window.executeAnalysis = async function(){ return window.executeAnalysisAll(); }
 window.autoScanUniverse = async function(){ return window.autoScanUniverseAll(); };
 
 // 통합 스캔(6전략) — 1회 전체 스캔 유지 + 속도 최적화(동시성/파생TF)
+window.autoScanUniverseAll = async function(){
+  ensureRuntimeState();
+  const opToken = beginOperation("SCAN_ALL_6TF");
+  const scanBtn = document.getElementById("scan-all-btn");
+  const status = document.getElementById("scan-status");
+  if(scanBtn) scanBtn.disabled=true;
+  if(status) status.textContent="통합 스캔(6전략) 시작...";
+  try{
+    const tfs = (typeof getMTFSet6==="function") ? getMTFSet6() : ["15","30","60","240","D","W"];
+    const perTf = {}; for(const tf of tfs) perTf[tf]=[];
+    const uni = Array.isArray(state.universe)?state.universe:[];
+    const limit = 6;
+    await _poolMap(uni, limit, async (coin)=>{
+      const sym = coin?.s || coin?.symbol || coin;
+      const candlesByTf = await _fetchPack6(sym);
+      for(const tfRaw of tfs){
+        const baseCandles = candlesByTf[tfRaw] || [];
+        if(!baseCandles || baseCandles.length < (SIM_WINDOW + FUTURE_H + 40)) continue;
+        const pos = buildSignalFromCandles_MTF(sym, tfRaw, candlesByTf, "6TF");
+        const riskHold = (typeof isPatternBlockedHold==="function") ? isPatternBlockedHold(pos) : false;
+        if(pos.type==="HOLD" && !riskHold) continue;
+
+        const ex = pos.explain || {};
+        const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
+        perTf[tfRaw].push({
+          symbol: pos.symbol, tf: pos.tf,
+          type: (pos.type==="HOLD") ? inferredType : pos.type,
+          score: Number(ex.edge ?? 0),
+          winProb: Number(ex.winProb ?? ex.winP ?? 0),
+          entry: pos.entry, tp: pos.tp, sl: pos.sl,
+          explain: pos.explain || {}
+        });
+      }
+      return true;
+    }, (done,total)=>{
+      if(status) status.textContent = `통합 스캔(6전략) 진행중... (${done}/${total})`;
+    });
+
+    for(const tf of tfs){
+      perTf[tf].sort((a,b)=> (b.score||0)-(a.score||0));
+      perTf[tf] = perTf[tf].slice(0, 30);
+    }
+    state.scanResults = perTf;
+    saveState();
+    if(typeof showScanModalAll==="function") showScanModalAll(perTf);
+    if(status) status.textContent="통합 스캔 완료";
+    toast("통합 스캔(6전략) 완료", "success");
+  }catch(e){
+    if(String(e?.message||"").includes("CANCELLED")){ toast("스캔이 취소되었습니다.","warn"); return; }
+    console.error(e); toast("통합 스캔 중 오류가 발생했습니다. (API 지연/제한 가능)","danger");
+  }finally{
+    endOperation(opToken);
+    if(scanBtn) scanBtn.disabled=false;
+  }
+};
 
 
 /* ==========================================================
@@ -2105,7 +2178,12 @@ async function openFromScanListOrSidebar(symbol){
         out[baseTfRaw] = null;
         continue;
       }
-      out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      try{
+        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("buildSignalFromCandles_MTF failed:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
     }
 
     showResultModalAll(symbol, out);
@@ -2204,8 +2282,13 @@ async function runBacktest(opts={}){
               }
             }
 
-            const pos = buildSignalFromCandles_MTF(sym, baseTf, local, "2TF");
-            if(pos.type === "HOLD") continue;
+            let pos = null;
+            try{
+              pos = buildSignalFromCandles_MTF(sym, baseTf, local, "2TF");
+            }catch(e){
+              pos = null;
+            }
+            if(!pos || pos.type === "HOLD") continue;
 
             const ex = pos.explain || {};
             if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
