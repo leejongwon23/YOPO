@@ -1785,10 +1785,37 @@ function sleep(ms){
 async function fetchWithTimeout(url, timeoutMs=7000){
   const ctrl = new AbortController();
   const t = setTimeout(()=> ctrl.abort(), Math.max(1000, timeoutMs|0));
-  try{
-    const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+
+  // ✅ CORS/네트워크 실패 시 프록시로 자동 우회 (GitHub Pages 대응)
+  const proxyCandidates = [
+    (u)=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u)=>`https://thingproxy.freeboard.io/fetch/${u}`
+  ];
+
+  async function _fetchJson(u){
+    const res = await fetch(u, { signal: ctrl.signal, cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const txt = await res.text();
+    try{ return JSON.parse(txt); }catch(e){
+      // 일부 프록시는 이미 JSON 파싱된 형태를 주기도 함
+      // (여긴 text로 받았으니 parse 실패면 원문을 함께 던짐)
+      throw new Error(`JSON parse failed`);
+    }
+  }
+
+  try{
+    return await _fetchJson(url);
+  }catch(e){
+    // direct fetch가 막히면(대부분 CORS) 프록시 순차 시도
+    let lastErr = e;
+    for(const p of proxyCandidates){
+      try{
+        return await _fetchJson(p(url));
+      }catch(pe){
+        lastErr = pe;
+      }
+    }
+    throw lastErr;
   }finally{
     clearTimeout(t);
   }

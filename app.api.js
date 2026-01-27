@@ -90,13 +90,15 @@ function _mapCgToBybitSymbol(cgSymUpper, bybitSet){
    - 요청사항: 코인목록 15개로 축소 + 자동스캔/통합예측/백테스트 "동일 목록" 사용
    - 목표: 브라우저 환경에서 API 지연/제한으로 인한 반복 오류를 최소화
    ========================================================== */
-const FIXED_UNIVERSE_15 = [
+const FIXED_UNIVERSE_20 = [
   // 메이저
   "BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "ADAUSDT",
   // L1/인프라
   "BNBUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT",
   // 유동성/인지도 상위
-  "DOGEUSDT", "TRXUSDT", "LTCUSDT", "ATOMUSDT", "BCHUSDT"
+  "DOGEUSDT", "TRXUSDT", "LTCUSDT", "ATOMUSDT", "BCHUSDT",
+  // 추가 5종 (대형/고거래량 위주)
+  "SUIUSDT", "OPUSDT", "ARBUSDT", "NEARUSDT", "INJUSDT"
 ];
 
 /* =========================
@@ -104,9 +106,9 @@ const FIXED_UNIVERSE_15 = [
    - 브라우저/무료 API 환경에서 "60/30"은 지연/제한으로 실패가 잦았다.
    - 요청대로 15개 고정 유니버스를 단일 기준으로 사용.
 ========================= */
-const UNIVERSE_BASE_LIMIT  = 15;
+const UNIVERSE_BASE_LIMIT  = 20;
 const UNIVERSE_AI_EXTRA    = 0;
-const UNIVERSE_TOTAL_LIMIT = 15;
+const UNIVERSE_TOTAL_LIMIT = 20;
 
 // CoinGecko: 24h + 7d + 30d 변동률까지 받아서 “AI 추천(모멘텀)” 스코어를 만든다.
 function _buildCgMarketsUrl(){
@@ -180,7 +182,7 @@ async function refreshUniverseAndGlobals(){
     // 3) ✅ 고정 유니버스 15개를 "단일 기준"으로 사용 (요청사항)
     //    - CoinGecko 마켓 호출을 제거하여(=API 1개 절감) 지연/제한 오류를 크게 줄인다.
     //    - Bybit 심볼셋에 존재하지 않는 경우에만 그대로 두고, 캔들 단계에서 Binance fallback이 처리한다.
-    const picked = FIXED_UNIVERSE_15
+    const picked = FIXED_UNIVERSE_20
       .map(s => String(s || "").toUpperCase())
       .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
       .map(s => ({
@@ -248,7 +250,7 @@ async function fallbackUniverseFromBybit(token = _getOpToken()){
         .filter(([sym, v]) => sym && sym.endsWith("USDT") && !_isBadUniverseSymbol(sym))
     );
 
-    const picked = FIXED_UNIVERSE_15
+    const picked = FIXED_UNIVERSE_20
       .map(s => String(s || "").toUpperCase())
       .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
       .map(s => {
