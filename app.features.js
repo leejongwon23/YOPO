@@ -709,15 +709,8 @@ async function executeAnalysisAll(){
         out[baseTfRaw] = null;
         continue;
       }
-      try{
-        const pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-        out[baseTfRaw] = pos;
-      }catch(err){
-        // ✅ 특정 TF/보조TF 데이터가 부족하거나 계산 중 예외가 나도
-        // 전체 통합예측이 "오류"로 죽지 않도록 TF 단위로 무력화한다.
-        console.warn("buildSignalFromCandles_MTF failed:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
+      const pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      out[baseTfRaw] = pos;
 
       // 쿨다운은 "통합 예측 실행 시점" 기준으로 동일하게 걸어둠(단일과 일관성)
       const key = `${symbol}|${baseTfRaw}`;
@@ -770,12 +763,7 @@ async function quickAnalyzeAllAndShow(symbol){
         out[baseTfRaw] = null;
         continue;
       }
-      try{
-        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-      }catch(err){
-        console.warn("buildSignalFromCandles_MTF failed:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
+      out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
     }
 
     showResultModalAll(symbol, out);
@@ -1617,22 +1605,7 @@ async function autoScanUniverseAll(opts={}){
         // ✅ 상세 결과는 메모리 캐시에만 보관(클릭 시 스캔 결과 일치)
         // - best가 없더라도 out은 저장(모달에서 6전략 카드 표시용)
         window.__SCAN_DETAIL_CACHE.set(coin.s, { out, ts: Date.now() });
-      }catch(e){
-        // ✅ 개별 코인 실패도 "행"을 남겨서 (총 0개) 현상을 막는다
-        fullList.push({
-          symbol: coin?.s || "?",
-          bestTf: "-",
-          bestTfRaw: "-",
-          bestType: "HOLD",
-          winProb: 0,
-          edge: 0,
-          mtfAgree: 0,
-          mtfVotes: "",
-          confTier: "-",
-          isRisk: false,
-          memo: "API FAIL"
-        });
-      }
+      }catch(e){}
     }
 
     // ✅ TOP 추천(화면 박스용) — 상위 12개
@@ -2178,12 +2151,7 @@ async function openFromScanListOrSidebar(symbol){
         out[baseTfRaw] = null;
         continue;
       }
-      try{
-        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-      }catch(err){
-        console.warn("buildSignalFromCandles_MTF failed:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
+      out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
     }
 
     showResultModalAll(symbol, out);
@@ -2282,13 +2250,8 @@ async function runBacktest(opts={}){
               }
             }
 
-            let pos = null;
-            try{
-              pos = buildSignalFromCandles_MTF(sym, baseTf, local, "2TF");
-            }catch(e){
-              pos = null;
-            }
-            if(!pos || pos.type === "HOLD") continue;
+            const pos = buildSignalFromCandles_MTF(sym, baseTf, local, "2TF");
+            if(pos.type === "HOLD") continue;
 
             const ex = pos.explain || {};
             if((ex.winProb ?? 0) < BT_MIN_PROB) continue;

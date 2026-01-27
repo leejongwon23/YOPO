@@ -85,30 +85,29 @@ function _mapCgToBybitSymbol(cgSymUpper, bybitSet){
   return null;
 }
 
-/* ==========================================================
-   ✅ FIXED UNIVERSE (15) — Bybit USDT Perp 기준
-   - 요청사항: 코인목록 15개로 축소 + 자동스캔/통합예측/백테스트 "동일 목록" 사용
-   - 목표: 브라우저 환경에서 API 지연/제한으로 인한 반복 오류를 최소화
-   ========================================================== */
-const FIXED_UNIVERSE_20 = [
-  // 메이저
-  "BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "ADAUSDT",
-  // L1/인프라
-  "BNBUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT",
-  // 유동성/인지도 상위
-  "DOGEUSDT", "TRXUSDT", "LTCUSDT", "ATOMUSDT", "BCHUSDT",
-  // 추가 5종 (대형/고거래량 위주)
-  "SUIUSDT", "OPUSDT", "ARBUSDT", "NEARUSDT", "INJUSDT"
+/* =========================
+   ✅ Universe sizing (자동 + AI 추천)
+   - 기본 자동 선정 30 + AI 추천 30 = 총 60
+========================= */
+// =========================
+// ✅ 고정 유니버스 (20개)
+// - 통합예측 / 자동스캔 / 백테스트가 '같은 코인 목록'을 사용하게 강제
+// - Bybit 불안정/CORS/레이트리밋이면 내부 API 로직에서 Binance로 자동 폴백
+// - (요청 폭증) 원인 최소화를 위해 기본 20개로 제한
+// =========================
+const UNIVERSE_TOTAL_LIMIT = 20;
+
+// 15개 유지 + 5개 추가(추천): ATOM, OP, ARB, SUI, NEAR
+// Bybit 선물(USDT Perp)에서 흔히 거래되는 메이저 위주
+const FIXED_UNIVERSE_SYMBOLS = [
+  "BTCUSDT","ETHUSDT","XRPUSDT","SOLUSDT","ADAUSDT",
+  "BNBUSDT","DOGEUSDT","TRXUSDT","TONUSDT","AVAXUSDT",
+  "DOTUSDT","LINKUSDT","MATICUSDT","LTCUSDT","BCHUSDT",
+  "ATOMUSDT","OPUSDT","ARBUSDT","SUIUSDT","NEARUSDT"
 ];
 
-/* =========================
-   ✅ Universe sizing (고정 15)
-   - 브라우저/무료 API 환경에서 "60/30"은 지연/제한으로 실패가 잦았다.
-   - 요청대로 15개 고정 유니버스를 단일 기준으로 사용.
-========================= */
-const UNIVERSE_BASE_LIMIT  = 20;
-const UNIVERSE_AI_EXTRA    = 0;
-const UNIVERSE_TOTAL_LIMIT = 20;
+// 유니버스 고정 강제 스위치
+const FORCE_FIXED_UNIVERSE = true;
 
 // CoinGecko: 24h + 7d + 30d 변동률까지 받아서 “AI 추천(모멘텀)” 스코어를 만든다.
 function _buildCgMarketsUrl(){
@@ -168,6 +167,24 @@ async function refreshUniverseAndGlobals(){
       if(pill) pill.innerText = `BTC DOM: ${dom.toFixed(1)}%`;
     }
 
+    // ✅ 고정 유니버스 모드: 외부 API(시장목록) 호출을 최소화해서 안정성 우선
+    //    (통합예측/스캔/백테스트 모두 동일한 20개 코인만 사용)
+    if(FORCE_FIXED_UNIVERSE){
+      const fixed = FIXED_UNIVERSE_SYMBOLS.slice(0, UNIVERSE_TOTAL_LIMIT).map(sym => {
+        const base = sym.replace("USDT", "");
+        return { s: sym, n: base, cg: null, mc: null, vol: null, chg: 0, turn: 0, score: 0 };
+      });
+
+      state.universe = fixed;
+      state._universeMode = "FIXED";
+      state._universeUpdatedAt = Date.now();
+      saveState();
+
+      if(typeof renderUniverseList === "function") renderUniverseList();
+      if(apiDot){ apiDot.style.background = "#00c076"; }
+      return;
+    }
+
     // 2) Bybit 심볼 목록(교차 검증용)
     const by = await fetchJSON(BYBIT_TICKERS, { timeoutMs: 7000, retry: 1 });
     if(_isCancelled(token)) return;
@@ -179,23 +196,144 @@ async function refreshUniverseAndGlobals(){
         .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
     );
 
-    // 3) ✅ 고정 유니버스 15개를 "단일 기준"으로 사용 (요청사항)
-    //    - CoinGecko 마켓 호출을 제거하여(=API 1개 절감) 지연/제한 오류를 크게 줄인다.
-    //    - Bybit 심볼셋에 존재하지 않는 경우에만 그대로 두고, 캔들 단계에서 Binance fallback이 처리한다.
-    const picked = FIXED_UNIVERSE_20
-      .map(s => String(s || "").toUpperCase())
-      .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
-      .map(s => ({
-        s,
-        n: s.replace("USDT", ""),
-        cg: null,
-        mc: null,
-        vol: null,
-        chg: 0,
-        turn: 0,
-        ai: false,
-        aiScore: null
-      }));
+    // 3) CoinGecko 마켓(상위 200)
+    //    ✅ 24h + 7d + 30d 변동률까지 받아서 “AI 추천 30종”을 추가 선정
+    const marketsUrl = _buildCgMarketsUrl();
+    const markets = await fetchJSON(marketsUrl, { timeoutMs: 7000, retry: 1 });
+    if(_isCancelled(token)) return;
+
+    // (A) 기본 30개: 시총 + 거래량 + 변동성(24h) 가중치
+    const scored = (Array.isArray(markets) ? markets : [])
+      .map(m => {
+        const mc = m?.market_cap ?? 0;
+        const vol = m?.total_volume ?? 0;
+        const chg = m?.price_change_percentage_24h ?? 0;
+
+        const cgSym = String(m?.symbol || "").toUpperCase();
+        const sym = _mapCgToBybitSymbol(cgSym, bybitSet);
+
+        if(!sym) return null;
+        if(_isBadUniverseSymbol(sym)) return null;
+
+        const score =
+          safeLog10(mc) * 0.48 +
+          safeLog10(vol) * 0.42 +
+          Math.min(Math.abs(chg), 20) * 0.10;
+
+        return {
+          s: sym,
+          n: m?.name || cgSym || sym.replace("USDT",""),
+          cg: m?.id || null,
+          mc, vol, chg,
+          turn: vol,
+          score
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=> b.score - a.score);
+
+    const basePicked = scored.slice(0, UNIVERSE_BASE_LIMIT);
+    const exclude = new Set(basePicked.map(x => x.s));
+
+    // (B) AI 추천 30개: 유동성 + 상승 모멘텀(24h/7d/30d) 기준
+    const aiCandidates = (Array.isArray(markets) ? markets : [])
+      .map(m => {
+        const vol = m?.total_volume ?? 0;
+        const cgSym = String(m?.symbol || "").toUpperCase();
+        const sym = _mapCgToBybitSymbol(cgSym, bybitSet);
+
+        if(!sym) return null;
+        if(_isBadUniverseSymbol(sym)) return null;
+        if(exclude.has(sym)) return null;
+
+        // 최소 유동성(USD) 필터: 너무 작은 코인 잡음 방지
+        if(!(vol > 5_000_000)) return null;
+
+        const aiScore = _momentumScore(m);
+        if(!(aiScore > 0)) return null;
+
+        return {
+          s: sym,
+          n: m?.name || cgSym || sym.replace("USDT",""),
+          cg: m?.id || null,
+          mc: m?.market_cap ?? 0,
+          vol,
+          chg: (typeof m?.price_change_percentage_24h === "number") ? m.price_change_percentage_24h : 0,
+          chg7: _getCgPct(m, "price_change_percentage_7d_in_currency") || _getCgPct(m, "price_change_percentage_7d"),
+          chg30: _getCgPct(m, "price_change_percentage_30d_in_currency") || _getCgPct(m, "price_change_percentage_30d"),
+          turn: vol,
+          ai: true,
+          aiScore
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=> b.aiScore - a.aiScore);
+
+    let aiPicked = [];
+    for(const c of aiCandidates){
+      if(_isCancelled(token)) return;
+      if(aiPicked.length >= UNIVERSE_AI_EXTRA) break;
+      if(exclude.has(c.s)) continue;
+      exclude.add(c.s);
+      aiPicked.push(c);
+    }
+
+    // (C) AI 30개가 부족하면: scored(남은 후보)로 채우기
+    if(aiPicked.length < UNIVERSE_AI_EXTRA){
+      for(const c of scored){
+        if(_isCancelled(token)) return;
+        if(aiPicked.length >= UNIVERSE_AI_EXTRA) break;
+        if(exclude.has(c.s)) continue;
+        exclude.add(c.s);
+        aiPicked.push({ ...c, ai: true, aiScore: null });
+      }
+    }
+
+    // (D) 그래도 부족하면: Bybit 거래대금 상위로 마지막 보강
+    if(aiPicked.length < UNIVERSE_AI_EXTRA){
+      const rows = tickers
+        .map(t => {
+          const symbol = String(t.symbol || "").toUpperCase();
+          const last = parseFloat(t.lastPrice || "0");
+          const chg = parseFloat(t.price24hPcnt || "0") * 100;
+          const turn =
+            parseFloat(t.turnover24h || "0") ||
+            parseFloat(t.turnover || "0") ||
+            parseFloat(t.volume24h || "0") ||
+            parseFloat(t.volume || "0") || 0;
+          return { symbol, last, chg, turn };
+        })
+        .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol))
+        .sort((a,b)=> (b.turn - a.turn));
+
+      for(const r of rows){
+        if(_isCancelled(token)) return;
+        if(aiPicked.length >= UNIVERSE_AI_EXTRA) break;
+        if(exclude.has(r.symbol)) continue;
+        exclude.add(r.symbol);
+        aiPicked.push({
+          s: r.symbol,
+          n: r.symbol.replace("USDT",""),
+          cg: null,
+          chg: r.chg,
+          turn: r.turn,
+          mc: null,
+          vol: null,
+          ai: true,
+          aiScore: safeLog10(r.turn)
+        });
+      }
+    }
+
+    const picked = basePicked.concat(aiPicked).slice(0, UNIVERSE_TOTAL_LIMIT);
+
+    // 예외: 너무 적으면(제한/장애) fallback로 완전 대체
+    if(picked.length < 18){
+      console.warn("CG/Bybit cross universe too small -> full fallback");
+      await fallbackUniverseFromBybit(token);
+      if(apiDot) apiDot.className = "status-dot warn";
+      return;
+    }
 
     if(_isCancelled(token)) return;
 
@@ -231,39 +369,38 @@ async function fallbackUniverseFromBybit(token = _getOpToken()){
 
     const tickers = json?.result?.list || [];
 
-    // ✅ fallback에서도 "고정 15"를 유지한다.
-    // (유니버스가 흔들리면 UI/스캔/백테스트가 서로 다른 목록을 보게 된다.)
-    const tmap = new Map(
-      tickers
-        .map(t => {
-          const symbol = String(t.symbol || "").toUpperCase();
-          const last = parseFloat(t.lastPrice || "0");
-          const chg = parseFloat(t.price24hPcnt || "0") * 100;
-          const turn =
-            parseFloat(t.turnover24h || "0") ||
-            parseFloat(t.turnover || "0") ||
-            parseFloat(t.turnover || "0") ||
-            parseFloat(t.volume24h || "0") ||
-            parseFloat(t.volume || "0") || 0;
-          return [symbol, { last, chg, turn }];
-        })
-        .filter(([sym, v]) => sym && sym.endsWith("USDT") && !_isBadUniverseSymbol(sym))
-    );
+    const rows = tickers
+      .map(t => {
+        const symbol = String(t.symbol || "").toUpperCase();
+        const last = parseFloat(t.lastPrice || "0");
+        const chg = parseFloat(t.price24hPcnt || "0") * 100;
+        const turn =
+          parseFloat(t.turnover24h || "0") ||
+          parseFloat(t.turnover || "0") ||
+          parseFloat(t.volume24h || "0") ||
+          parseFloat(t.volume || "0") || 0;
+        return { symbol, last, chg, turn };
+      })
+      .filter(x => x.symbol && x.symbol.endsWith("USDT") && x.last > 0 && !_isBadUniverseSymbol(x.symbol));
 
-    const picked = FIXED_UNIVERSE_20
-      .map(s => String(s || "").toUpperCase())
-      .filter(s => s && s.endsWith("USDT") && !_isBadUniverseSymbol(s))
-      .map(s => {
-        const v = tmap.get(s);
-        return {
-          s,
-          n: s.replace("USDT",""),
-          cg: null,
-          chg: v?.chg ?? 0,
-          turn: v?.turn ?? 0,
-          score: safeLog10(v?.turn ?? 0)
-        };
+    rows.sort((a,b)=> (b.turn - a.turn));
+    const top = rows.slice(0, 240);
+
+    // ✅ 총 60개로 확대(자동 30 + AI 추천 30과 동일 규모)
+    const picked = [];
+    for(const r of top){
+      if(_isCancelled(token)) return;
+      if(picked.length >= UNIVERSE_TOTAL_LIMIT) break;
+      if(picked.some(x=>x.s===r.symbol)) continue;
+      picked.push({
+        s: r.symbol,
+        n: r.symbol.replace("USDT",""),
+        cg: null,
+        chg: r.chg,
+        turn: r.turn,
+        score: safeLog10(r.turn)
       });
+    }
 
     if(_isCancelled(token)) return;
 

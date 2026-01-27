@@ -1782,42 +1782,97 @@ function sleep(ms){
   return new Promise(res => setTimeout(res, ms));
 }
 
-async function fetchWithTimeout(url, timeoutMs=7000){
+/* =========================
+   ✅ Network hardening (GitHub Pages/CORS/Rate-limit)
+   - 동시요청 과다/브라우저 CORS 차단 때문에
+     통합예측/스캔/백테스트가 '오류'로 떨어지는 문제가 반복됨.
+   - 해결:
+     1) 동시 요청 제한(세마포어)
+     2) 요청 최소 간격(스로틀)
+     3) CORS 프록시 폴백(필요 시)
+   ========================= */
+const __net = {
+  inFlight: 0,
+  max: 3,
+  lastAt: 0,
+  minGapMs: 140,
+  q: [],
+};
+
+function __netAcquire(){
+  return new Promise(res=>{
+    const go = async ()=>{
+      if(__net.inFlight < __net.max){
+        __net.inFlight++;
+        const now = Date.now();
+        const wait = Math.max(0, (__net.lastAt + __net.minGapMs) - now);
+        __net.lastAt = now + wait;
+        if(wait) await sleep(wait);
+        return res();
+      }
+      __net.q.push(go);
+    };
+    go();
+  });
+}
+function __netRelease(){
+  __net.inFlight = Math.max(0, __net.inFlight - 1);
+  const next = __net.q.shift();
+  if(next) next();
+}
+
+function __proxyUrls(url){
+  const u = String(url);
+  // GET 전용 프록시. (JSON 엔드포인트용)
+  return [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    `https://r.jina.ai/http/${u.replace(/^https?:\/\//,'')}`,
+    `https://r.jina.ai/https/${u.replace(/^https?:\/\//,'')}`,
+  ];
+}
+
+async function __fetchJsonOnce(url, timeoutMs){
   const ctrl = new AbortController();
   const t = setTimeout(()=> ctrl.abort(), Math.max(1000, timeoutMs|0));
-
-  // ✅ CORS/네트워크 실패 시 프록시로 자동 우회 (GitHub Pages 대응)
-  const proxyCandidates = [
-    (u)=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u)=>`https://thingproxy.freeboard.io/fetch/${u}`
-  ];
-
-  async function _fetchJson(u){
-    const res = await fetch(u, { signal: ctrl.signal, cache: "no-store" });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const txt = await res.text();
-    try{ return JSON.parse(txt); }catch(e){
-      // 일부 프록시는 이미 JSON 파싱된 형태를 주기도 함
-      // (여긴 text로 받았으니 parse 실패면 원문을 함께 던짐)
-      throw new Error(`JSON parse failed`);
-    }
-  }
-
   try{
-    return await _fetchJson(url);
-  }catch(e){
-    // direct fetch가 막히면(대부분 CORS) 프록시 순차 시도
-    let lastErr = e;
-    for(const p of proxyCandidates){
-      try{
-        return await _fetchJson(p(url));
-      }catch(pe){
-        lastErr = pe;
+    const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    // JSON 파싱. (프록시가 텍스트로 줄 수도 있음)
+    try{ return JSON.parse(text); }catch(_){
+      // jina.ai가 앞에 설명을 붙이는 경우가 있어, 마지막 JSON 블록을 시도
+      const m = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])\s*$/);
+      if(m){
+        return JSON.parse(m[1]);
       }
+      throw new Error("JSON_PARSE_FAIL");
     }
-    throw lastErr;
   }finally{
     clearTimeout(t);
+  }
+}
+
+async function fetchWithTimeout(url, timeoutMs=7000){
+  await __netAcquire();
+  try{
+    // 1) direct
+    try{
+      return await __fetchJsonOnce(url, timeoutMs);
+    }catch(e){
+      // 2) 프록시 폴백 (주로 CORS/네트워크 차단)
+      const msg = String(e?.message||e);
+      const isCorsLike = (e?.name === "TypeError") || /Failed to fetch|CORS|NetworkError/i.test(msg);
+      if(!isCorsLike) throw e;
+      const proxies = __proxyUrls(url);
+      let lastErr = e;
+      for(const p of proxies){
+        try{ return await __fetchJsonOnce(p, timeoutMs + 2000); }
+        catch(err){ lastErr = err; }
+      }
+      throw lastErr;
+    }
+  }finally{
+    __netRelease();
   }
 }
 
