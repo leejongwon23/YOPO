@@ -424,39 +424,72 @@ function scoreUnifiedSignal(unified){
    - cg는 확실한 것만 유지 (불확실한 매핑은 생략)
 ========================= */
 const DEFAULT_CANDIDATES = [
-  { s: "BTCUSDT", n: "비트코인", cg: "bitcoin" },
-  { s: "ETHUSDT", n: "이더리움", cg: "ethereum" },
-  { s: "SOLUSDT", n: "솔라나", cg: "solana" },
-  { s: "XRPUSDT", n: "리플", cg: "ripple" },
-  { s: "ADAUSDT", n: "에이다", cg: "cardano" },
-  { s: "DOGEUSDT", n: "도지코인", cg: "dogecoin" },
-  { s: "AVAXUSDT", n: "아발란체", cg: "avalanche-2" },
-  { s: "DOTUSDT", n: "폴카닷", cg: "polkadot" },
-  { s: "LINKUSDT", n: "체인링크", cg: "chainlink" },
-  { s: "POLUSDT", n: "폴리곤", cg: "polygon-ecosystem-token" },
-  { s: "TRXUSDT", n: "트론", cg: "tron" },
-  { s: "BCHUSDT", n: "비트코인캐시", cg: "bitcoin-cash" },
-  { s: "NEARUSDT", n: "니어프로토콜", cg: "near" },
-  { s: "LTCUSDT", n: "라이트코인", cg: "litecoin" },
-  { s: "APTUSDT", n: "앱토스", cg: "aptos" },
-
-  /* ✅ 추가 15개(기본 30 구성) — cg 매핑 불확실은 생략 */
-  { s: "BNBUSDT", n: "바이낸스코인" },
-  { s: "TONUSDT", n: "톤코인" },
-  { s: "SHIBUSDT", n: "시바이누" },
-  { s: "SUIUSDT", n: "수이" },
-  { s: "ARBUSDT", n: "아비트럼" },
-  { s: "OPUSDT", n: "옵티미즘" },
-  { s: "INJUSDT", n: "인젝티브" },
-  { s: "RNDRUSDT", n: "렌더" },
-  { s: "SEIUSDT", n: "세이" },
-  { s: "IMXUSDT", n: "이뮤터블" },
-  { s: "AAVEUSDT", n: "에이브" },
-  { s: "UNIUSDT", n: "유니스왑" },
-  { s: "ETCUSDT", n: "이더리움클래식" },
-  { s: "FILUSDT", n: "파일코인" },
-  { s: "ATOMUSDT", n: "코스모스" }
+  { s:"BTCUSDT", n:"Bitcoin" },
+  { s:"ETHUSDT", n:"Ethereum" },
+  { s:"BNBUSDT", n:"BNB" },
+  { s:"SOLUSDT", n:"Solana" },
+  { s:"XRPUSDT", n:"XRP" },
+  { s:"ADAUSDT", n:"Cardano" },
+  { s:"DOGEUSDT", n:"Dogecoin" },
+  { s:"TRXUSDT", n:"TRON" },
+  { s:"TONUSDT", n:"Toncoin" },
+  { s:"AVAXUSDT", n:"Avalanche" },
+  { s:"LINKUSDT", n:"Chainlink" },
+  { s:"DOTUSDT", n:"Polkadot" },
+  { s:"MATICUSDT", n:"Polygon" },
+  { s:"LTCUSDT", n:"Litecoin" },
+  { s:"BCHUSDT", n:"Bitcoin Cash" },
+  { s:"UNIUSDT", n:"Uniswap" },
+  { s:"ATOMUSDT", n:"Cosmos" },
+  { s:"ETCUSDT", n:"Ethereum Classic" },
+  { s:"XLMUSDT", n:"Stellar" },
+  { s:"FILUSDT", n:"Filecoin" },
+  { s:"APTUSDT", n:"Aptos" },
+  { s:"NEARUSDT", n:"NEAR" },
+  { s:"OPUSDT", n:"Optimism" },
+  { s:"ARBUSDT", n:"Arbitrum" },
+  { s:"SUIUSDT", n:"Sui" },
+  { s:"ICPUSDT", n:"Internet Computer" },
+  { s:"INJUSDT", n:"Injective" },
+  { s:"RNDRUSDT", n:"Render" },
+  { s:"SHIBUSDT", n:"Shiba Inu" },
+  { s:"PEPEUSDT", n:"Pepe" }
 ];
+
+
+// ✅ Universe 정규화(항상 30종으로 고정)
+// - 로컬스토리지에 예전 60종이 남아있어도, 여기서 30으로 강제 동기화한다.
+const UNIVERSE_TARGET_LIMIT = 30;
+function normalizeUniverse(list){
+  try{
+    const arr = Array.isArray(list) ? list : [];
+    const seen = new Set();
+    const out = [];
+    for(const x of arr){
+      const s = String(x?.s || x?.symbol || "").toUpperCase();
+      if(!s || !s.endsWith("USDT")) continue;
+      if(seen.has(s)) continue;
+      seen.add(s);
+      out.push({ s, n: x?.n || x?.name || s.replace("USDT","") });
+      if(out.length >= UNIVERSE_TARGET_LIMIT) break;
+    }
+    // 부족하면 DEFAULT로 채움
+    if(out.length < UNIVERSE_TARGET_LIMIT){
+      for(const d of DEFAULT_CANDIDATES){
+        const s = String(d.s).toUpperCase();
+        if(seen.has(s)) continue;
+        seen.add(s);
+        out.push({ s, n: d.n });
+        if(out.length >= UNIVERSE_TARGET_LIMIT) break;
+      }
+    }
+    // 그래도 0이면 DEFAULT 그대로
+    if(out.length === 0) return DEFAULT_CANDIDATES.slice(0, UNIVERSE_TARGET_LIMIT);
+    return out.slice(0, UNIVERSE_TARGET_LIMIT);
+  }catch(e){
+    return DEFAULT_CANDIDATES.slice(0, UNIVERSE_TARGET_LIMIT);
+  }
+}
 
 /* =========================
    State (전역)
@@ -1904,4 +1937,6 @@ function consensusMultiTF(cores, order){
   };
 }
 
-const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard
+const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 30종으로 정규화
+  state.universe = normalizeUniverse(state.universe);
+

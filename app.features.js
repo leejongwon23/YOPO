@@ -102,6 +102,15 @@ function ensureRuntimeState(){
   if(!Number.isFinite(state.history.win)) state.history.win = 0;
 
   if(!Array.isArray(state.universe)) state.universe = [];
+
+  // ✅ 유니버스 30종 고정(예전 60종/빈값 방지)
+  if(typeof normalizeUniverse === "function"){
+    const nu = normalizeUniverse(state.universe);
+    if(JSON.stringify(nu) !== JSON.stringify(state.universe)){
+      state.universe = nu;
+      try{ saveState(); }catch(e){}
+    }
+  }
   if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
 }
 
@@ -1572,7 +1581,7 @@ async function autoScanUniverseAll(opts={}){
           if(!best || item._score > best._score) best = item;
         }
 
-        // ✅ 목록에는 유니버스 전부 남긴다(추천이 없더라도 표에서 확인 가능)
+        // ✅ 목록에는 60종 전부 남긴다(추천이 없더라도 표에서 확인 가능)
         if(best){
           fullList.push({
             symbol: best.symbol,
@@ -1996,61 +2005,6 @@ window.executeAnalysis = async function(){ return window.executeAnalysisAll(); }
 window.autoScanUniverse = async function(){ return window.autoScanUniverseAll(); };
 
 // 통합 스캔(6전략) — 1회 전체 스캔 유지 + 속도 최적화(동시성/파생TF)
-window.autoScanUniverseAll = async function(){
-  ensureRuntimeState();
-  const opToken = beginOperation("SCAN_ALL_6TF");
-  const scanBtn = document.getElementById("scan-all-btn");
-  const status = document.getElementById("scan-status");
-  if(scanBtn) scanBtn.disabled=true;
-  if(status) status.textContent="통합 스캔(6전략) 시작...";
-  try{
-    const tfs = (typeof getMTFSet6==="function") ? getMTFSet6() : ["15","30","60","240","D","W"];
-    const perTf = {}; for(const tf of tfs) perTf[tf]=[];
-    const uni = Array.isArray(state.universe)?state.universe:[];
-    const limit = 6;
-    await _poolMap(uni, limit, async (coin)=>{
-      const sym = coin?.s || coin?.symbol || coin;
-      const candlesByTf = await _fetchPack6(sym);
-      for(const tfRaw of tfs){
-        const baseCandles = candlesByTf[tfRaw] || [];
-        if(!baseCandles || baseCandles.length < (SIM_WINDOW + FUTURE_H + 40)) continue;
-        const pos = buildSignalFromCandles_MTF(sym, tfRaw, candlesByTf, "6TF");
-        const riskHold = (typeof isPatternBlockedHold==="function") ? isPatternBlockedHold(pos) : false;
-        if(pos.type==="HOLD" && !riskHold) continue;
-
-        const ex = pos.explain || {};
-        const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
-        perTf[tfRaw].push({
-          symbol: pos.symbol, tf: pos.tf,
-          type: (pos.type==="HOLD") ? inferredType : pos.type,
-          score: Number(ex.edge ?? 0),
-          winProb: Number(ex.winProb ?? ex.winP ?? 0),
-          entry: pos.entry, tp: pos.tp, sl: pos.sl,
-          explain: pos.explain || {}
-        });
-      }
-      return true;
-    }, (done,total)=>{
-      if(status) status.textContent = `통합 스캔(6전략) 진행중... (${done}/${total})`;
-    });
-
-    for(const tf of tfs){
-      perTf[tf].sort((a,b)=> (b.score||0)-(a.score||0));
-      perTf[tf] = perTf[tf].slice(0, 30);
-    }
-    state.scanResults = perTf;
-    saveState();
-    if(typeof showScanModalAll==="function") showScanModalAll(perTf);
-    if(status) status.textContent="통합 스캔 완료";
-    toast("통합 스캔(6전략) 완료", "success");
-  }catch(e){
-    if(String(e?.message||"").includes("CANCELLED")){ toast("스캔이 취소되었습니다.","warn"); return; }
-    console.error(e); toast("통합 스캔 중 오류가 발생했습니다. (API 지연/제한 가능)","danger");
-  }finally{
-    endOperation(opToken);
-    if(scanBtn) scanBtn.disabled=false;
-  }
-};
 
 
 /* ==========================================================
