@@ -532,8 +532,13 @@ async function fetchCandles(symbol, tf, limit){
 
 
 /* === Binance Klines (ADD) === */
-const BINANCE_FUT_KLINE = (symbol, interval, limit)=>`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
-const BINANCE_SPOT_KLINE = (symbol, interval, limit)=>`https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Number(limit)||500}`;
+// ✅ Binance candles: use CORS-friendly mirror first (GitHub Pages friendly)
+const BINANCE_FUT_KLINE = "https://data-api.binance.vision/fapi/v1/klines";
+const BINANCE_SPOT_KLINE = "https://data-api.binance.vision/api/v3/klines";
+
+// (Fallbacks are still available for non-browser / relaxed CORS environments)
+const BINANCE_FUT_KLINE_FALLBACK = "https://fapi.binance.com/fapi/v1/klines";
+const BINANCE_SPOT_KLINE_FALLBACK = "https://api.binance.com/api/v3/klines";
 
 function _tfToBinanceInterval(tf){
   if(tf==="15") return "15m";
@@ -546,6 +551,45 @@ function _tfToBinanceInterval(tf){
   if(Number.isFinite(n) && n>0) return `${n}m`;
   return "1h";
 }
+/* =========================
+   Binance Klines (CORS-friendly)
+   - GitHub Pages 같은 브라우저 환경에서 "binance.com"은 CORS로 자주 막힘
+   - 그래서 data-api.binance.vision(미러) → 막히면 공식 도메인 순서로 시도
+========================= */
+async function fetchBinanceKlines(symbol, tf, limit=500, futures=true){
+  const interval = _tfToBinanceInterval(tf);
+  const s = String(symbol||"").toUpperCase();
+  const lim = Math.max(10, Math.min(1500, Number(limit)||500));
+
+  const urls = futures ? [
+    `https://data-api.binance.vision/fapi/v1/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`,
+    `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`
+  ] : [
+    `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`,
+    `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`
+  ];
+
+  let lastErr = null;
+  for(const url of urls){
+    try{
+      const raw = await fetchJSON(url, { timeoutMs: 9000, retry: 1 });
+      if(!Array.isArray(raw) || raw.length===0) throw new Error("EMPTY_KLINES");
+      // normalize
+      return raw.map(k=>({
+        t: Number(k?.[0]),
+        o: Number(k?.[1]),
+        h: Number(k?.[2]),
+        l: Number(k?.[3]),
+        c: Number(k?.[4]),
+        v: Number(k?.[5])
+      })).filter(x=>Number.isFinite(x.t) && Number.isFinite(x.c));
+    }catch(e){
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("BINANCE_KLINES_FAILED");
+}
+
 
 const __CANDLE_CACHE = new Map();
 const __CANDLE_INFLIGHT = new Map();
