@@ -95,12 +95,39 @@ const UNIVERSE_TOTAL_LIMIT = UNIVERSE_BASE_LIMIT + UNIVERSE_AI_EXTRA;
 
 // CoinGecko: 24h + 7d + 30d 변동률까지 받아서 “AI 추천(모멘텀)” 스코어를 만든다.
 function _buildCgMarketsUrl(){
+  // ✅ CG_MARKETS는 (1) CoinGecko 직호출 URL 이거나, (2) Render 서버 프록시(/api/cg/markets)일 수 있다.
+  // - 프록시일 때는 CoinGecko의 쿼리를 그대로 붙여서 서버가 대신 호출하게 한다.
   try{
-    if(typeof CG_MARKETS === "string" && CG_MARKETS.includes("price_change_percentage=")){
-      if(CG_MARKETS.includes("price_change_percentage=24h,7d,30d")) return CG_MARKETS;
-      if(CG_MARKETS.includes("price_change_percentage=24h")){
-        return CG_MARKETS.replace("price_change_percentage=24h", "price_change_percentage=24h,7d,30d");
+    if(typeof CG_MARKETS === "string" && CG_MARKETS.length){
+      // (A) 직호출 URL: 기존 로직 유지 (price_change_percentage 확장)
+      if(CG_MARKETS.includes("api.coingecko.com") || CG_MARKETS.includes("price_change_percentage=")){
+        if(CG_MARKETS.includes("price_change_percentage=24h,7d,30d")) return CG_MARKETS;
+        if(CG_MARKETS.includes("price_change_percentage=24h")){
+          return CG_MARKETS.replace("price_change_percentage=24h", "price_change_percentage=24h,7d,30d");
+        }
+        return CG_MARKETS + (CG_MARKETS.includes("?") ? "&" : "?") + "price_change_percentage=24h,7d,30d";
       }
+
+      // (B) Render 프록시 URL: 쿼리가 없으면 기본 쿼리 붙이기
+      const base = CG_MARKETS;
+      if(!base.includes("?")){
+        return base + "?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h,7d,30d";
+      }
+      // 쿼리가 있는데 price_change_percentage가 없으면 추가
+      if(!base.includes("price_change_percentage=")){
+        return base + "&price_change_percentage=24h,7d,30d";
+      }
+      // 이미 있으면 24h,7d,30d로 보강
+      if(base.includes("price_change_percentage=24h") && !base.includes("price_change_percentage=24h,7d,30d")){
+        return base.replace("price_change_percentage=24h", "price_change_percentage=24h,7d,30d");
+      }
+      return base;
+    }
+  }catch(e){}
+  // 최후 폴백: CoinGecko 직호출
+  return "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h,7d,30d";
+}
+
       return CG_MARKETS + (CG_MARKETS.includes("?") ? "&" : "?") + "price_change_percentage=24h,7d,30d";
     }
   }catch(e){}
@@ -139,7 +166,13 @@ async function refreshUniverseAndGlobals(){
     if(_isCancelled(token)) return;
 
     // 1) BTC 도미넌스
-    const g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 1 });
+    let g = null;
+    try{
+      g = await fetchJSON(CG_GLOBAL, { timeoutMs: 6000, retry: 1 });
+    }catch(e){
+      // ✅ Render 서버가 잠들었거나 장애면 브라우저 직호출로 폴백
+      g = await fetchJSON("https://api.coingecko.com/api/v3/global", { timeoutMs: 6000, retry: 1 });
+    }
     if(_isCancelled(token)) return;
 
     const dom = g?.data?.market_cap_percentage?.btc;
@@ -165,7 +198,14 @@ async function refreshUniverseAndGlobals(){
     // 3) CoinGecko 마켓(상위 200)
     //    ✅ 24h + 7d + 30d 변동률까지 받아서 “AI 추천 30종”을 추가 선정
     const marketsUrl = _buildCgMarketsUrl();
-    const markets = await fetchJSON(marketsUrl, { timeoutMs: 7000, retry: 1 });
+    let markets = null;
+    try{
+      markets = await fetchJSON(marketsUrl, { timeoutMs: 7000, retry: 1 });
+    }catch(e){
+      // ✅ Render 서버(/api/cg/markets)가 잠들었거나 장애면 CoinGecko 직호출로 폴백
+      const direct = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h,7d,30d";
+      markets = await fetchJSON(direct, { timeoutMs: 7000, retry: 1 });
+    }
     if(_isCancelled(token)) return;
 
     // (A) 기본 30개: 시총 + 거래량 + 변동성(24h) 가중치
@@ -561,10 +601,22 @@ async function fetchBinanceKlines(symbol, tf, limit=500, futures=true){
   const s = String(symbol||"").toUpperCase();
   const lim = Math.max(10, Math.min(1500, Number(limit)||500));
 
+  // ✅ 우선순위: Render 서버 캐시(가능하면) → Binance Vision 미러 → 공식 도메인
+  // - Render 서버는 "브라우저 과부하/지연"을 줄이기 위한 캐시 레이어
+  // - 서버가 죽거나 막히면, 브라우저가 직접 호출로 자동 폴백
+  const futProxy  = (typeof BINANCE_FUT_KLINE_PROXY === "string" && BINANCE_FUT_KLINE_PROXY) ? BINANCE_FUT_KLINE_PROXY : null;
+  const spotProxy = (typeof BINANCE_SPOT_KLINE_PROXY === "string" && BINANCE_SPOT_KLINE_PROXY) ? BINANCE_SPOT_KLINE_PROXY : null;
+
   const urls = futures ? [
+    ...(futProxy ? [
+      `${futProxy}?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`
+    ] : []),
     `https://data-api.binance.vision/fapi/v1/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`,
     `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`
   ] : [
+    ...(spotProxy ? [
+      `${spotProxy}?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`
+    ] : []),
     `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`,
     `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=${encodeURIComponent(interval)}&limit=${lim}`
   ];
