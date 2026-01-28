@@ -65,6 +65,59 @@ const BYBIT_KLINE = (symbol, interval, limit) =>
 const CG_MARKETS = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h";
 const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
 
+
+/* =========================
+   ✅ Render Server (API Cache) — Hybrid Mode
+   - 목적: 브라우저가 거래소/코인게코를 직접 많이 때려서 먹통 되는 문제를 해결
+   - 설정: index.html에서 window.YOPO_API_BASE 를 넣으면 서버를 우선 사용
+     예) window.YOPO_API_BASE = "https://yopo-api-cache.onrender.com";
+   - 서버 실패 시: 자동으로 "직접 호출"로 폴백(기존 기능 유지)
+========================= */
+const YOPO_API_BASE = (typeof window !== "undefined" && window.YOPO_API_BASE)
+  ? String(window.YOPO_API_BASE).replace(/\/+$/,"")
+  : "";
+
+// URL을 서버 라우트로 매핑 (서버가 받을 수 있는 것만)
+function _mapToServerUrl(rawUrl){
+  try{
+    if(!YOPO_API_BASE) return null;
+    const u = String(rawUrl || "");
+    // Bybit
+    if(u === BYBIT_TICKERS) return `${YOPO_API_BASE}/api/bybit/tickers`;
+    if(u.startsWith("https://api.bybit.com/v5/market/kline")){
+      const qs = u.includes("?") ? u.slice(u.indexOf("?")) : "";
+      return `${YOPO_API_BASE}/api/bybit/kline${qs}`;
+    }
+    // CoinGecko
+    if(u === CG_GLOBAL) return `${YOPO_API_BASE}/api/cg/global`;
+    if(u.startsWith("https://api.coingecko.com/api/v3/coins/markets")){
+      const qs = u.includes("?") ? u.slice(u.indexOf("?")) : "";
+      return `${YOPO_API_BASE}/api/cg/markets${qs}`;
+    }
+    // Binance (Vision mirror 우선)
+    if(u.startsWith("https://data-api.binance.vision/fapi/v1/klines")){
+      const qs = u.includes("?") ? u.slice(u.indexOf("?")) : "";
+      return `${YOPO_API_BASE}/api/binance/fapi/klines${qs}`;
+    }
+    if(u.startsWith("https://data-api.binance.vision/api/v3/klines")){
+      const qs = u.includes("?") ? u.slice(u.indexOf("?")) : "";
+      return `${YOPO_API_BASE}/api/binance/spot/klines${qs}`;
+    }
+    // (fallback 도메인도 서버로 보내고 싶으면 라우트 추가 가능)
+    if(u.startsWith("https://fapi.binance.com/fapi/v1/klines")){
+      const qs = u.includes("?") ? u.slice(u.indexOf("?")) : "";
+      return `${YOPO_API_BASE}/api/binance/fapi/klines_fallback${qs}`;
+    }
+    if(u.startsWith("https://api.binance.com/api/v3/klines")){
+      const qs = u.includes("?") ? u.slice(u.indexOf("?")) : "";
+      return `${YOPO_API_BASE}/api/binance/spot/klines_fallback${qs}`;
+    }
+    return null;
+  }catch(e){
+    return null;
+  }
+}
+
 /* =========================
    Similarity / Analysis Params
 ========================= */
@@ -1866,12 +1919,37 @@ async function fetchJSON(url, opt={}){
   const timeoutMs = opt.timeoutMs ?? 9000;
   const retry = opt.retry ?? 1;
 
-  // 동일 URL 동시 요청은 1개로 합치기
+  // ✅ 서버(렌더) 우선 사용: 서버가 실패하면 원래 URL로 자동 폴백(기존 기능 유지)
+  const serverUrl = _mapToServerUrl(url);
+
+  // inflight 키는 "원본 URL" 기준(중복 합치기)
   if(__net.inflight.has(url)) return __net.inflight.get(url);
 
   const job = __netEnqueue(async ()=>{
     let lastErr = null;
 
+    // 0) 서버 먼저 1회 시도(짧게)
+    if(serverUrl){
+      try{
+        const controller = new AbortController();
+        const to = setTimeout(()=>controller.abort(), Math.min(timeoutMs, 8000));
+        const res = await fetch(serverUrl, { signal: controller.signal, cache: "no-store" });
+        clearTimeout(to);
+
+        if(res.ok){
+          const ct = res.headers.get("content-type") || "";
+          const data = ct.includes("application/json") ? await res.json() : await res.text();
+          __net.failStreak = 0;
+          __net.gapMs = Math.max(200, Math.floor(__net.gapMs * 0.9));
+          return data;
+        }
+        // 서버가 4xx/5xx면 폴백(직접 호출)
+      }catch(e){
+        // 서버 네트워크 실패면 폴백
+      }
+    }
+
+    // 1) 원래 URL(직접 호출) — 기존 로직 그대로
     for(let i=0;i<=retry;i++){
       try{
         const controller = new AbortController();
@@ -1889,7 +1967,6 @@ async function fetchJSON(url, opt={}){
         const ct = res.headers.get("content-type") || "";
         const data = ct.includes("application/json") ? await res.json() : await res.text();
 
-        // 성공: 실패 누적 리셋 + 간격 완화
         __net.failStreak = 0;
         __net.gapMs = Math.max(200, Math.floor(__net.gapMs * 0.9));
         return data;
@@ -1897,12 +1974,10 @@ async function fetchJSON(url, opt={}){
       }catch(err){
         lastErr = err;
 
-        // 실패 누적: 간격 증가(429/timeout 방어)
         __net.failStreak += 1;
         const bump = (err?.status === 429) ? 600 : 250;
         __net.gapMs = Math.min(__net.maxGapMs, __net.gapMs + bump);
 
-        // 재시도 전 backoff
         if(i < retry){
           const backoff = Math.min(1500, 250 * (i+1) + (__net.failStreak * 80));
           await __netSleep(backoff);

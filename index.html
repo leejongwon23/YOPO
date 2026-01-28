@@ -245,7 +245,11 @@
   <script src="https://s3.tradingview.com/tv.js"></script>
 
   <!-- ✅ JS (순서 절대 고정: core → api → features) -->
-  <script src="./app.core.js"></script>
+  <script>
+  // ✅ Render API Cache Server (선택 B)
+  window.YOPO_API_BASE = "https://yopo-api-cache.onrender.com";
+</script>
+<script src="./app.core.js"></script>
   <script src="./app.api.js"></script>
   <script src="./app.features.js"></script>
 
