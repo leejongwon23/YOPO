@@ -494,6 +494,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   try{ await refreshUniverseAndGlobals(); }catch(e){}
   try{ await marketTick(); }catch(e){}
 
+  // ✅ Render Free sleep 방지: 주기적으로 /ping 호출 (서버가 잠들면 자동 깨움)
+  try{
+    if(typeof YOPO_PING === "string" && YOPO_PING.length && typeof fetchJSON === "function"){
+      fetchJSON(YOPO_PING, { timeoutMs: 4000, retry: 0 }).catch(()=>{});
+      setInterval(()=>{ fetchJSON(YOPO_PING, { timeoutMs: 4000, retry: 0 }).catch(()=>{}); }, 25000);
+    }
+  }catch(e){}
+
   /* ✅ FIX: app.api.js 로드 실패/순서 꼬임으로 marketTick/refresh...가 없으면
      기존 setInterval(marketTick, ...)에서 ReferenceError로 부트가 중단되어
      "카운트다운/정산/통계" 루프가 안 걸릴 수 있음 → 반드시 가드 */
@@ -564,7 +572,7 @@ function initChart(){
   wrap.innerHTML = "";
   new TradingView.widget({
     autosize:true,
-    symbol:"BYBIT:" + state.symbol,
+    symbol:"BINANCE:" + state.symbol,
     interval:state.tf,
     timezone:"Asia/Seoul",
     theme:"light",
@@ -1516,46 +1524,169 @@ function updateStatsUI(){
 async function autoScanUniverseAll(opts={}){
   ensureRuntimeState();
 
-  const opToken = beginOperation("SCAN_ALL_SERVER");
+  const opToken = beginOperation("SCAN_ALL");
+
   const scanBtn = document.getElementById("scan-all-btn");
   const status = document.getElementById("scan-status");
   if(scanBtn) scanBtn.disabled = true;
-  if(status) status.textContent = "통합 스캔(서버) 중...";
+  if(status) status.textContent = "통합 스캔 중...";
+
+  // ✅ in-memory cache (클릭 결과가 스캔 결과와 달라지는 문제 방지)
+  if(!window.__SCAN_DETAIL_CACHE) window.__SCAN_DETAIL_CACHE = new Map();
 
   try{
-    const symbols = (state.universe||[]).map(x=>x.s).filter(Boolean);
-    if(!symbols.length){
-      toast("코인 목록이 비어있습니다. 먼저 목록을 불러오세요.", "warn");
-      return;
+    const tfSet = getMTFSet6(); // 6 strategies
+    const fullList = [];
+
+    for(let i=0;i<state.universe.length;i++){
+      checkCanceled(opToken);
+
+      const coin = state.universe[i];
+      if(status) status.textContent = `통합 스캔 중... (${i+1}/${state.universe.length})`;
+
+      try{
+        // ✅ 6TF 캔들을 한 번에 확보
+        const candlesByTf = {};
+        for(const tfRaw of tfSet){
+          checkCanceled(opToken);
+          candlesByTf[tfRaw] = await fetchCandles(coin.s, tfRaw, 380);
+          // 취소 가능 딜레이(요청 폭주 방지)
+          await sleepCancelable(Math.max(120, SCAN_DELAY_MS - 350), opToken);
+        }
+
+        // ✅ 6전략 계산(out)
+        const out = {};
+        for(const baseTfRaw of tfSet){
+          const baseCandles = candlesByTf[baseTfRaw] || [];
+          if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)){
+            out[baseTfRaw] = null;
+            continue;
+          }
+          try{
+            try{
+        out[baseTfRaw] = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("[LIST_PRED] buildSignal fail:", coin.s, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
+          }catch(err){
+            console.warn("[SCAN] buildSignal fail:", coin.s, baseTfRaw, err);
+            out[baseTfRaw] = null;
+          }
+        }
+
+        // ✅ BEST 전략 선택(스캔 점수)
+        let best = null;
+        for(const tfRaw of tfSet){
+          const pos = out[tfRaw];
+          if(!pos) continue;
+
+          const riskHold = isPatternBlockedHold(pos);
+          const ex = pos.explain || {};
+          const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
+
+          const item = {
+            symbol: pos.symbol,
+            tf: pos.tf,
+            tfRaw: pos.tfRaw,
+            type: (pos.type === "HOLD") ? inferredType : pos.type,
+            winProb: Number(ex.winProb ?? 0.5),
+            edge: Number(ex.edge ?? 0),
+            mtfAgree: ex?.mtf?.agree ?? 1,
+            mtfVotes: (ex?.mtf?.votes || []).join("/"),
+            confTier: ex?.conf?.tier ?? "-",
+            isRisk: !!riskHold,
+            multi: true
+          };
+
+          // HOLD인데 RISK도 아니면 스킵(추천에서 빼기)
+          if(pos.type === "HOLD" && !riskHold) continue;
+
+          item._score = computeScanScore(item);
+          if(!best || item._score > best._score) best = item;
+        }
+
+        // ✅ 목록에는 60종 전부 남긴다(추천이 없더라도 표에서 확인 가능)
+        if(best){
+          fullList.push({
+            symbol: best.symbol,
+            bestTf: best.tf,
+            bestTfRaw: best.tfRaw,
+            bestType: best.type,
+            winProb: best.winProb,
+            edge: best.edge,
+            mtfAgree: best.mtfAgree,
+            mtfVotes: best.mtfVotes,
+            confTier: best.confTier,
+            isRisk: best.isRisk
+          });
+        }else{
+          // 추천/베스트가 없으면 HOLD로 기록(스캔 자체는 했다는 뜻)
+          fullList.push({
+            symbol: coin.s,
+            bestTf: "-",
+            bestTfRaw: "-",
+            bestType: "HOLD",
+            winProb: 0.5,
+            edge: 0,
+            mtfAgree: 0,
+            mtfVotes: "",
+            confTier: "-",
+            isRisk: false
+          });
+        }
+
+        // ✅ 상세 결과는 메모리 캐시에만 보관(클릭 시 스캔 결과 일치)
+        // - best가 없더라도 out은 저장(모달에서 6전략 카드 표시용)
+        window.__SCAN_DETAIL_CACHE.set(coin.s, { out, ts: Date.now() });
+      }catch(e){}
     }
 
-    // ✅ 서버에 스캔 요청 (TOP20 전체 + 6전략)
-    const data = await fetchServerJSON("/api/scan", { method:"POST", body:{ symbols } });
+    // ✅ TOP 추천(화면 박스용) — 상위 12개
+    fullList.sort((a,b)=> computeScanScore(b) - computeScanScore(a));
+    state.lastScanResults = fullList.slice(0, 12).map(x=>({
+      symbol:x.symbol,
+      tf:x.bestTf,
+      tfRaw:x.bestTfRaw,
+      type:x.bestType,
+      winProb:x.winProb,
+      edge:x.edge,
+      mtfAgree:x.mtfAgree,
+      mtfVotes:x.mtfVotes,
+      confTier:x.confTier,
+      isRisk:x.isRisk,
+      multi:true
+    }));
 
-    checkCanceled(opToken);
-
-    state.lastScanResults = Array.isArray(data?.top) ? data.top : [];
-    state.lastScanFullList = Array.isArray(data?.fullList) ? data.fullList : [];
+    // ✅ 전체 목록(모달용)
+    state.lastScanFullList = fullList;
     state.lastScanAt = Date.now();
     saveState();
 
     renderScanResults();
+    // 모달이 열려있거나 요청되면 즉시 최신화
     try{ renderScanListModal?.(); }catch(e){}
     if(opts && opts.openModal){
       try{ openScanListModal(); }catch(e){}
     }
-    if(status) status.textContent = `${state.lastScanResults.length}개 추천(서버)`;
+    if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
   }catch(e){
-    if(String(e?.message||"").includes("CANCELLED")){ toast("스캔이 취소되었습니다.","warn"); return; }
+    if(String(e?.message || "").includes("CANCELLED")){
+      toast("통합 자동 스캔이 취소되었습니다.", "warn");
+      if(status) status.textContent = "취소됨";
+      return;
+    }
     console.error(e);
-    toast("서버 스캔 오류(서버/네트워크) — 콘솔을 확인하세요.", "danger");
+    toast("통합 자동 스캔 중 오류가 발생했습니다.", "danger");
     if(status) status.textContent = "오류";
   }finally{
-    if(scanBtn) scanBtn.disabled = false;
+    if(scanBtn){
+      scanBtn.disabled = false;
+      scanBtn.innerHTML = '<i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(6전략)';
+    }
     endOperation(opToken);
   }
 }
-
 
 function renderScanResults(){
   ensureRuntimeState();
@@ -1635,60 +1766,110 @@ function shiftPosEntryTo(pos, newEntry){
 async function runBacktest(){
   ensureRuntimeState();
 
-  const opToken = beginOperation("BACKTEST_SERVER");
+  const opToken = beginOperation("BACKTEST");
 
   const btBtn = document.getElementById("bt-btn");
   if(btBtn){
     btBtn.disabled = true;
-    btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트(서버) 중...';
+    btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트...';
   }
 
-  const sum = document.getElementById("bt-summary");
-  if(sum) sum.textContent = "서버 백테스트 중...";
+  const box = document.getElementById("bt-box");
+  if(box) box.classList.remove("show");
 
   try{
-    const symbol = state.symbol;
-    if(!symbol){
-      toast("심볼이 없습니다. 먼저 코인을 선택하세요.", "warn");
-      return;
+    checkCanceled(opToken);
+
+    const tfSet = getMTFSet2(state.tf);
+    const baseTf = tfSet[0];
+    const otherTf = tfSet[1];
+
+    const candlesBase = await fetchCandles(state.symbol, baseTf, EXTENDED_LIMIT);
+    if(candlesBase.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
+
+    let candlesOther = null;
+    try{
+      candlesOther = await fetchCandles(state.symbol, otherTf, EXTENDED_LIMIT);
+    }catch(e){}
+
+    let wins=0, total=0;
+    let pnlSum=0;
+
+    const end = candlesBase.length - (FUTURE_H + 20);
+    const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
+
+    for(let idx = start; idx < end; idx += 7){
+      checkCanceled(opToken);
+
+      const sliceBase = candlesBase.slice(0, idx+1);
+      if(sliceBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
+
+      const byTf = { [baseTf]: sliceBase };
+
+      if(Array.isArray(candlesOther) && candlesOther.length > 120){
+        const tRef = sliceBase[sliceBase.length-1].t;
+        const sliceOther = sliceCandlesUpToTime(candlesOther, tRef);
+        if(sliceOther.length >= (SIM_WINDOW + FUTURE_H + 80)){
+          byTf[otherTf] = sliceOther;
+        }
+      }
+
+      const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, byTf, "2TF");
+      if(pos.type === "HOLD") continue;
+
+      const ex = pos.explain || {};
+      if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
+      if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
+      if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
+
+      const entryCandle = candlesBase[idx+1];
+      if(!entryCandle || !Number.isFinite(entryCandle.o)) continue;
+      shiftPosEntryTo(pos, entryCandle.o);
+
+      const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
+      const outcome = simulateOutcome(pos, future);
+      if(!outcome.resolved) continue;
+
+      total++;
+      if(outcome.win) wins++;
+      pnlSum += outcome.pnlPct;
+
+      if(total >= BACKTEST_TRADES) break;
     }
 
-    const data = await fetchServerJSON("/api/backtest", { method:"POST", body:{ symbol } });
-
-    checkCanceled(opToken);
+    const winRate = total ? (wins/total)*100 : 0;
+    const avgPnl = total ? (pnlSum/total) : 0;
 
     const nEl = document.getElementById("bt-n");
     const wEl = document.getElementById("bt-win");
     const aEl = document.getElementById("bt-avg");
     const rEl = document.getElementById("bt-range");
+    if(nEl) nEl.textContent = `${total}회`;
+    if(wEl) wEl.textContent = `${winRate.toFixed(1)}%`;
+    if(aEl) aEl.textContent = `${avgPnl.toFixed(2)}%`;
 
-    if(nEl) nEl.textContent = `${data.total||0}회`;
-    if(wEl) wEl.textContent = `${Number(data.winRate||0).toFixed(1)}%`;
-    if(aEl) aEl.textContent = `${Number(data.avgPnl||0).toFixed(2)}%`;
-    if(rEl) rEl.textContent = data.rangeText || "-";
+    const tfNameShow = baseTf === "60" ? "1H" : baseTf === "240" ? "4H" : "1D";
+    if(rEl){
+      rEl.textContent =
+        `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · ✅otherTF누수방지 · ✅다음시가진입 · ✅동봉캔들보수판정 · 비용 -${FEE_PCT.toFixed(2)}% 반영`;
+    }
 
-    if(sum) sum.textContent = "완료";
-    toast("서버 백테스트 완료", "success");
+    if(box) box.classList.add("show");
   }catch(e){
-    if(String(e?.message||"").includes("CANCELLED")){
+    if(String(e?.message || "").includes("CANCELLED")){
       toast("백테스트가 취소되었습니다.", "warn");
-      if(sum) sum.textContent = "취소됨";
       return;
     }
     console.error(e);
-    toast("서버 백테스트 오류(서버/네트워크) — 콘솔을 확인하세요.", "danger");
-    if(sum) sum.textContent = "오류";
+    toast("백테스트 중 오류가 발생했습니다.", "danger");
   }finally{
+    endOperation(opToken);
     if(btBtn){
       btBtn.disabled = false;
       btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
     }
-    const btProg = document.getElementById("bt-progress");
-    if(btProg) btProg.textContent = "";
-    endOperation(opToken);
   }
 }
-
 
 function simulateOutcome(pos, futureCandles){
   for(const c of futureCandles){
@@ -1817,40 +1998,32 @@ async function _poolMap(items, limit, worker, onProgress){
 // 통합 예측(6전략 전부 표시)
 window.executeAnalysisAll = async function(){
   ensureRuntimeState();
-  const opToken = beginOperation("ANALYSIS_ALL_SERVER");
+  const opToken = beginOperation("ANALYSIS_ALL_6TF");
   const btn = document.getElementById("predict-all-btn");
-  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> 통합 예측(서버) 중...'; }
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> 통합 예측(6전략) 중...'; }
   try{
-    const symbol = state.symbol;
-    if(!symbol){
-      toast("심볼이 없습니다. 먼저 코인을 선택하세요.", "warn");
-      return;
-    }
-
-    const data = await fetchServerJSON("/api/predict", { method:"POST", body:{ symbol } });
-
     checkCanceled(opToken);
-
-    const out = data?.out || {};
-    // ✅ lastSignalAt 기록(쿨다운/통계용)
-    try{
-      const tfSet = getMTFSet6();
-      for(const tfRaw of tfSet){
-        state.lastSignalAt[`${symbol}|${tfRaw}`] = Date.now();
-      }
-      saveState();
-    }catch(e){}
-
+    const symbol = state.symbol;
+    const candlesByTf = await _fetchPack6(symbol);
+    const tfs = (typeof getMTFSet6==="function") ? getMTFSet6() : ["15","30","60","240","D","W"];
+    const out = {};
+    for(const tfRaw of tfs){
+      checkCanceled(opToken);
+      const baseCandles = candlesByTf[tfRaw] || [];
+      if(!baseCandles || baseCandles.length < (SIM_WINDOW + FUTURE_H + 40)){ out[tfRaw]=null; continue; }
+      out[tfRaw] = buildSignalFromCandles_MTF(symbol, tfRaw, candlesByTf, "6TF");
+      state.lastSignalAt[`${symbol}|${tfRaw}`] = Date.now();
+    }
+    saveState();
     showResultModalAll(symbol, out);
   }catch(e){
     if(String(e?.message||"").includes("CANCELLED")){ toast("진행 중 작업이 취소되었습니다.","warn"); return; }
-    console.error(e); toast("통합 예측(서버) 중 오류가 발생했습니다.","danger");
+    console.error(e); toast("통합 예측 중 오류가 발생했습니다. (API 지연/제한 가능)","danger");
   }finally{
-    if(btn){ btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(6전략)'; }
     endOperation(opToken);
+    if(btn){ btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(6전략) 실행'; }
   }
 };
-
 
 // index onclick 호환
 window.executeAnalysis = async function(){ return window.executeAnalysisAll(); };
