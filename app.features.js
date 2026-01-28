@@ -709,7 +709,13 @@ async function executeAnalysisAll(){
         out[baseTfRaw] = null;
         continue;
       }
-      const pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      let pos = null;
+      try{
+        pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("[ANALYSIS_ALL] buildSignal fail:", symbol, baseTfRaw, err);
+        pos = null;
+      }
       out[baseTfRaw] = pos;
 
       // 쿨다운은 "통합 예측 실행 시점" 기준으로 동일하게 걸어둠(단일과 일관성)
@@ -763,7 +769,17 @@ async function quickAnalyzeAllAndShow(symbol){
         out[baseTfRaw] = null;
         continue;
       }
-      out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      try{
+        try{
+        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("[PRED] buildSignal fail:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
+      }catch(err){
+        console.warn("[ANALYSIS_ALL] buildSignal fail:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
     }
 
     showResultModalAll(symbol, out);
@@ -1538,7 +1554,17 @@ async function autoScanUniverseAll(opts={}){
             out[baseTfRaw] = null;
             continue;
           }
-          out[baseTfRaw] = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "6TF");
+          try{
+            try{
+        out[baseTfRaw] = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("[LIST_PRED] buildSignal fail:", coin.s, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
+          }catch(err){
+            console.warn("[SCAN] buildSignal fail:", coin.s, baseTfRaw, err);
+            out[baseTfRaw] = null;
+          }
         }
 
         // ✅ BEST 전략 선택(스캔 점수)
@@ -2151,7 +2177,17 @@ async function openFromScanListOrSidebar(symbol){
         out[baseTfRaw] = null;
         continue;
       }
-      out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      try{
+        try{
+        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
+      }catch(err){
+        console.warn("[PRED] buildSignal fail:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
+      }catch(err){
+        console.warn("[ANALYSIS_ALL] buildSignal fail:", symbol, baseTfRaw, err);
+        out[baseTfRaw] = null;
+      }
     }
 
     showResultModalAll(symbol, out);
@@ -2339,3 +2375,24 @@ async function runBacktest(opts={}){
     endOperation(opToken);
   }
 }
+
+
+/* =========================
+   ✅ FINAL WINDOW BINDINGS (ensure latest functions are wired)
+   - 중간에 함수가 재정의되면, 기존 window 바인딩이 '옛 함수'를 가리킬 수 있음
+   - 그래서 파일 맨 끝에서 한번 더 바인딩을 강제한다.
+========================= */
+;(function(){
+  try{
+    // 예측/스캔 쪽은 window.executeAnalysisAll / window.autoScanUniverseAll 가 이미 wrapper로 덮였을 수 있으니 건드리지 않음
+    window.runBacktest = runBacktest;
+    window.openBacktestModal = openBacktestModal;
+    window.closeBacktestModal = closeBacktestModal;
+
+    window.openScanListModal = openScanListModal;
+    window.closeScanListModal = closeScanListModal;
+    window.openFromScanListOrSidebar = openFromScanListOrSidebar;
+
+    window.cancelOperation = cancelOperation;
+  }catch(e){ console.warn("FINAL BINDINGS fail", e); }
+})();

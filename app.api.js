@@ -89,25 +89,9 @@ function _mapCgToBybitSymbol(cgSymUpper, bybitSet){
    ✅ Universe sizing (자동 + AI 추천)
    - 기본 자동 선정 30 + AI 추천 30 = 총 60
 ========================= */
-// =========================
-// ✅ 고정 유니버스 (20개)
-// - 통합예측 / 자동스캔 / 백테스트가 '같은 코인 목록'을 사용하게 강제
-// - Bybit 불안정/CORS/레이트리밋이면 내부 API 로직에서 Binance로 자동 폴백
-// - (요청 폭증) 원인 최소화를 위해 기본 20개로 제한
-// =========================
-const UNIVERSE_TOTAL_LIMIT = 20;
-
-// 15개 유지 + 5개 추가(추천): ATOM, OP, ARB, SUI, NEAR
-// Bybit 선물(USDT Perp)에서 흔히 거래되는 메이저 위주
-const FIXED_UNIVERSE_SYMBOLS = [
-  "BTCUSDT","ETHUSDT","XRPUSDT","SOLUSDT","ADAUSDT",
-  "BNBUSDT","DOGEUSDT","TRXUSDT","TONUSDT","AVAXUSDT",
-  "DOTUSDT","LINKUSDT","MATICUSDT","LTCUSDT","BCHUSDT",
-  "ATOMUSDT","OPUSDT","ARBUSDT","SUIUSDT","NEARUSDT"
-];
-
-// 유니버스 고정 강제 스위치
-const FORCE_FIXED_UNIVERSE = true;
+const UNIVERSE_BASE_LIMIT  = 30;
+const UNIVERSE_AI_EXTRA    = 30;
+const UNIVERSE_TOTAL_LIMIT = UNIVERSE_BASE_LIMIT + UNIVERSE_AI_EXTRA;
 
 // CoinGecko: 24h + 7d + 30d 변동률까지 받아서 “AI 추천(모멘텀)” 스코어를 만든다.
 function _buildCgMarketsUrl(){
@@ -165,24 +149,6 @@ async function refreshUniverseAndGlobals(){
 
       const pill = document.getElementById("btc-dom-pill");
       if(pill) pill.innerText = `BTC DOM: ${dom.toFixed(1)}%`;
-    }
-
-    // ✅ 고정 유니버스 모드: 외부 API(시장목록) 호출을 최소화해서 안정성 우선
-    //    (통합예측/스캔/백테스트 모두 동일한 20개 코인만 사용)
-    if(FORCE_FIXED_UNIVERSE){
-      const fixed = FIXED_UNIVERSE_SYMBOLS.slice(0, UNIVERSE_TOTAL_LIMIT).map(sym => {
-        const base = sym.replace("USDT", "");
-        return { s: sym, n: base, cg: null, mc: null, vol: null, chg: 0, turn: 0, score: 0 };
-      });
-
-      state.universe = fixed;
-      state._universeMode = "FIXED";
-      state._universeUpdatedAt = Date.now();
-      saveState();
-
-      if(typeof renderUniverseList === "function") renderUniverseList();
-      if(apiDot){ apiDot.style.background = "#00c076"; }
-      return;
     }
 
     // 2) Bybit 심볼 목록(교차 검증용)
@@ -509,46 +475,59 @@ async function _fetchCandlesBybit(symbol, tf, limit){
 async function fetchCandles(symbol, tf, limit){
   _ensureApiStateShape();
   const token = _getOpToken();
-  if(_isCancelled(token)) return [];
-  const lim = Number(limit)||380;
-  const key = _cKey(symbol, tf, lim);
+  if(_isCancelled(token)) throw new Error("cancelled");
+
+  const key = `${symbol}|${tf}|${limit}`;
   const now = Date.now();
-  const cached = __CANDLE_CACHE.get(key);
-  if(cached && (now - cached.t) < 25000 && Array.isArray(cached.v) && cached.v.length){
-    return cached.v;
+  const cached = CANDLE_CACHE.get(key);
+  if(cached && (now - cached.ts) < 60_000){
+    // 60초 내 캐시는 그대로 사용 (폭주 방지)
+    return cached.data;
   }
-  if(__CANDLE_INFLIGHT.has(key)) return __CANDLE_INFLIGHT.get(key);
 
-  const p = (async ()=>{
-    try{
-      const iv = _tfToBinanceInterval(tf);
-      const url = BINANCE_FUT_KLINE(symbol, iv, lim);
-      const r = await fetchJSON(url, {timeoutMs: 9000, retry: 1});
-      if(Array.isArray(r) && r.length){
-        const c = _fixCandles(r.map(x=>({t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5]})));
-        if(c.length){ __CANDLE_CACHE.set(key,{t:Date.now(),v:c}); return c; }
+  const trySetCache = (arr)=>{
+    if(Array.isArray(arr) && arr.length){
+      CANDLE_CACHE.set(key, { ts: Date.now(), data: arr });
+      // 캐시 크기 제한(메모리 폭주 방지)
+      if(CANDLE_CACHE.size > 300){
+        const firstKey = CANDLE_CACHE.keys().next().value;
+        CANDLE_CACHE.delete(firstKey);
       }
-    }catch(e){}
-    if(_isCancelled(token)) return [];
-    try{
-      const iv = _tfToBinanceInterval(tf);
-      const url = BINANCE_SPOT_KLINE(symbol, iv, lim);
-      const r = await fetchJSON(url, {timeoutMs: 9000, retry: 1});
-      if(Array.isArray(r) && r.length){
-        const c = _fixCandles(r.map(x=>({t:x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5]})));
-        if(c.length){ __CANDLE_CACHE.set(key,{t:Date.now(),v:c}); return c; }
-      }
-    }catch(e){}
-    if(_isCancelled(token)) return [];
-    try{
-      const c = _fixCandles(await _fetchCandlesBybit(symbol, tf, lim));
-      if(c.length){ __CANDLE_CACHE.set(key,{t:Date.now(),v:c}); return c; }
-    }catch(e){}
-    return [];
-  })().finally(()=>{ __CANDLE_INFLIGHT.delete(key); });
+    }
+    return arr;
+  };
 
-  __CANDLE_INFLIGHT.set(key,p);
-  return p;
+  // ✅ 핵심: "실패해도 앱 전체가 멈추지 않게"
+  // - 순서: Binance(futures→spot) → Bybit
+  // - 전부 실패하면: (1) 오래된 캐시라도 있으면 그거 반환, (2) 없으면 [] 반환
+  let lastErr = null;
+
+  try{
+    if(_isCancelled(token)) throw new Error("cancelled");
+    const bFut = await fetchBinanceKlines(symbol, tf, limit, { futures: true });
+    if(Array.isArray(bFut) && bFut.length) return trySetCache(bFut);
+  }catch(e){ lastErr = e; }
+
+  try{
+    if(_isCancelled(token)) throw new Error("cancelled");
+    const bSpot = await fetchBinanceKlines(symbol, tf, limit, { futures: false });
+    if(Array.isArray(bSpot) && bSpot.length) return trySetCache(bSpot);
+  }catch(e){ lastErr = e; }
+
+  try{
+    if(_isCancelled(token)) throw new Error("cancelled");
+    const by = await fetchBybitKlines(symbol, tf, limit);
+    if(Array.isArray(by) && by.length) return trySetCache(by);
+  }catch(e){ lastErr = e; }
+
+  // 오래된 캐시라도 있으면 반환(네트워크 불안정 시 "돌아가게" 우선)
+  if(cached && Array.isArray(cached.data) && cached.data.length){
+    console.warn("[fetchCandles] fallback to stale cache:", key, lastErr);
+    return cached.data;
+  }
+
+  console.warn("[fetchCandles] failed (return empty):", key, lastErr);
+  return [];
 }
 
 

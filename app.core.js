@@ -424,39 +424,72 @@ function scoreUnifiedSignal(unified){
    - cg는 확실한 것만 유지 (불확실한 매핑은 생략)
 ========================= */
 const DEFAULT_CANDIDATES = [
-  { s: "BTCUSDT", n: "비트코인", cg: "bitcoin" },
-  { s: "ETHUSDT", n: "이더리움", cg: "ethereum" },
-  { s: "SOLUSDT", n: "솔라나", cg: "solana" },
-  { s: "XRPUSDT", n: "리플", cg: "ripple" },
-  { s: "ADAUSDT", n: "에이다", cg: "cardano" },
-  { s: "DOGEUSDT", n: "도지코인", cg: "dogecoin" },
-  { s: "AVAXUSDT", n: "아발란체", cg: "avalanche-2" },
-  { s: "DOTUSDT", n: "폴카닷", cg: "polkadot" },
-  { s: "LINKUSDT", n: "체인링크", cg: "chainlink" },
-  { s: "POLUSDT", n: "폴리곤", cg: "polygon-ecosystem-token" },
-  { s: "TRXUSDT", n: "트론", cg: "tron" },
-  { s: "BCHUSDT", n: "비트코인캐시", cg: "bitcoin-cash" },
-  { s: "NEARUSDT", n: "니어프로토콜", cg: "near" },
-  { s: "LTCUSDT", n: "라이트코인", cg: "litecoin" },
-  { s: "APTUSDT", n: "앱토스", cg: "aptos" },
-
-  /* ✅ 추가 15개(기본 30 구성) — cg 매핑 불확실은 생략 */
-  { s: "BNBUSDT", n: "바이낸스코인" },
-  { s: "TONUSDT", n: "톤코인" },
-  { s: "SHIBUSDT", n: "시바이누" },
-  { s: "SUIUSDT", n: "수이" },
-  { s: "ARBUSDT", n: "아비트럼" },
-  { s: "OPUSDT", n: "옵티미즘" },
-  { s: "INJUSDT", n: "인젝티브" },
-  { s: "RNDRUSDT", n: "렌더" },
-  { s: "SEIUSDT", n: "세이" },
-  { s: "IMXUSDT", n: "이뮤터블" },
-  { s: "AAVEUSDT", n: "에이브" },
-  { s: "UNIUSDT", n: "유니스왑" },
-  { s: "ETCUSDT", n: "이더리움클래식" },
-  { s: "FILUSDT", n: "파일코인" },
-  { s: "ATOMUSDT", n: "코스모스" }
+  { s:"BTCUSDT", n:"Bitcoin" },
+  { s:"ETHUSDT", n:"Ethereum" },
+  { s:"BNBUSDT", n:"BNB" },
+  { s:"SOLUSDT", n:"Solana" },
+  { s:"XRPUSDT", n:"XRP" },
+  { s:"ADAUSDT", n:"Cardano" },
+  { s:"DOGEUSDT", n:"Dogecoin" },
+  { s:"TRXUSDT", n:"TRON" },
+  { s:"TONUSDT", n:"Toncoin" },
+  { s:"AVAXUSDT", n:"Avalanche" },
+  { s:"LINKUSDT", n:"Chainlink" },
+  { s:"DOTUSDT", n:"Polkadot" },
+  { s:"MATICUSDT", n:"Polygon" },
+  { s:"LTCUSDT", n:"Litecoin" },
+  { s:"BCHUSDT", n:"Bitcoin Cash" },
+  { s:"UNIUSDT", n:"Uniswap" },
+  { s:"ATOMUSDT", n:"Cosmos" },
+  { s:"ETCUSDT", n:"Ethereum Classic" },
+  { s:"XLMUSDT", n:"Stellar" },
+  { s:"FILUSDT", n:"Filecoin" },
+  { s:"APTUSDT", n:"Aptos" },
+  { s:"NEARUSDT", n:"NEAR" },
+  { s:"OPUSDT", n:"Optimism" },
+  { s:"ARBUSDT", n:"Arbitrum" },
+  { s:"SUIUSDT", n:"Sui" },
+  { s:"ICPUSDT", n:"Internet Computer" },
+  { s:"INJUSDT", n:"Injective" },
+  { s:"RNDRUSDT", n:"Render" },
+  { s:"SHIBUSDT", n:"Shiba Inu" },
+  { s:"PEPEUSDT", n:"Pepe" }
 ];
+
+
+// ✅ Universe 정규화(항상 30종으로 고정)
+// - 로컬스토리지에 예전 60종이 남아있어도, 여기서 30으로 강제 동기화한다.
+const UNIVERSE_TARGET_LIMIT = 30;
+function normalizeUniverse(list){
+  try{
+    const arr = Array.isArray(list) ? list : [];
+    const seen = new Set();
+    const out = [];
+    for(const x of arr){
+      const s = String(x?.s || x?.symbol || "").toUpperCase();
+      if(!s || !s.endsWith("USDT")) continue;
+      if(seen.has(s)) continue;
+      seen.add(s);
+      out.push({ s, n: x?.n || x?.name || s.replace("USDT","") });
+      if(out.length >= UNIVERSE_TARGET_LIMIT) break;
+    }
+    // 부족하면 DEFAULT로 채움
+    if(out.length < UNIVERSE_TARGET_LIMIT){
+      for(const d of DEFAULT_CANDIDATES){
+        const s = String(d.s).toUpperCase();
+        if(seen.has(s)) continue;
+        seen.add(s);
+        out.push({ s, n: d.n });
+        if(out.length >= UNIVERSE_TARGET_LIMIT) break;
+      }
+    }
+    // 그래도 0이면 DEFAULT 그대로
+    if(out.length === 0) return DEFAULT_CANDIDATES.slice(0, UNIVERSE_TARGET_LIMIT);
+    return out.slice(0, UNIVERSE_TARGET_LIMIT);
+  }catch(e){
+    return DEFAULT_CANDIDATES.slice(0, UNIVERSE_TARGET_LIMIT);
+  }
+}
 
 /* =========================
    State (전역)
@@ -1782,131 +1815,110 @@ function sleep(ms){
   return new Promise(res => setTimeout(res, ms));
 }
 
-/* =========================
-   ✅ Network hardening (GitHub Pages/CORS/Rate-limit)
-   - 동시요청 과다/브라우저 CORS 차단 때문에
-     통합예측/스캔/백테스트가 '오류'로 떨어지는 문제가 반복됨.
-   - 해결:
-     1) 동시 요청 제한(세마포어)
-     2) 요청 최소 간격(스로틀)
-     3) CORS 프록시 폴백(필요 시)
-   ========================= */
-const __net = {
-  inFlight: 0,
-  max: 3,
-  lastAt: 0,
-  minGapMs: 140,
-  q: [],
-};
-
-function __netAcquire(){
-  return new Promise(res=>{
-    const go = async ()=>{
-      if(__net.inFlight < __net.max){
-        __net.inFlight++;
-        const now = Date.now();
-        const wait = Math.max(0, (__net.lastAt + __net.minGapMs) - now);
-        __net.lastAt = now + wait;
-        if(wait) await sleep(wait);
-        return res();
-      }
-      __net.q.push(go);
-    };
-    go();
-  });
-}
-function __netRelease(){
-  __net.inFlight = Math.max(0, __net.inFlight - 1);
-  const next = __net.q.shift();
-  if(next) next();
-}
-
-function __proxyUrls(url){
-  const u = String(url);
-  // GET 전용 프록시. (JSON 엔드포인트용)
-  return [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    `https://r.jina.ai/http/${u.replace(/^https?:\/\//,'')}`,
-    `https://r.jina.ai/https/${u.replace(/^https?:\/\//,'')}`,
-  ];
-}
-
-async function __fetchJsonOnce(url, timeoutMs){
+async function fetchWithTimeout(url, timeoutMs=7000){
   const ctrl = new AbortController();
   const t = setTimeout(()=> ctrl.abort(), Math.max(1000, timeoutMs|0));
   try{
     const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    // JSON 파싱. (프록시가 텍스트로 줄 수도 있음)
-    try{ return JSON.parse(text); }catch(_){
-      // jina.ai가 앞에 설명을 붙이는 경우가 있어, 마지막 JSON 블록을 시도
-      const m = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])\s*$/);
-      if(m){
-        return JSON.parse(m[1]);
-      }
-      throw new Error("JSON_PARSE_FAIL");
-    }
+    return await res.json();
   }finally{
     clearTimeout(t);
   }
 }
 
-async function fetchWithTimeout(url, timeoutMs=7000){
-  await __netAcquire();
+/* =========================
+   NET: queued fetchJSON (anti-rate-limit / anti-freeze)
+   - GitHub Pages 환경에서 API 폭주로 429/timeout이 자주 발생하므로
+     "동시요청"을 강제로 줄이고(기본 1개), 실패 시 간격을 자동으로 늘립니다.
+   - 동일 URL은 in-flight dedupe로 중복 요청을 합칩니다.
+   - 실패해도 앱 전체가 멈추지 않도록 fetchJSON 자체가 최대한 복구합니다.
+========================= */
+const __net = {
+  q: Promise.resolve(),
+  lastAt: 0,
+  gapMs: 250,          // 기본 최소 간격
+  maxGapMs: 2500,      // 실패 시 최대 간격
+  failStreak: 0,
+  inflight: new Map(), // url -> Promise
+};
+function __netSleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function __netEnqueue(run){
+  // FIFO queue (동시요청 1개로 고정)
+  const prev = __net.q;
+  let release;
+  __net.q = new Promise(r => (release = r));
   try{
-    // 1) direct
-    try{
-      return await __fetchJsonOnce(url, timeoutMs);
-    }catch(e){
-      // 2) 프록시 폴백 (주로 CORS/네트워크 차단)
-      const msg = String(e?.message||e);
-      const isCorsLike = (e?.name === "TypeError") || /Failed to fetch|CORS|NetworkError/i.test(msg);
-      if(!isCorsLike) throw e;
-      const proxies = __proxyUrls(url);
-      let lastErr = e;
-      for(const p of proxies){
-        try{ return await __fetchJsonOnce(p, timeoutMs + 2000); }
-        catch(err){ lastErr = err; }
-      }
-      throw lastErr;
-    }
-  }finally{
-    __netRelease();
+    await prev;
+    // 최소 간격 유지
+    const now = Date.now();
+    const wait = Math.max(0, (__net.lastAt + __net.gapMs) - now);
+    if(wait) await __netSleep(wait);
+    const out = await run();
+    __net.lastAt = Date.now();
+    return out;
+  } finally {
+    release();
   }
 }
 
 async function fetchJSON(url, opt={}){
-  const timeoutMs = opt.timeoutMs ?? 7000;
-  const retry = opt.retry ?? 0;
+  const timeoutMs = opt.timeoutMs ?? 9000;
+  const retry = opt.retry ?? 1;
 
-  let lastErr = null;
-  for(let i=0;i<=retry;i++){
-    try{
-      const data = await fetchWithTimeout(url, timeoutMs);
+  // 동일 URL 동시 요청은 1개로 합치기
+  if(__net.inflight.has(url)) return __net.inflight.get(url);
 
+  const job = __netEnqueue(async ()=>{
+    let lastErr = null;
+
+    for(let i=0;i<=retry;i++){
       try{
-        state.lastApiHealth = "ok";
-        saveState();
-      }catch(e){}
+        const controller = new AbortController();
+        const to = setTimeout(()=>controller.abort(), timeoutMs);
 
-      return data;
-    }catch(e){
-      lastErr = e;
+        const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        clearTimeout(to);
 
-      try{
-        state.lastApiHealth = "warn";
-        saveState();
-      }catch(_e){}
+        if(!res.ok){
+          const e = new Error("HTTP " + res.status);
+          e.status = res.status;
+          throw e;
+        }
 
-      if(i < retry){
-        const wait = 250 * Math.pow(2, i);
-        await sleep(wait);
+        const ct = res.headers.get("content-type") || "";
+        const data = ct.includes("application/json") ? await res.json() : await res.text();
+
+        // 성공: 실패 누적 리셋 + 간격 완화
+        __net.failStreak = 0;
+        __net.gapMs = Math.max(200, Math.floor(__net.gapMs * 0.9));
+        return data;
+
+      }catch(err){
+        lastErr = err;
+
+        // 실패 누적: 간격 증가(429/timeout 방어)
+        __net.failStreak += 1;
+        const bump = (err?.status === 429) ? 600 : 250;
+        __net.gapMs = Math.min(__net.maxGapMs, __net.gapMs + bump);
+
+        // 재시도 전 backoff
+        if(i < retry){
+          const backoff = Math.min(1500, 250 * (i+1) + (__net.failStreak * 80));
+          await __netSleep(backoff);
+          continue;
+        }
       }
     }
-  }
+    throw lastErr || new Error("fetchJSON failed");
+  });
 
-  throw lastErr || new Error("fetchJSON failed");
+  __net.inflight.set(url, job);
+  try{
+    return await job;
+  } finally {
+    __net.inflight.delete(url);
+  }
 }
 
 /* =========================
@@ -1986,4 +1998,6 @@ function consensusMultiTF(cores, order){
   };
 }
 
-const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard
+const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 30종으로 정규화
+  state.universe = normalizeUniverse(state.universe);
+
