@@ -1453,6 +1453,7 @@ function calcSimilarityStats(closes, winLen, futureH, step, topK){
 
 
 // ✅ BRAIN UPGRADE v3: 멀티 윈도우 유사도 앙상블(과적합 완화 + 안정성)
+// (dedup) calcSimilarityStatsEnsemble defined earlier — removed duplicate
 
 function returns(seg){
   const out = [];
@@ -1972,3 +1973,4 @@ function consensusMultiTF(cores, order){
 
 const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 30종으로 정규화
   state.universe = normalizeUniverse(state.universe);
+

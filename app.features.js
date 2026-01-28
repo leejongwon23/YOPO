@@ -74,6 +74,11 @@ function sleepCancelable(ms, token){
    ✅ SAFETY: formatMoney 폴백 (부트 중 renderUniverseList가 터지면
    setInterval이 아예 안 걸려서 "정산/통계/추적 갱신 멈춤" 현상이 생김)
    ========================================================== */
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
 function formatMoney(n){
   const v = Number(n);
   if(!Number.isFinite(v)) return "-";
@@ -1584,6 +1589,7 @@ window.closeScanListModal = closeScanListModal;
 window.openFromScanListOrSidebar = openFromScanListOrSidebar;
 
 // 백테스트/모달
+// window.runBacktest 바인딩은 파일 하단 FINAL BINDINGS에서 한번 더 강제합니다.
 window.openBacktestModal = openBacktestModal;
 window.closeBacktestModal = closeBacktestModal;
 window.confirmTrack = confirmTrack;
@@ -1886,6 +1892,64 @@ async function runBacktest(opts={}){
 
 
 }
+
+
+// ✅ 백테스트 결과 렌더 (서버 엔진 응답용)
+function renderBacktest(resp){
+  try{
+    const ok = !!resp?.ok;
+    const rows = Array.isArray(resp?.rows) ? resp.rows : [];
+    const meta = resp?.meta || {};
+
+    const summaryEl = document.getElementById("bt-summary");
+    const bodyEl = document.getElementById("bt-body");
+
+    if(summaryEl){
+      if(!ok){
+        summaryEl.textContent = `오류: ${resp?.error || "unknown"}`;
+      }else{
+        const u = Number(meta.universeSize || 0);
+        const limitBase = Number(meta.limitBase || 0);
+        const tradesPerTf = Number(meta.tradesPerTf || 0);
+        summaryEl.textContent = `코인 ${u}개 · limitBase ${limitBase} · TF당 샘플 ${tradesPerTf} · rows ${rows.length}`;
+      }
+    }
+
+    if(!bodyEl) return;
+    if(!ok){
+      bodyEl.innerHTML = `<tr><td colspan="6" style="padding:14px; color:var(--danger); font-weight:900;">백테스트 실패: ${escapeHtml(String(resp?.error || "unknown"))}</td></tr>`;
+      return;
+    }
+    if(!rows.length){
+      bodyEl.innerHTML = `<tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">결과가 없습니다.</td></tr>`;
+      return;
+    }
+
+    const toPct = (x)=> (Number.isFinite(x) ? (x*100).toFixed(1)+"%" : "-");
+    const toNum = (x)=> (Number.isFinite(x) ? x.toFixed(2) : "-");
+
+    bodyEl.innerHTML = rows.map(r=>{
+      const sym = escapeHtml(String(r.symbol||"-"));
+      const stg = escapeHtml(String(r.strategy||"-"));
+      const samples = Number(r.samples||0);
+      const winRate = Number(r.winRate||0);
+      const avgRet = Number(r.avgRet||0);
+      const note = escapeHtml(String(r.note||""));
+
+      return `<tr>
+        <td style="font-weight:950;">${sym}</td>
+        <td>${stg}</td>
+        <td>${samples}</td>
+        <td style="font-weight:950;">${toPct(winRate)}</td>
+        <td style="font-weight:950;">${toNum(avgRet)}%</td>
+        <td>${note}</td>
+      </tr>`;
+    }).join("");
+  }catch(e){
+    console.error(e);
+  }
+}
+
 
 
 /* =========================
