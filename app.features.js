@@ -686,121 +686,32 @@ function _showMultiArea(){
    ✅ 통합 예측 (단/중/장 한번에) + 선택/등록
    ========================================================== */
 async function executeAnalysisAll(){
-  ensureRuntimeState();
 
-  const opToken = beginOperation("ANALYSIS_ALL");
+  // SERVER ENGINE: unified analysis
+  const res = await fetch(`${window.YOPO_RENDER_BASE}/api/engine/predict6tf`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ universe: state.universe })
+  });
+  const out = await res.json();
+  renderUnifiedResult(out);
 
-  const btn = document.getElementById("predict-all-btn");
-  if(btn){
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 통합 예측 중...';
-  }
 
-  try{
-    checkCanceled(opToken);
-
-    const symbol = state.symbol;
-    const tfSet = getMTFSet6(); // 6 strategies
-    const candlesByTf = {};
-
-    for(const tfRaw of tfSet){
-      checkCanceled(opToken);
-      const candles = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
-      candlesByTf[tfRaw] = candles;
-    }
-
-    // 3개 다 한 번에 계산
-    const out = {};
-    for(const baseTfRaw of tfSet){
-      const baseCandles = candlesByTf[baseTfRaw] || [];
-      if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)){
-        out[baseTfRaw] = null;
-        continue;
-      }
-      let pos = null;
-      try{
-        pos = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-      }catch(err){
-        console.warn("[ANALYSIS_ALL] buildSignal fail:", symbol, baseTfRaw, err);
-        pos = null;
-      }
-      out[baseTfRaw] = pos;
-
-      // 쿨다운은 "통합 예측 실행 시점" 기준으로 동일하게 걸어둠(단일과 일관성)
-      const key = `${symbol}|${baseTfRaw}`;
-      state.lastSignalAt[key] = Date.now();
-    }
-
-    saveState();
-    showResultModalAll(symbol, out);
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("진행 중 작업이 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("통합 예측 중 오류가 발생했습니다. (API 지연/제한 가능)", "danger");
-  }finally{
-    endOperation(opToken);
-    if(btn){
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(단·중·장) 실행';
-    }
-  }
 }
 
 /* ✅ 추천 클릭 → 통합 예측 모달 */
 async function quickAnalyzeAllAndShow(symbol){
-  ensureRuntimeState();
 
-  const opToken = beginOperation("ANALYSIS_ALL");
+  // SERVER ENGINE: unified analysis (show)
+  const res = await fetch(`${window.YOPO_RENDER_BASE}/api/engine/predict6tf`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ universe: state.universe })
+  });
+  const out = await res.json();
+  showUnifiedModal(out);
 
-  try{
-    switchCoin(symbol);
-    saveState();
-    initChart();
 
-    checkCanceled(opToken);
-
-    const tfSet = getMTFSet6();
-    const candlesByTf = {};
-    for(const tfRaw of tfSet){
-      checkCanceled(opToken);
-      const candles = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
-      candlesByTf[tfRaw] = candles;
-    }
-
-    const out = {};
-    for(const baseTfRaw of tfSet){
-      const baseCandles = candlesByTf[baseTfRaw] || [];
-      if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)){
-        out[baseTfRaw] = null;
-        continue;
-      }
-      try{
-        try{
-        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-      }catch(err){
-        console.warn("[PRED] buildSignal fail:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
-      }catch(err){
-        console.warn("[ANALYSIS_ALL] buildSignal fail:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
-    }
-
-    showResultModalAll(symbol, out);
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("진행 중 작업이 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("통합 추천 분석 중 오류가 발생했습니다.", "danger");
-  }finally{
-    endOperation(opToken);
-  }
 }
 
 /* ==========================================================
@@ -1522,170 +1433,17 @@ function updateStatsUI(){
    - 결과 클릭 시: 통합 예측 모달(선택형)으로 연결
    ========================================================== */
 async function autoScanUniverseAll(opts={}){
-  ensureRuntimeState();
 
-  const opToken = beginOperation("SCAN_ALL");
+  // SERVER ENGINE: auto scan all
+  const res = await fetch(`${window.YOPO_RENDER_BASE}/api/engine/scan_all`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ universe: state.universe })
+  });
+  const out = await res.json();
+  renderScanTable(out);
 
-  const scanBtn = document.getElementById("scan-all-btn");
-  const status = document.getElementById("scan-status");
-  if(scanBtn) scanBtn.disabled = true;
-  if(status) status.textContent = "통합 스캔 중...";
 
-  // ✅ in-memory cache (클릭 결과가 스캔 결과와 달라지는 문제 방지)
-  if(!window.__SCAN_DETAIL_CACHE) window.__SCAN_DETAIL_CACHE = new Map();
-
-  try{
-    const tfSet = getMTFSet6(); // 6 strategies
-    const fullList = [];
-
-    for(let i=0;i<state.universe.length;i++){
-      checkCanceled(opToken);
-
-      const coin = state.universe[i];
-      if(status) status.textContent = `통합 스캔 중... (${i+1}/${state.universe.length})`;
-
-      try{
-        // ✅ 6TF 캔들을 한 번에 확보
-        const candlesByTf = {};
-        for(const tfRaw of tfSet){
-          checkCanceled(opToken);
-          candlesByTf[tfRaw] = await fetchCandles(coin.s, tfRaw, 380);
-          // 취소 가능 딜레이(요청 폭주 방지)
-          await sleepCancelable(Math.max(120, SCAN_DELAY_MS - 350), opToken);
-        }
-
-        // ✅ 6전략 계산(out)
-        const out = {};
-        for(const baseTfRaw of tfSet){
-          const baseCandles = candlesByTf[baseTfRaw] || [];
-          if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)){
-            out[baseTfRaw] = null;
-            continue;
-          }
-          try{
-            try{
-        out[baseTfRaw] = buildSignalFromCandles_MTF(coin.s, baseTfRaw, candlesByTf, "6TF");
-      }catch(err){
-        console.warn("[LIST_PRED] buildSignal fail:", coin.s, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
-          }catch(err){
-            console.warn("[SCAN] buildSignal fail:", coin.s, baseTfRaw, err);
-            out[baseTfRaw] = null;
-          }
-        }
-
-        // ✅ BEST 전략 선택(스캔 점수)
-        let best = null;
-        for(const tfRaw of tfSet){
-          const pos = out[tfRaw];
-          if(!pos) continue;
-
-          const riskHold = isPatternBlockedHold(pos);
-          const ex = pos.explain || {};
-          const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
-
-          const item = {
-            symbol: pos.symbol,
-            tf: pos.tf,
-            tfRaw: pos.tfRaw,
-            type: (pos.type === "HOLD") ? inferredType : pos.type,
-            winProb: Number(ex.winProb ?? 0.5),
-            edge: Number(ex.edge ?? 0),
-            mtfAgree: ex?.mtf?.agree ?? 1,
-            mtfVotes: (ex?.mtf?.votes || []).join("/"),
-            confTier: ex?.conf?.tier ?? "-",
-            isRisk: !!riskHold,
-            multi: true
-          };
-
-          // HOLD인데 RISK도 아니면 스킵(추천에서 빼기)
-          if(pos.type === "HOLD" && !riskHold) continue;
-
-          item._score = computeScanScore(item);
-          if(!best || item._score > best._score) best = item;
-        }
-
-        // ✅ 목록에는 60종 전부 남긴다(추천이 없더라도 표에서 확인 가능)
-        if(best){
-          fullList.push({
-            symbol: best.symbol,
-            bestTf: best.tf,
-            bestTfRaw: best.tfRaw,
-            bestType: best.type,
-            winProb: best.winProb,
-            edge: best.edge,
-            mtfAgree: best.mtfAgree,
-            mtfVotes: best.mtfVotes,
-            confTier: best.confTier,
-            isRisk: best.isRisk
-          });
-        }else{
-          // 추천/베스트가 없으면 HOLD로 기록(스캔 자체는 했다는 뜻)
-          fullList.push({
-            symbol: coin.s,
-            bestTf: "-",
-            bestTfRaw: "-",
-            bestType: "HOLD",
-            winProb: 0.5,
-            edge: 0,
-            mtfAgree: 0,
-            mtfVotes: "",
-            confTier: "-",
-            isRisk: false
-          });
-        }
-
-        // ✅ 상세 결과는 메모리 캐시에만 보관(클릭 시 스캔 결과 일치)
-        // - best가 없더라도 out은 저장(모달에서 6전략 카드 표시용)
-        window.__SCAN_DETAIL_CACHE.set(coin.s, { out, ts: Date.now() });
-      }catch(e){}
-    }
-
-    // ✅ TOP 추천(화면 박스용) — 상위 12개
-    fullList.sort((a,b)=> computeScanScore(b) - computeScanScore(a));
-    state.lastScanResults = fullList.slice(0, 12).map(x=>({
-      symbol:x.symbol,
-      tf:x.bestTf,
-      tfRaw:x.bestTfRaw,
-      type:x.bestType,
-      winProb:x.winProb,
-      edge:x.edge,
-      mtfAgree:x.mtfAgree,
-      mtfVotes:x.mtfVotes,
-      confTier:x.confTier,
-      isRisk:x.isRisk,
-      multi:true
-    }));
-
-    // ✅ 전체 목록(모달용)
-    state.lastScanFullList = fullList;
-    state.lastScanAt = Date.now();
-    saveState();
-
-    renderScanResults();
-    // 모달이 열려있거나 요청되면 즉시 최신화
-    try{ renderScanListModal?.(); }catch(e){}
-    if(opts && opts.openModal){
-      try{ openScanListModal(); }catch(e){}
-    }
-    if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("통합 자동 스캔이 취소되었습니다.", "warn");
-      if(status) status.textContent = "취소됨";
-      return;
-    }
-    console.error(e);
-    toast("통합 자동 스캔 중 오류가 발생했습니다.", "danger");
-    if(status) status.textContent = "오류";
-  }finally{
-    if(scanBtn){
-      scanBtn.disabled = false;
-      scanBtn.innerHTML = '<i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(6전략)';
-    }
-    endOperation(opToken);
-  }
 }
 
 function renderScanResults(){
@@ -1764,111 +1522,17 @@ function shiftPosEntryTo(pos, newEntry){
 }
 
 async function runBacktest(){
-  ensureRuntimeState();
 
-  const opToken = beginOperation("BACKTEST");
+  // SERVER ENGINE: backtest
+  const res = await fetch(`${window.YOPO_RENDER_BASE}/api/engine/backtest`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ universe: state.universe })
+  });
+  const out = await res.json();
+  renderBacktest(out);
 
-  const btBtn = document.getElementById("bt-btn");
-  if(btBtn){
-    btBtn.disabled = true;
-    btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트...';
-  }
 
-  const box = document.getElementById("bt-box");
-  if(box) box.classList.remove("show");
-
-  try{
-    checkCanceled(opToken);
-
-    const tfSet = getMTFSet2(state.tf);
-    const baseTf = tfSet[0];
-    const otherTf = tfSet[1];
-
-    const candlesBase = await fetchCandles(state.symbol, baseTf, EXTENDED_LIMIT);
-    if(candlesBase.length < (SIM_WINDOW + FUTURE_H + 120)) throw new Error("캔들 데이터가 부족합니다.");
-
-    let candlesOther = null;
-    try{
-      candlesOther = await fetchCandles(state.symbol, otherTf, EXTENDED_LIMIT);
-    }catch(e){}
-
-    let wins=0, total=0;
-    let pnlSum=0;
-
-    const end = candlesBase.length - (FUTURE_H + 20);
-    const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
-
-    for(let idx = start; idx < end; idx += 7){
-      checkCanceled(opToken);
-
-      const sliceBase = candlesBase.slice(0, idx+1);
-      if(sliceBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
-
-      const byTf = { [baseTf]: sliceBase };
-
-      if(Array.isArray(candlesOther) && candlesOther.length > 120){
-        const tRef = sliceBase[sliceBase.length-1].t;
-        const sliceOther = sliceCandlesUpToTime(candlesOther, tRef);
-        if(sliceOther.length >= (SIM_WINDOW + FUTURE_H + 80)){
-          byTf[otherTf] = sliceOther;
-        }
-      }
-
-      const pos = buildSignalFromCandles_MTF(state.symbol, baseTf, byTf, "2TF");
-      if(pos.type === "HOLD") continue;
-
-      const ex = pos.explain || {};
-      if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
-      if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
-      if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
-
-      const entryCandle = candlesBase[idx+1];
-      if(!entryCandle || !Number.isFinite(entryCandle.o)) continue;
-      shiftPosEntryTo(pos, entryCandle.o);
-
-      const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
-      const outcome = simulateOutcome(pos, future);
-      if(!outcome.resolved) continue;
-
-      total++;
-      if(outcome.win) wins++;
-      pnlSum += outcome.pnlPct;
-
-      if(total >= BACKTEST_TRADES) break;
-    }
-
-    const winRate = total ? (wins/total)*100 : 0;
-    const avgPnl = total ? (pnlSum/total) : 0;
-
-    const nEl = document.getElementById("bt-n");
-    const wEl = document.getElementById("bt-win");
-    const aEl = document.getElementById("bt-avg");
-    const rEl = document.getElementById("bt-range");
-    if(nEl) nEl.textContent = `${total}회`;
-    if(wEl) wEl.textContent = `${winRate.toFixed(1)}%`;
-    if(aEl) aEl.textContent = `${avgPnl.toFixed(2)}%`;
-
-    const tfNameShow = baseTf === "60" ? "1H" : baseTf === "240" ? "4H" : "1D";
-    if(rEl){
-      rEl.textContent =
-        `${state.symbol} · ${tfNameShow} · 최근 ${EXTENDED_LIMIT}캔들 (필터: 확률≥${Math.round(BT_MIN_PROB*100)}%, 엣지≥${Math.round(BT_MIN_EDGE*100)}%, 유사도≥${BT_MIN_SIM}%) · MTF(2TF) · ✅otherTF누수방지 · ✅다음시가진입 · ✅동봉캔들보수판정 · 비용 -${FEE_PCT.toFixed(2)}% 반영`;
-    }
-
-    if(box) box.classList.add("show");
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("백테스트가 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("백테스트 중 오류가 발생했습니다.", "danger");
-  }finally{
-    endOperation(opToken);
-    if(btBtn){
-      btBtn.disabled = false;
-      btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
-    }
-  }
 }
 
 function simulateOutcome(pos, futureCandles){
@@ -2224,164 +1888,17 @@ function closeBacktestModal(){
 }
 
 async function runBacktest(opts={}){
-  ensureRuntimeState();
 
-  const opToken = beginOperation("BACKTEST");
+  // SERVER ENGINE: backtest
+  const res = await fetch(`${window.YOPO_RENDER_BASE}/api/engine/backtest`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ universe: state.universe })
+  });
+  const out = await res.json();
+  renderBacktest(out);
 
-  openBacktestModal();
 
-  const btBtn = document.getElementById("bt-btn");
-  if(btBtn){
-    btBtn.disabled = true;
-    btBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백테스트...';
-  }
-
-  const body = document.getElementById("bt-body");
-  const sum = document.getElementById("bt-summary");
-  if(body) body.innerHTML = `<tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">진행 중...</td></tr>`;
-  if(sum) sum.textContent = "진행 중...";
-
-  try{
-    const tfSet = getMTFSet6();
-    const rows = [];
-
-    let done=0;
-    const totalJobs = (state.universe.length || 0) * tfSet.length;
-    const btProg = document.getElementById("bt-progress");
-    if(btProg) btProg.textContent = totalJobs ? "0%" : "-";
-
-    for(let i=0;i<state.universe.length;i++){
-      checkCanceled(opToken);
-      const sym = state.universe[i]?.s;
-      if(!sym) continue;
-
-      // ✅ 심볼당 6TF 캔들 1회 로드(재사용)
-      const byTf = {};
-      for(const tfRaw of tfSet){
-        checkCanceled(opToken);
-        byTf[tfRaw] = await fetchCandles(sym, tfRaw, EXTENDED_LIMIT);
-        await sleepCancelable(80, opToken);
-      }
-
-      for(const baseTf of tfSet){
-        checkCanceled(opToken);
-
-        const tf2 = getMTFSet2(baseTf);
-        const otherTf = tf2[1];
-
-        const candlesBase = byTf[baseTf] || [];
-        const candlesOther = byTf[otherTf] || [];
-
-        let wins=0, total=0, pnlSum=0;
-
-        if(candlesBase.length >= (SIM_WINDOW + FUTURE_H + 120)){
-          const end = candlesBase.length - (FUTURE_H + 20);
-          const start = Math.max(SIM_WINDOW + 80, end - (BACKTEST_TRADES * 7));
-
-          for(let idx = start; idx < end; idx += 7){
-            checkCanceled(opToken);
-
-            const sliceBase = candlesBase.slice(0, idx+1);
-            if(sliceBase.length < (SIM_WINDOW + FUTURE_H + 80)) continue;
-
-            const local = { [baseTf]: sliceBase };
-
-            if(Array.isArray(candlesOther) && candlesOther.length > 120){
-              const tRef = sliceBase[sliceBase.length-1].t;
-              const sliceOther = sliceCandlesUpToTime(candlesOther, tRef);
-              if(sliceOther.length >= (SIM_WINDOW + FUTURE_H + 80)){
-                local[otherTf] = sliceOther;
-              }
-            }
-
-            const pos = buildSignalFromCandles_MTF(sym, baseTf, local, "2TF");
-            if(pos.type === "HOLD") continue;
-
-            const ex = pos.explain || {};
-            if((ex.winProb ?? 0) < BT_MIN_PROB) continue;
-            if((ex.edge ?? 0) < BT_MIN_EDGE) continue;
-            if((ex.simAvg ?? 0) < BT_MIN_SIM) continue;
-
-            const entryCandle = candlesBase[idx+1];
-            if(!entryCandle || !Number.isFinite(entryCandle.o)) continue;
-            shiftPosEntryTo(pos, entryCandle.o);
-
-            const future = candlesBase.slice(idx+1, Math.min(idx+1+140, candlesBase.length));
-            const outcome = simulateOutcome(pos, future);
-            if(!outcome.resolved) continue;
-
-            total++;
-            if(outcome.win) wins++;
-            pnlSum += outcome.pnlPct;
-
-            if(total >= BACKTEST_TRADES) break;
-          }
-        }
-
-        const winRate = total ? (wins/total)*100 : 0;
-        const avgPnl = total ? (pnlSum/total) : 0;
-
-        rows.push({
-          symbol: sym,
-          tf: tfName(baseTf),
-          n: total,
-          win: winRate,
-          avg: avgPnl,
-          memo: (total===0) ? "표본 0 (API/필터/HOLD)" : ""
-        });
-
-        done++;
-        if(btProg){
-          const pct = totalJobs ? Math.floor((done/totalJobs)*100) : 0;
-          btProg.textContent = `${pct}%`;
-        }
-        if(sum){
-          sum.textContent = `진행: ${done}/${totalJobs} · 현재 행: ${sym} ${tfName(baseTf)}`;
-        }
-      }
-    }
-
-    // ✅ 정렬: 표본 많은 순 → 승률 높은 순
-    rows.sort((a,b)=> (b.n-a.n) || (b.win-a.win));
-
-    if(body){
-      body.innerHTML = rows.map(r=>{
-        return `
-          <tr>
-            <td style="font-weight:950;">${r.symbol}</td>
-            <td>${r.tf}</td>
-            <td>${r.n}</td>
-            <td>${r.win.toFixed(1)}%</td>
-            <td>${r.avg.toFixed(2)}%</td>
-            <td style="color:var(--text-sub);">${r.memo}</td>
-          </tr>
-        `;
-      }).join("");
-    }
-
-    if(sum){
-      const avgWin = rows.filter(r=>r.n>0).reduce((a,r)=>a+r.win,0) / Math.max(1, rows.filter(r=>r.n>0).length);
-      const cnt = rows.filter(r=>r.n>0).length;
-      sum.textContent = `완료 · 유효 조합 ${cnt}/${rows.length} · 평균 승률 ${Number.isFinite(avgWin)?avgWin.toFixed(1):"0.0"}% · 정렬(표본→승률)`;
-    }
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("백테스트가 취소되었습니다.", "warn");
-      if(sum) sum.textContent = "취소됨";
-      return;
-    }
-    console.error(e);
-    toast("백테스트 중 오류가 발생했습니다.", "danger");
-    if(sum) sum.textContent = "오류";
-  }finally{
-    if(btBtn){
-      btBtn.disabled = false;
-      btBtn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
-    }
-    const btProg = document.getElementById("bt-progress");
-    if(btProg) btProg.textContent = "";
-    endOperation(opToken);
-  }
 }
 
 
