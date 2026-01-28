@@ -501,6 +501,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     setInterval(() => {
       try{ marketTick(); }catch(e){ console.error("marketTick interval error:", e); }
     }, 2000);
+    // ✅ Render FREE 서버 잠듦 방지(가볍게 깨우기)
+    // - 60초~180초 주기로 /api/ping 호출 (실패해도 무시)
+    setInterval(() => {
+      try{
+        const base = (typeof YOPO_API_BASE === "string" && YOPO_API_BASE) ? YOPO_API_BASE.replace(/\/$/,"") : "";
+        if(!base) return;
+        fetch(base + "/api/ping", { method:"GET", cache:"no-store" }).catch(()=>{});
+      }catch(e){}
+    }, 120000);
+
   }else{
     console.warn("marketTick() not found. (app.api.js 로드/순서 문제 가능) — 가격추적은 꺼지지만, 카운트다운/정산은 유지됩니다.");
   }
@@ -564,7 +574,7 @@ function initChart(){
   wrap.innerHTML = "";
   new TradingView.widget({
     autosize:true,
-    symbol:"BYBIT:" + state.symbol,
+    symbol:"BINANCE:" + state.symbol, // ✅ Bybit 제거: Binance 기준 차트
     interval:state.tf,
     timezone:"Asia/Seoul",
     theme:"light",
