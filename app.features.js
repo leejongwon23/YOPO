@@ -1521,19 +1521,6 @@ function shiftPosEntryTo(pos, newEntry){
   return pos;
 }
 
-async function runBacktest(){
-
-  // SERVER ENGINE: backtest
-  const res = await fetch(`${window.YOPO_RENDER_BASE}/api/engine/backtest`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ universe: state.universe })
-  });
-  const out = await res.json();
-  renderBacktest(out);
-
-
-}
 
 function simulateOutcome(pos, futureCandles){
   for(const c of futureCandles){
@@ -1597,7 +1584,6 @@ window.closeScanListModal = closeScanListModal;
 window.openFromScanListOrSidebar = openFromScanListOrSidebar;
 
 // 백테스트/모달
-window.runBacktest = runBacktest;
 window.openBacktestModal = openBacktestModal;
 window.closeBacktestModal = closeBacktestModal;
 window.confirmTrack = confirmTrack;
