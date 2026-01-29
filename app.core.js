@@ -457,9 +457,9 @@ const DEFAULT_CANDIDATES = [
 ];
 
 
-// ✅ Universe 정규화(항상 30종으로 고정)
-// - 로컬스토리지에 예전 60종이 남아있어도, 여기서 30으로 강제 동기화한다.
-const UNIVERSE_TARGET_LIMIT = 30;
+// ✅ Universe 정규화(항상 20종으로 고정)
+// - 로컬스토리지에 예전 60종/30종이 남아있어도, 여기서 20으로 강제 동기화한다.
+const UNIVERSE_TARGET_LIMIT = 20;
 function normalizeUniverse(list){
   try{
     const arr = Array.isArray(list) ? list : [];
@@ -1971,6 +1971,6 @@ function consensusMultiTF(cores, order){
   };
 }
 
-const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 30종으로 정규화
+const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 20종으로 정규화
   state.universe = normalizeUniverse(state.universe);
 

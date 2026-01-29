@@ -94,7 +94,7 @@
 
         <div class="market-list">
           <div class="section-title">
-            <span>유망 코인 60 (자동 선정)</span>
+            <span>유망 코인 20 (Binance Futures TOP20)</span>
             <span class="right">
               <span class="status-dot" id="api-dot"></span>
               <span id="universe-ts">업데이트: --</span>
@@ -178,7 +178,7 @@
           </div>
 
           <div class="tiny-note">
-            - 서버 없이(HTML 1파일) 동작하는 “안정화 버전”입니다.<br/>
+            - Render 서버 엔진이 데이터 수집/예측/스캔/백테스트를 계산합니다.<br/>
             - 애매하면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
             - “중복 신호/과한 빈도”를 막기 위해 <b>중복/쿨다운</b> 보호를 넣었습니다.
           </div>
@@ -250,12 +250,12 @@
   <script src="./app.features.js"></script>
 
     
-    <!-- ✅ 백테스트 결과 모달 (전체 60종 × 6전략) -->
+    <!-- ✅ 백테스트 결과 모달 (TOP20 × 6전략) -->
     <div class="modal-overlay" id="bt-modal" style="display:none;">
       <div class="wide-modal">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
           <div>
-            <div style="font-size:16px; font-weight:950; color:var(--primary);">백테스트 결과 (전체)</div>
+            <div style="font-size:16px; font-weight:950; color:var(--primary);">백테스트 결과 (TOP20)</div>
             <div id="bt-summary" style="margin-top:4px; font-size:12px; font-weight:900; color:var(--text-sub);">-</div>
           </div>
           <button class="modal-btn secondary" style="width:auto; padding:10px 12px;" onclick="closeBacktestModal()">닫기</button>
@@ -295,12 +295,12 @@
       </div>
     </div>
 
-<!-- ✅ 통합 스캔 목록 모달 (전체 60종 + BEST 6전략) -->
+<!-- ✅ 통합 스캔 목록 모달 (TOP20 + BEST 6전략) -->
     <div class="modal-overlay" id="scan-list-modal">
       <div class="wide-modal">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
           <div>
-            <div style="font-size:16px; font-weight:950; color:var(--primary);">통합 스캔 목록 (전체)</div>
+            <div style="font-size:16px; font-weight:950; color:var(--primary);">통합 스캔 목록 (TOP20)</div>
             <div id="scanlist-sub" style="margin-top:4px; font-size:12px; font-weight:900; color:var(--text-sub);">-</div>
           </div>
           <button class="modal-btn secondary" style="width:auto; padding:10px 12px;" onclick="closeScanListModal()">닫기</button>
