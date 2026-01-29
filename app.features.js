@@ -428,6 +428,26 @@ function settleExpiredPositions(){
     try{ recordTradeToPatternDB(pos, win); }catch(e){}
     try{ metaRecordFromPosition(pos, win, reason); }catch(e){}
 
+    // ✅ EVOLVE: 서버에 성공/실패 피드백 전송(영구 기억)
+    try{
+      const metaKey = (pos && (pos.metaKey || pos?.explain?.metaKey || pos?.explainBase?.metaKey)) || null;
+      const payload = {
+        symbol: pos.symbol,
+        tf: pos.tf || pos.tfRaw,
+        type: pos.type,
+        win,
+        result: win ? "WIN" : "LOSS",
+        reason,
+        pnlPct: pnl,
+        mfePct: mfe,
+        metaKey,
+        ts: Date.now(),
+      };
+      // fire-and-forget (추적 루프 지연 방지)
+      (async ()=>{ try{ await _enginePOST("/api/evolve/feedback", payload); }catch(e){} })();
+    }catch(e){}
+
+
     state.history.total++;
     if(win) state.history.win++;
 
