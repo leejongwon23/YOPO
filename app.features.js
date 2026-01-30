@@ -1,73 +1,51 @@
 
-// app.features.js — FULL FIX (non-silent, UI-wired)
-
-/* =========================
-   Helpers
-========================= */
-function _assert(fn, name){
-  if(typeof fn !== 'function') throw new Error(name + "_NOT_READY");
-  return fn;
-}
-
-function _toastOk(msg){
-  try{ toast(msg, "success"); }catch(e){}
-}
-function _toastErr(msg){
-  try{ toast(msg, "error"); }catch(e){}
-}
-
-/* =========================
-   Core Actions (buttons)
-========================= */
+// FIXED app.features.js — safe call guards
 async function executeAnalysisAll(){
-  try{
-    _assert(window.serverPredict6tf, "serverPredict6tf");
-    const res = await serverPredict6tf({ symbol: state?.activeSymbol || "BTCUSDT" });
-    _toastOk("통합 예측 완료");
-    // minimal render hook (safe)
-    if(res && typeof openResultModal === "function"){
-      openResultModal(res);
-    }
-    return res;
-  }catch(e){
-    _toastErr(e.message || "PREDICT_FAILED");
-    throw e;
-  }
+  if(!window.serverPredict6tf) throw new Error("API_NOT_READY");
+  return serverPredict6tf({ symbol: state?.activeSymbol || "BTCUSDT" });
 }
-
-async function autoScanUniverseAll(opts={}){
-  try{
-    _assert(window.serverScanAll, "serverScanAll");
-    const res = await serverScanAll({});
-    _toastOk("자동 스캔 완료");
-    if(opts.openModal && typeof openScanListModal === "function"){
-      openScanListModal();
-    }
-    return res;
-  }catch(e){
-    _toastErr(e.message || "SCAN_FAILED");
-    throw e;
-  }
+async function autoScanUniverseAll(){
+  if(!window.serverScanAll) throw new Error("API_NOT_READY");
+  return serverScanAll({});
 }
-
-async function runBacktest(opts={}){
-  try{
-    _assert(window.serverBacktest, "serverBacktest");
-    const res = await serverBacktest({});
-    _toastOk("백테스트 완료");
-    if(opts.openModal && typeof openBacktestModal === "function"){
-      openBacktestModal();
-    }
-    return res;
-  }catch(e){
-    _toastErr(e.message || "BACKTEST_FAILED");
-    throw e;
-  }
+async function runBacktest(){
+  if(!window.serverBacktest) throw new Error("API_NOT_READY");
+  return serverBacktest({});
 }
 
 /* =========================
-   Bindings (no optional chaining)
+   __YOPO_FEATURES_PATCH__
+   - ensure button handlers exist (no silent fail)
 ========================= */
-window.executeAnalysisAll = executeAnalysisAll;
-window.autoScanUniverseAll = autoScanUniverseAll;
-window.runBacktest = runBacktest;
+(function(){
+  const _ok = (m)=>{ try{ if(typeof toast==='function') toast(m,'success'); }catch(e){} };
+  const _er = (m)=>{ try{ if(typeof toast==='function') toast(m,'error'); }catch(e){} };
+
+  async function _call(fnName, payload, okMsg){
+    const fn = window[fnName];
+    if(typeof fn !== "function") throw new Error(fnName+"_NOT_READY");
+    const res = await fn(payload||{});
+    _ok(okMsg);
+    return res;
+  }
+
+  // If original handlers exist, keep them. Otherwise provide safe defaults.
+  window.executeAnalysisAll = window.executeAnalysisAll || (async function(){
+    const symbol = (window.state && state.activeSymbol) ? state.activeSymbol : "BTCUSDT";
+    const res = await _call("serverPredict6tf", { symbol }, "통합 예측 완료");
+    try{ if(typeof openResultModal==="function") openResultModal(res); }catch(e){}
+    return res;
+  });
+
+  window.autoScanUniverseAll = window.autoScanUniverseAll || (async function(){
+    const res = await _call("serverScanAll", {}, "자동 스캔 완료");
+    try{ if(typeof openScanListModal==="function") openScanListModal(); }catch(e){}
+    return res;
+  });
+
+  window.runBacktest = window.runBacktest || (async function(){
+    const res = await _call("serverBacktest", {}, "백테스트 완료");
+    try{ if(typeof openBacktestModal==="function") openBacktestModal(); }catch(e){}
+    return res;
+  });
+})();

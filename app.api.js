@@ -1,52 +1,21 @@
 
-// app.api.js — HARDENED FIX (non-breaking)
+// FIXED app.api.js — server function bindings
 
 function _serverBase(){
-  const base = (window.YOPO_SERVER_BASE || "").replace(/\/$/, "");
-  if(!base){
-    throw new Error("YOPO_SERVER_BASE_NOT_SET");
-  }
-  return base;
+  return (window.YOPO_SERVER_BASE || "").replace(/\/$/, "");
 }
 
-function _withTimeout(promise, ms=15000){
-  const ctrl = new AbortController();
-  const t = setTimeout(()=>ctrl.abort(), ms);
-  return promise(ctrl).finally(()=>clearTimeout(t));
+async function _post(path, body){
+  const res = await fetch(_serverBase()+path, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(body||{})
+  });
+  if(!res.ok) throw new Error("SERVER_"+res.status);
+  return await res.json();
 }
 
-async function _post(path, body, timeoutMs=15000){
-  return _withTimeout(async (ctrl)=>{
-    const res = await fetch(_serverBase()+path, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(body||{}),
-      signal: ctrl.signal
-    });
-    if(!res.ok){
-      const txt = await res.text().catch(()=>"");
-      throw new Error(`SERVER_${res.status}:${txt}`);
-    }
-    const json = await res.json();
-    if(json && json.ok === false){
-      throw new Error(json.message || "SERVER_RESPONSE_NOT_OK");
-    }
-    return json;
-  }, timeoutMs);
-}
-
-async function _get(path, timeoutMs=15000){
-  return _withTimeout(async (ctrl)=>{
-    const res = await fetch(_serverBase()+path, { signal: ctrl.signal });
-    if(!res.ok){
-      const txt = await res.text().catch(()=>"");
-      throw new Error(`SERVER_${res.status}:${txt}`);
-    }
-    return await res.json();
-  }, timeoutMs);
-}
-
-// ===== Engine APIs (used by UI) =====
+// 🔥 핵심 수정: 버튼에서 호출하는 함수 정의
 async function serverPredict6tf(payload){
   return _post("/api/engine/predict6tf", payload);
 }
@@ -57,17 +26,51 @@ async function serverBacktest(payload){
   return _post("/api/engine/backtest", payload);
 }
 
-// ===== Evolve APIs =====
-async function serverEvolveFeedback(payload){
-  return _post("/api/evolve/feedback", payload);
-}
-async function serverEvolveStats(){
-  return _get("/api/evolve/stats");
-}
-
-// ===== Bind to window =====
+// window 바인딩 (중요)
 window.serverPredict6tf = serverPredict6tf;
 window.serverScanAll = serverScanAll;
 window.serverBacktest = serverBacktest;
-window.serverEvolveFeedback = serverEvolveFeedback;
-window.serverEvolveStats = serverEvolveStats;
+
+/* =========================
+   YOPO API PATCH (AUTO)
+   - ensure required window.server* functions exist
+========================= */
+function _yopoServerBase(){
+  const base = (window.YOPO_SERVER_BASE || "").replace(/\/$/, "");
+  if(!base) throw new Error("YOPO_SERVER_BASE_NOT_SET");
+  return base;
+}
+async function _yopoPost(path, body, timeoutMs=15000){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+  try{
+    const res = await fetch(_yopoServerBase()+path, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body||{}),
+      signal: ctrl.signal
+    });
+    if(!res.ok){
+      const txt = await res.text().catch(()=>"");
+      throw new Error("SERVER_"+res.status+":"+txt);
+    }
+    return await res.json();
+  } finally { clearTimeout(t); }
+}
+async function _yopoGet(path, timeoutMs=15000){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+  try{
+    const res = await fetch(_yopoServerBase()+path, { signal: ctrl.signal });
+    if(!res.ok){
+      const txt = await res.text().catch(()=>"");
+      throw new Error("SERVER_"+res.status+":"+txt);
+    }
+    return await res.json();
+  } finally { clearTimeout(t); }
+}
+window.serverPredict6tf = window.serverPredict6tf || ((payload)=>_yopoPost("/api/engine/predict6tf", payload));
+window.serverScanAll   = window.serverScanAll   || ((payload)=>_yopoPost("/api/engine/scan_all", payload));
+window.serverBacktest  = window.serverBacktest  || ((payload)=>_yopoPost("/api/engine/backtest", payload));
+window.serverEvolveFeedback = window.serverEvolveFeedback || ((payload)=>_yopoPost("/api/evolve/feedback", payload));
+window.serverEvolveStats    = window.serverEvolveStats    || (()=>_yopoGet("/api/evolve/stats"));

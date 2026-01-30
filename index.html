@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <!-- 🔥 SERVER BASE (AUTO-INJECTED) -->
+  <!-- 🔥 SERVER BASE (AUTO) -->
   <script>
     window.YOPO_SERVER_BASE = "https://yopo-api-cache.onrender.com";
   </script>
@@ -345,14 +345,13 @@
 
 
 <script>
+/* auth overlay failsafe */
 (function(){
-  // auth overlay failsafe
   window.tryAuth = window.tryAuth || function(){
     const el = document.getElementById('auth-overlay');
     if(el) el.style.display = 'none';
   };
 })();
 </script>
-
 </body>
 </html>
