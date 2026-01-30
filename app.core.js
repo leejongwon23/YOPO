@@ -420,7 +420,7 @@ function scoreUnifiedSignal(unified){
 }
 
 /* =========================
-   Candidate List (30)
+   Candidate List (20)
    - cg는 확실한 것만 유지 (불확실한 매핑은 생략)
 ========================= */
 const DEFAULT_CANDIDATES = [
@@ -431,29 +431,19 @@ const DEFAULT_CANDIDATES = [
   { s:"XRPUSDT", n:"XRP" },
   { s:"ADAUSDT", n:"Cardano" },
   { s:"DOGEUSDT", n:"Dogecoin" },
-  { s:"TRXUSDT", n:"TRON" },
-  { s:"TONUSDT", n:"Toncoin" },
   { s:"AVAXUSDT", n:"Avalanche" },
-  { s:"LINKUSDT", n:"Chainlink" },
   { s:"DOTUSDT", n:"Polkadot" },
+  { s:"LINKUSDT", n:"Chainlink" },
   { s:"MATICUSDT", n:"Polygon" },
   { s:"LTCUSDT", n:"Litecoin" },
   { s:"BCHUSDT", n:"Bitcoin Cash" },
-  { s:"UNIUSDT", n:"Uniswap" },
+  { s:"TRXUSDT", n:"TRON" },
   { s:"ATOMUSDT", n:"Cosmos" },
-  { s:"ETCUSDT", n:"Ethereum Classic" },
-  { s:"XLMUSDT", n:"Stellar" },
-  { s:"FILUSDT", n:"Filecoin" },
-  { s:"APTUSDT", n:"Aptos" },
-  { s:"NEARUSDT", n:"NEAR" },
   { s:"OPUSDT", n:"Optimism" },
   { s:"ARBUSDT", n:"Arbitrum" },
-  { s:"SUIUSDT", n:"Sui" },
-  { s:"ICPUSDT", n:"Internet Computer" },
   { s:"INJUSDT", n:"Injective" },
-  { s:"RNDRUSDT", n:"Render" },
-  { s:"SHIBUSDT", n:"Shiba Inu" },
-  { s:"PEPEUSDT", n:"Pepe" }
+  { s:"APTUSDT", n:"Aptos" },
+  { s:"SUIUSDT", n:"Sui" },
 ];
 
 
