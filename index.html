@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+  <!-- 🔥 SERVER BASE (AUTO-INJECTED) -->
+  <script>
+    window.YOPO_SERVER_BASE = "https://yopo-api-cache.onrender.com";
+  </script>
+
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>YOPO AI PRO | Premium Crypto Analytics</title>
@@ -337,6 +342,17 @@
         </div>
       </div>
     </div>
+
+
+<script>
+(function(){
+  // auth overlay failsafe
+  window.tryAuth = window.tryAuth || function(){
+    const el = document.getElementById('auth-overlay');
+    if(el) el.style.display = 'none';
+  };
+})();
+</script>
 
 </body>
 </html>

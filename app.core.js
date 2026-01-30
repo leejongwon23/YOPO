@@ -811,6 +811,26 @@ function getRecentWinRate(symbol, tfRaw, n=20){
     if(x.win) hit++;
     if(total >= n) break;
   }
+
+
+/* =========================
+   Recent directional performance
+========================= */
+function getRecentWinRateDir(symbol, tfRaw, type, n=10){
+  const list = state.closedTrades || [];
+  let hit = 0, total = 0;
+  for(const x of list){
+    if(x.symbol !== symbol) continue;
+    if(x.tfRaw !== tfRaw) continue;
+    if(x.type !== type) continue;
+    total++;
+    if(x.win) hit++;
+    if(total >= n) break;
+  }
+  if(total <= 0) return 0.5;
+  return clamp(hit / total, 0.0, 1.0);
+}
+
   if(total <= 0) return 0.5;
   return clamp(hit / total, 0.0, 1.0);
 }
@@ -1971,6 +1991,5 @@ function consensusMultiTF(cores, order){
   };
 }
 
-const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 20종으로 정규화
-  state.universe = normalizeUniverse(state.universe);
-
+const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard
+(function(){ try{ state.universe = normalizeUniverse(state.universe); saveState(); }catch(e){} })();
