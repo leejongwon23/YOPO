@@ -1765,6 +1765,7 @@ window.confirmTrackSelected = confirmTrackSelected;
 // 스캔
 window.autoScanUniverseAll = autoScanUniverseAll;
 window.openScanListModal = openScanListModal;
+window.renderScanListModal = renderScanListModal;
 window.closeScanListModal = closeScanListModal;
 window.openFromScanListOrSidebar = openFromScanListOrSidebar;
 
