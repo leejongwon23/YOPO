@@ -754,17 +754,18 @@ async function executeAnalysisAll(){
         tfRaw,
         type,
         entry: entry ?? 0,
-        tpPct: 1.0,
-        slPct: 0.5,
-        tp: entry ? entry*(1+0.01) : null,
-        sl: entry ? (type==="LONG" ? entry*(1-0.005) : entry*(1+0.005)) : null,
+        tpPct: (Number.isFinite(Number(r.tpPct)) ? Number(r.tpPct) : null),
+        slPct: (Number.isFinite(Number(r.slPct)) ? Number(r.slPct) : null),
+        tp: (Number.isFinite(Number(r.tp)) ? Number(r.tp) : (entry && Number.isFinite(Number(r.tpPct)) ? (type==="LONG" ? entry*(1+Number(r.tpPct)/100) : entry*(1-Number(r.tpPct)/100)) : null)),
+        sl: (Number.isFinite(Number(r.sl)) ? Number(r.sl) : (entry && Number.isFinite(Number(r.slPct)) ? (type==="LONG" ? entry*(1-Number(r.slPct)/100) : entry*(1+Number(r.slPct)/100)) : null)),
         regime: r.regime || "-",
         evLong: r.evLong,
         evShort: r.evShort,
         patternKey: r.patternKey || null,
         explain:{
           winProb,
-          edge: ev,
+          edge: (Number.isFinite(Number(r.edge)) ? Number(r.edge) : Math.abs(pLong-pShort)),
+          ev,
           simAvg: null,
           mtf: null,
           conf:{ tier: confTier },
@@ -832,15 +833,23 @@ async function quickAnalyzeAllAndShow(symbol){
         tf: tfRaw, tfRaw,
         type: action,
         entry: entry ?? 0,
-        tpPct: 1.0, slPct: 0.5,
-        tp: entry ? entry*(1+0.01) : null,
-        sl: entry ? (action==="LONG" ? entry*(1-0.005) : entry*(1+0.005)) : null,
+        tpPct: (Number.isFinite(Number(r.tpPct)) ? Number(r.tpPct) : null),
+        slPct: (Number.isFinite(Number(r.slPct)) ? Number(r.slPct) : null),
+        tp: (Number.isFinite(Number(r.tp)) ? Number(r.tp) : (entry && Number.isFinite(Number(r.tpPct)) ? (action==="LONG" ? entry*(1+Number(r.tpPct)/100) : entry*(1-Number(r.tpPct)/100)) : null)),
+        sl: (Number.isFinite(Number(r.sl)) ? Number(r.sl) : (entry && Number.isFinite(Number(r.slPct)) ? (action==="LONG" ? entry*(1-Number(r.slPct)/100) : entry*(1+Number(r.slPct)/100)) : null)),
         regime: r.regime || "-",
         evLong: r.evLong,
         evShort: r.evShort,
         patternKey: r.patternKey || null,
         explain:{
-          winProb, edge: ev, simAvg:null, mtf:null, conf:{ tier: confTier }, longP:pLong, shortP:pShort
+          winProb,
+          edge: (Number.isFinite(Number(r.edge)) ? Number(r.edge) : Math.abs(pLong-pShort)),
+          ev,
+          simAvg:null,
+          mtf:null,
+          conf:{ tier: confTier },
+          longP:pLong,
+          shortP:pShort
         },
         reason: r.reason || ""
       };
@@ -1600,6 +1609,52 @@ async function autoScanUniverseAll(opts={}){
 
     // 서버가 반환한 flat results를 그대로 저장 (top list용)
     const flat = json?.results || [];
+    // ✅ 서버 details를 모달 캐시로 적재 (추천 클릭 시 즉시 표시 가능)
+    try{
+      if(!window.__SCAN_DETAIL_CACHE) window.__SCAN_DETAIL_CACHE = new Map();
+      const det = json?.details || null;
+      if(det && typeof det === "object"){
+        const toTfRaw = (tf)=>({
+          "15m":"15","30m":"30","1h":"60","4h":"240","1d":"D","1w":"W"
+        }[String(tf||"").toLowerCase()] || String(tf||""));
+        for(const sym of Object.keys(det)){
+          const per = det[sym] || {};
+          const outMap = {};
+          for(const tf of Object.keys(per)){
+            const r = per[tf] || {};
+            const tfRaw = toTfRaw(tf);
+            const action = (r.action || r.type || "HOLD");
+            const pLong = Number(r.pLong ?? 0.5);
+            const pShort = Number(r.pShort ?? 0.5);
+            const winProb = Number.isFinite(Number(r.winProb)) ? Number(r.winProb) : Math.max(pLong, pShort);
+            const edge = Number.isFinite(Number(r.edge)) ? Number(r.edge) : Math.abs(pLong-pShort);
+            const ev = (action==="LONG") ? Number(r.evLong ?? -999) : (action==="SHORT") ? Number(r.evShort ?? -999) : -999;
+            const confTier = (winProb>=0.62 && ev>0) ? "HIGH" : (winProb>=0.55 && ev>0) ? "MID" : "LOW";
+            const lastClose = Number(r.lastClose);
+            const entry = Number.isFinite(lastClose) ? lastClose : (Number.isFinite(Number(r.entry)) ? Number(r.entry) : 0);
+
+            outMap[tfRaw] = {
+              symbol: sym,
+              tf: tfRaw, tfRaw,
+              type: action,
+              entry: entry ?? 0,
+              tpPct: (Number.isFinite(Number(r.tpPct)) ? Number(r.tpPct) : null),
+              slPct: (Number.isFinite(Number(r.slPct)) ? Number(r.slPct) : null),
+              tp: (Number.isFinite(Number(r.tp)) ? Number(r.tp) : null),
+              sl: (Number.isFinite(Number(r.sl)) ? Number(r.sl) : null),
+              regime: r.regime || "-",
+              evLong: r.evLong,
+              evShort: r.evShort,
+              patternKey: r.patternKey || null,
+              explain:{ winProb, edge, ev, simAvg:null, mtf:null, conf:{ tier: confTier }, longP:pLong, shortP:pShort },
+              reason: r.reason || ""
+            };
+          }
+          window.__SCAN_DETAIL_CACHE.set(sym, { out: outMap, ts: Date.now() });
+        }
+      }
+    }catch(_e){}
+
     state.lastScanResults = flat.slice(0, 60); // UI가 60까지 표시 가능
     state.lastScanAt = Date.now();
     saveState();
@@ -1649,8 +1704,8 @@ function renderScanResults(){
 
   container.innerHTML = list.map(item => {
     const pillClass = item.type === "LONG" ? "long" : "short";
-    const prob = (item.winProb*100).toFixed(1);
-    const edge = (item.edge*100).toFixed(1);
+    const prob = (Number.isFinite(Number(item.winProb)) ? (Number(item.winProb)*100) : 50).toFixed(1);
+    const edge = (Number.isFinite(Number(item.edge)) ? (Number(item.edge)*100) : 0).toFixed(1);
     const mtf = item.mtfVotes ? ` · MTF ${item.mtfAgree}/${item.mtfVotes.split("/").length}(${item.mtfVotes})` : "";
     const conf = item.confTier ? ` · ${item.confTier}` : "";
     const risk = item.isRisk ? ` · <span style="color:var(--danger); font-weight:950;">RISK</span>` : "";
@@ -1852,64 +1907,21 @@ function renderScanListModal(){
 async function openFromScanListOrSidebar(symbol){
   ensureRuntimeState();
 
-  const opToken = beginOperation("ANALYSIS_ALL");
-
+  // ✅ v3 원칙: 브라우저 계산 금지 → 서버 통합예측으로만 처리
   try{
-    switchCoin(symbol);
-    saveState();
-    initChart();
-
-    // 1) scan-cache 우선
-    const cache = window.__SCAN_DETAIL_CACHE?.get(symbol);
-    if(cache && cache.out){
-      showResultModalAll(symbol, cache.out);
-      endOperation(opToken);
-      return;
-    }
-
-    // 2) 없으면 정상 통합 예측(6TF)
-    const tfSet = getMTFSet6();
-    const candlesByTf = {};
-    for(const tfRaw of tfSet){
-      checkCanceled(opToken);
-      candlesByTf[tfRaw] = await fetchCandles(symbol, tfRaw, EXTENDED_LIMIT);
-    }
-
-    const out = {};
-    for(const baseTfRaw of tfSet){
-      const baseCandles = candlesByTf[baseTfRaw] || [];
-      if(baseCandles.length < (SIM_WINDOW + FUTURE_H + 80)){
-        out[baseTfRaw] = null;
-        continue;
-      }
-      try{
-        try{
-        out[baseTfRaw] = buildSignalFromCandles_MTF(symbol, baseTfRaw, candlesByTf, "6TF");
-      }catch(err){
-        console.warn("[PRED] buildSignal fail:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
-      }catch(err){
-        console.warn("[ANALYSIS_ALL] buildSignal fail:", symbol, baseTfRaw, err);
-        out[baseTfRaw] = null;
-      }
-    }
-
-    showResultModalAll(symbol, out);
+    await quickAnalyzeAllAndShow(String(symbol||"").toUpperCase());
   }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("진행 중 작업이 취소되었습니다.", "warn");
-      return;
-    }
     console.error(e);
-    toast("통합 추천 분석 중 오류가 발생했습니다.", "danger");
-  }finally{
-    endOperation(opToken);
+    toast("서버 예측 오류(추천 클릭)", "danger");
   }
 }
 
 /* ==========================================================
-   ✅ Backtest Modal (전체 코인/전체 전략)
+   ✅ Backtest Modal (TOP20 × 6전략)
+   - v3 원칙: 계산은 서버, 웹은 표시만
+   - index.html 요소:
+     - bt-box: bt-range, bt-n, bt-win, bt-avg
+     - bt-modal: bt-summary, bt-body
    ========================================================== */
 function openBacktestModal(){
   const m = document.getElementById("bt-modal");
@@ -1920,15 +1932,118 @@ function closeBacktestModal(){
   if(m) m.style.display = "none";
 }
 
-async function runBacktest(){
+// UI 요약 박스 업데이트(bt-box)
+function renderBacktestBox(json){
+  try{
+    const overall = json?.overall || {};
+    const totalTrades = Number(overall.totalTrades || 0);
+    const overallWinRate = Number(overall.overallWinRate || 0);
+    const overallAvgPnl = Number(overall.overallAvgPnl || 0);
+
+    const rangeEl = document.getElementById("bt-range");
+    const nEl = document.getElementById("bt-n");
+    const winEl = document.getElementById("bt-win");
+    const avgEl = document.getElementById("bt-avg");
+
+    if(rangeEl) rangeEl.textContent = "TOP20 × 6전략";
+    if(nEl) nEl.textContent = totalTrades ? String(totalTrades) : "--";
+    if(winEl) winEl.textContent = totalTrades ? (overallWinRate*100).toFixed(1) + "%" : "--";
+    if(avgEl) avgEl.textContent = totalTrades ? (overallAvgPnl*100).toFixed(2) : "--";
+  }catch(e){}
+}
+
+// 모달 테이블 업데이트(bt-modal)
+function renderBacktestModal(){
+  try{
+    const json = state.lastBacktest || null;
+    const body = document.getElementById("bt-body");
+    const sum = document.getElementById("bt-summary");
+    if(!json || !json.ok){
+      if(sum) sum.textContent = "결과 없음";
+      if(body) body.innerHTML = '<tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">아직 결과가 없습니다.</td></tr>';
+      return;
+    }
+
+    const overall = json.overall || {};
+    const totalTrades = Number(overall.totalTrades || 0);
+    const overallWinRate = Number(overall.overallWinRate || 0);
+    const overallAvgPnl = Number(overall.overallAvgPnl || 0);
+
+    if(sum){
+      sum.textContent =
+        `전체 표본 ${totalTrades} · 전체 승률 ${(overallWinRate*100).toFixed(1)}% · 평균 ${(overallAvgPnl*100).toFixed(2)}%`;
+    }
+
+    // 서버가 제공하는 top 리스트 우선 사용
+    const rows = Array.isArray(json.top) ? json.top.slice() : [];
+
+    // top이 비었으면 perSymbol을 평탄화
+    if(rows.length === 0 && json.perSymbol && typeof json.perSymbol === "object"){
+      for(const sym of Object.keys(json.perSymbol)){
+        const m = json.perSymbol[sym] || {};
+        for(const tf of Object.keys(m)){
+          const r = m[tf];
+          if(!r || !r.ok) continue;
+          rows.push({
+            symbol: sym,
+            tf,
+            trades: Number(r.trades||0),
+            winRate: Number(r.winRate||0),
+            avgPnl: Number(r.avgPnl||0),
+            regime: r.regime || ""
+          });
+        }
+      }
+      rows.sort((a,b)=>{
+        const td = Number(b.trades||0) - Number(a.trades||0);
+        if(td!==0) return td;
+        return Number(b.winRate||0) - Number(a.winRate||0);
+      });
+    }
+
+    if(!body) return;
+
+    if(rows.length === 0){
+      body.innerHTML = '<tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">결과가 없습니다(표본 부족).</td></tr>';
+      return;
+    }
+
+    body.innerHTML = rows.map(r=>{
+      const sym = escapeHtml(String(r.symbol||""));
+      const tf  = escapeHtml(String(r.tf||""));
+      const trades = Number(r.trades||0);
+      const wr = Number(r.winRate||0);
+      const avg = Number(r.avgPnl||0);
+      const memo = escapeHtml(String(r.regime||""));
+      return `
+        <tr>
+          <td style="font-weight:950;">${sym}</td>
+          <td>${tf}</td>
+          <td style="font-weight:950;">${trades}</td>
+          <td style="font-weight:950;">${(wr*100).toFixed(1)}%</td>
+          <td style="font-weight:950;">${(avg*100).toFixed(2)}</td>
+          <td style="color:var(--text-sub); font-weight:900;">${memo}</td>
+        </tr>
+      `;
+    }).join("");
+  }catch(e){
+    console.error("renderBacktestModal fail", e);
+  }
+}
+
+async function runBacktest(opts={}){
   ensureRuntimeState();
+  const openModal = !!opts?.openModal;
 
   const opToken = beginOperation("BACKTEST");
-  const btn = document.getElementById("backtest-btn");
+  const btn = document.getElementById("bt-btn") || document.getElementById("backtest-btn");
+  const prog = document.getElementById("bt-progress");
+
   if(btn){
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 서버 백테스트...';
   }
+  if(prog) prog.textContent = "계산중...";
 
   try{
     checkCanceled(opToken);
@@ -1939,17 +2054,16 @@ async function runBacktest(){
     const json = await api({ limit: 600 });
     checkCanceled(opToken);
 
-    // 기존 모달 렌더 함수가 있으면 재사용
-    if(typeof renderBacktestModal === "function"){
-      state.lastBacktest = json;
-      saveState();
-      renderBacktestModal();
-      openBacktestModal();
-    }else{
-      // 최소 표시
-      toast(`백테스트 완료: overall ${(Number(json?.overall?.overallWinRate||0)*100).toFixed(1)}%`, "success");
-      console.log("BACKTEST", json);
-    }
+    // 저장 + 렌더
+    state.lastBacktest = json;
+    saveState();
+
+    renderBacktestBox(json);
+    renderBacktestModal();
+
+    if(openModal) openBacktestModal();
+
+    toast(`백테스트 완료: overall ${(Number(json?.overall?.overallWinRate||0)*100).toFixed(1)}%`, "success");
   }catch(e){
     if(String(e?.message || "").includes("CANCELLED")){
       toast("백테스트가 취소되었습니다.", "warn");
@@ -1960,8 +2074,9 @@ async function runBacktest(){
   }finally{
     if(btn){
       btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-chart-line"></i> 백테스트';
+      btn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
     }
+    if(prog) prog.textContent = "";
     endOperation(opToken);
   }
 }
