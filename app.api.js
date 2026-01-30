@@ -75,14 +75,70 @@ window.serverBacktest  = window.serverBacktest  || ((payload)=>_yopoPost("/api/e
 window.serverEvolveFeedback = window.serverEvolveFeedback || ((payload)=>_yopoPost("/api/evolve/feedback", payload));
 window.serverEvolveStats    = window.serverEvolveStats    || (()=>_yopoGet("/api/evolve/stats"));
 
-
-// --- optional UI helpers expected by older builds ---
+// ✅ 호환용 함수 (UI가 기대하지만 없어도 동작은 가능)
+// - 경고 제거 + 가능하면 서버에서 값 받아오고, 실패해도 절대 throw 하지 않음
 window.marketTick = window.marketTick || (async function marketTick(symbol){
-  const sym = (symbol || (window.state && window.state.activeSymbol) || "BTCUSDT");
-  return _yopoGet("/api/market/tick?symbol=" + encodeURIComponent(sym), 12000);
+  try{
+    // 서버에 해당 엔드포인트가 있으면 사용, 없으면 null 반환
+    return await _yopoGet("/api/market/tick?symbol=" + encodeURIComponent(symbol||""));
+  }catch(e){
+    return null;
+  }
 });
 
 window.refreshUniverseAndGlobals = window.refreshUniverseAndGlobals || (async function refreshUniverseAndGlobals(){
-  // Returns { ok:true, universe:[...], updatedAt }
-  return _yopoGet("/api/universe/top20?limit=20", 12000);
+  try{
+    // 서버에 해당 엔드포인트가 있으면 사용, 없으면 null 반환
+    return await _yopoGet("/api/universe/top20");
+  }catch(e){
+    return null;
+  }
 });
+
+// ✅ 추가 안정화: 서버 tick 실패 시 UI 콘솔/네트워크 스팸 방지
+// - 실패하면 잠깐 쉬었다가 다시 시도 (쿨다운)
+// - 마지막 정상 tick이 있으면 그걸 재사용
+(function(){
+  const _tickCache = new Map(); // symbol -> {data, ts}
+  let _cooldownUntil = 0;
+
+  async function _safeGet(path, timeoutMs=8000){
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+    try{
+      const res = await fetch(_yopoServerBase()+path, { signal: ctrl.signal });
+      // 200이 아니면 null 처리 (throw 금지)
+      if(!res.ok) return null;
+      return await res.json();
+    }catch(_e){
+      return null;
+    }finally{ clearTimeout(t); }
+  }
+
+  window.marketTick = async function marketTick(symbol){
+    const sym = String(symbol||"").toUpperCase();
+    const now = Date.now();
+
+    // 쿨다운 중이면 캐시만 반환
+    if(now < _cooldownUntil){
+      return _tickCache.get(sym)?.data || null;
+    }
+
+    // 3초 이내면 캐시 재사용
+    const cached = _tickCache.get(sym);
+    if(cached && (now - cached.ts) < 3000){
+      return cached.data;
+    }
+
+    const data = await _safeGet("/api/market/tick?symbol="+encodeURIComponent(sym));
+    if(data && data.ok){
+      _tickCache.set(sym, { data, ts: now });
+      return data;
+    }
+
+    // 실패하면 10초 쿨다운
+    _cooldownUntil = now + 10_000;
+    return cached?.data || null;
+  };
+})();
+
