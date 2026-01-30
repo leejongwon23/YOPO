@@ -75,23 +75,14 @@ window.serverBacktest  = window.serverBacktest  || ((payload)=>_yopoPost("/api/e
 window.serverEvolveFeedback = window.serverEvolveFeedback || ((payload)=>_yopoPost("/api/evolve/feedback", payload));
 window.serverEvolveStats    = window.serverEvolveStats    || (()=>_yopoGet("/api/evolve/stats"));
 
-// ✅ 호환용 함수 (UI가 기대하지만 없어도 동작은 가능)
-// - 경고 제거 + 가능하면 서버에서 값 받아오고, 실패해도 절대 throw 하지 않음
+
+// --- optional UI helpers expected by older builds ---
 window.marketTick = window.marketTick || (async function marketTick(symbol){
-  try{
-    // 서버에 해당 엔드포인트가 있으면 사용, 없으면 null 반환
-    return await _yopoGet("/api/market/tick?symbol=" + encodeURIComponent(symbol||""));
-  }catch(e){
-    return null;
-  }
+  const sym = (symbol || (window.state && window.state.activeSymbol) || "BTCUSDT");
+  return _yopoGet("/api/market/tick?symbol=" + encodeURIComponent(sym), 12000);
 });
 
 window.refreshUniverseAndGlobals = window.refreshUniverseAndGlobals || (async function refreshUniverseAndGlobals(){
-  try{
-    // 서버에 해당 엔드포인트가 있으면 사용, 없으면 null 반환
-    return await _yopoGet("/api/universe/top20");
-  }catch(e){
-    return null;
-  }
+  // Returns { ok:true, universe:[...], updatedAt }
+  return _yopoGet("/api/universe/top20?limit=20", 12000);
 });
-
