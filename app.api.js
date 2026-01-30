@@ -24,6 +24,23 @@ function _serverBase(){
   try{ return String(window.YOPO_SERVER_BASE||"").replace(/\/$/,""); }catch(e){ return ""; }
 }
 
+// ==========================================================
+// ✅ Server-first URLs (Render) + safe fallbacks (Browser direct)
+// - These MUST exist because refreshUniverseAndGlobals() uses them.
+// ==========================================================
+const CG_GLOBAL = (_serverBase()
+  ? (_serverBase() + "/api/cg/global")
+  : "https://api.coingecko.com/api/v3/global");
+
+// Binance Futures: exchangeInfo + 24hr tickers
+const BINANCE_FUT_EXCHANGEINFO_PROXY = (_serverBase()
+  ? (_serverBase() + "/api/binance/fapi/exchangeInfo")
+  : "https://data-api.binance.vision/fapi/v1/exchangeInfo");
+
+const BINANCE_FUT_TICKER24H_PROXY = (_serverBase()
+  ? (_serverBase() + "/api/binance/fapi/ticker24hr")
+  : "https://data-api.binance.vision/fapi/v1/ticker/24hr");
+
 async function fetchServerJSON(path, opts={}){
   const base = _serverBase();
   if(!base) throw new Error("NO_SERVER_BASE");
@@ -35,19 +52,6 @@ async function fetchServerJSON(path, opts={}){
   });
   if(!r.ok) throw new Error("SERVER_"+r.status);
   return await r.json();
-}
-
-/* =========================
-   ✅ Binance klines via Render server (CORS-safe)
-========================= */
-async function fetchServerKlines(symbol, tfRaw, limit=500){
-  const s = String(symbol||"").toUpperCase().trim();
-  const tf = String(tfRaw||"").trim();
-  const lim = Math.max(10, Math.min(1500, Number(limit)||500));
-  const q = `?symbol=${encodeURIComponent(s)}&tf=${encodeURIComponent(tf)}&limit=${encodeURIComponent(String(lim))}`;
-  const j = await fetchServerJSON(`/api/bn/klines${q}`);
-  if(j && j.ok && Array.isArray(j.candles)) return j.candles;
-  throw new Error(j?.error || "BN_KLINES_BAD_RESPONSE");
 }
 
 
@@ -393,13 +397,6 @@ async function _fetchCandlesBybit(symbol, tf, limit){
 }
 
 async function fetchCandles(symbol, tf, limit){
-  // ✅ 1) 서버(렌더)로 먼저 캔들 요청 (CORS 문제 해결)
-  try{
-    return await fetchServerKlines(symbol, tfRaw, limit);
-  }catch(e){
-    // 서버가 죽었거나 네트워크 문제면, 아래 기존 폴백(직호출)로 내려감
-  }
-
   _ensureApiStateShape();
   const token = _getOpToken();
   if(_isCancelled(token)) throw new Error("cancelled");
