@@ -1,51 +1,82 @@
 
-// FIXED app.features.js — safe call guards
-async function executeAnalysisAll(){
-  if(!window.serverPredict6tf) throw new Error("API_NOT_READY");
-  return serverPredict6tf({ symbol: state?.activeSymbol || "BTCUSDT" });
-}
-async function autoScanUniverseAll(){
-  if(!window.serverScanAll) throw new Error("API_NOT_READY");
-  return serverScanAll({});
-}
-async function runBacktest(){
-  if(!window.serverBacktest) throw new Error("API_NOT_READY");
-  return serverBacktest({});
-}
+/*************************************************************
+ * YOPO AI PRO — app.features.js (REBUILT · CURRENT)
+ * 역할:
+ * - 부트스트랩
+ * - 버튼 이벤트 → app.api.js 서버 호출
+ * - 결과를 기존 UI 훅으로 전달 (있을 때만)
+ *************************************************************/
 
-/* =========================
-   __YOPO_FEATURES_PATCH__
-   - ensure button handlers exist (no silent fail)
-========================= */
 (function(){
-  const _ok = (m)=>{ try{ if(typeof toast==='function') toast(m,'success'); }catch(e){} };
-  const _er = (m)=>{ try{ if(typeof toast==='function') toast(m,'error'); }catch(e){} };
+  // ---- guards ----
+  const ok = (m)=>{ try{ if(typeof toast==='function') toast(m,'success'); }catch(e){} };
+  const er = (m)=>{ try{ if(typeof toast==='function') toast(m,'error'); }catch(e){} };
 
-  async function _call(fnName, payload, okMsg){
-    const fn = window[fnName];
-    if(typeof fn !== "function") throw new Error(fnName+"_NOT_READY");
-    const res = await fn(payload||{});
-    _ok(okMsg);
-    return res;
+  function need(fn, name){
+    if(typeof fn !== 'function') throw new Error(name+'_NOT_READY');
+    return fn;
   }
 
-  // If original handlers exist, keep them. Otherwise provide safe defaults.
-  window.executeAnalysisAll = window.executeAnalysisAll || (async function(){
-    const symbol = (window.state && state.activeSymbol) ? state.activeSymbol : "BTCUSDT";
-    const res = await _call("serverPredict6tf", { symbol }, "통합 예측 완료");
-    try{ if(typeof openResultModal==="function") openResultModal(res); }catch(e){}
-    return res;
-  });
+  // ---- bootstrap ----
+  try{
+    if(typeof window.state !== 'object'){
+      window.state = { activeSymbol: 'BTCUSDT' };
+    }
+  }catch(e){}
 
-  window.autoScanUniverseAll = window.autoScanUniverseAll || (async function(){
-    const res = await _call("serverScanAll", {}, "자동 스캔 완료");
-    try{ if(typeof openScanListModal==="function") openScanListModal(); }catch(e){}
-    return res;
-  });
+  // ---- handlers ----
+  async function executeAnalysisAll(){
+    try{
+      need(window.serverPredict6tf, 'serverPredict6tf');
+      const symbol = state.activeSymbol || 'BTCUSDT';
+      const res = await serverPredict6tf({ symbol });
+      ok('통합 예측 완료');
+      try{
+        if(typeof renderUnifiedResults==='function') renderUnifiedResults(res);
+        if(typeof openResultModal==='function') openResultModal(res);
+      }catch(e){}
+      return res;
+    }catch(e){
+      er(e.message||'PREDICT_FAILED');
+      throw e;
+    }
+  }
 
-  window.runBacktest = window.runBacktest || (async function(){
-    const res = await _call("serverBacktest", {}, "백테스트 완료");
-    try{ if(typeof openBacktestModal==="function") openBacktestModal(); }catch(e){}
-    return res;
-  });
+  async function autoScanUniverseAll(){
+    try{
+      need(window.serverScanAll, 'serverScanAll');
+      const res = await serverScanAll({});
+      ok('자동 스캔 완료');
+      try{
+        if(typeof renderScanResults==='function') renderScanResults(res);
+        if(typeof openScanListModal==='function') openScanListModal();
+      }catch(e){}
+      return res;
+    }catch(e){
+      er(e.message||'SCAN_FAILED');
+      throw e;
+    }
+  }
+
+  async function runBacktest(){
+    try{
+      need(window.serverBacktest, 'serverBacktest');
+      const res = await serverBacktest({});
+      ok('백테스트 완료');
+      try{
+        if(typeof renderBacktest==='function') renderBacktest(res);
+        if(typeof openBacktestModal==='function') openBacktestModal();
+      }catch(e){}
+      return res;
+    }catch(e){
+      er(e.message||'BACKTEST_FAILED');
+      throw e;
+    }
+  }
+
+  // ---- expose ----
+  window.executeAnalysisAll = executeAnalysisAll;
+  window.autoScanUniverseAll = autoScanUniverseAll;
+  window.runBacktest = runBacktest;
+
 })();
