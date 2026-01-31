@@ -189,20 +189,23 @@ const DEFAULT = ${JSON.stringify(defaultSym)};
 const tfLabel = (tf)=>tf;
 const qs = (id)=>document.getElementById(id);
 function card(tf, data){
-  const win = Number(data.win||0), n = Number(data.n||0);
-  const wr = n>0 ? (win/n*100) : 0;
+  // server.js returns: {tf, trades, winRate, avgPnl, holdRate, note}
+  const n = Number(data.trades||0);
+  const wr = Number.isFinite(data.winRate) ? (Number(data.winRate)*100) : 0;
   const avg = Number(data.avgPnl||0);
   const cls = avg>=0 ? 'pos':'neg';
-  return \`
+  const hold = Number.isFinite(data.holdRate) ? (Number(data.holdRate)*100) : 0;
+  return `
   <div class="card">
     <div style="display:flex;align-items:center;gap:8px;">
-      <b>\${tfLabel(tf)}</b>
-      <span class="badge">\${n} trades</span>
-      <span class="badge">\${wr.toFixed(1)}%</span>
-      <span class="badge \${cls}">avg \${(avg*100).toFixed(2)}%</span>
+      <b>${tfLabel(tf)}</b>
+      <span class="badge">${n} trades</span>
+      <span class="badge">${wr.toFixed(1)}%</span>
+      <span class="badge ${cls}">avg ${(avg*100).toFixed(2)}%</span>
+      <span class="badge">hold ${hold.toFixed(0)}%</span>
     </div>
-    <div class="small" style="margin-top:8px;">win=\${win} / lose=\${Math.max(0,n-win)}</div>
-  </div>\`;
+    <div class="small" style="margin-top:8px;">note=${data.note||''}</div>
+  </div>`;
 }
 async function post(path, body){
   const res = await fetch(BASE+path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
@@ -213,9 +216,11 @@ async function post(path, body){
 function render(out){
   const box = qs('out');
   if(!out || !out.ok){ box.innerHTML='<div class="card">실패: '+(out?.message||'UNKNOWN')+'</div>'; return; }
-  const per = out.perTf || {};
+  const arr = Array.isArray(out.results) ? out.results : [];
+  const map = {};
+  for(const r of arr){ if(r && r.tf) map[r.tf]=r; }
   const order = ['15m','30m','1h','4h','1d','1w'];
-  box.innerHTML = order.map(tf=>card(tf, per[tf]||{})).join('');
+  box.innerHTML = order.map(tf=>card(tf, map[tf]||{})).join('');
 }
 function fillSymbols(){
   const sel = qs('sym');
@@ -353,6 +358,7 @@ qs('go').addEventListener('click', async ()=>{
             window.serverEvolveFeedback({
               symbol: t.symbol,
               tf: t.tf,
+              action: t.side,
               side: t.side,
               result: hit,
               entry: t.entry,
