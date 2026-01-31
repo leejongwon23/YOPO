@@ -1914,6 +1914,9 @@ async function fetchJSON(url, opt={}){
 (function coreBoot(){
   try{
     ensureCoreStateShape();
+    // ✅ 유니버스는 항상 20종으로 정규화(과거 30/60 잔존 방지)
+    state.universe = normalizeUniverse(state.universe);
+    saveState();
   }catch(e){}
 
   try{
@@ -1985,6 +1988,4 @@ function consensusMultiTF(cores, order){
   };
 }
 
-const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard  // ✅ 유니버스는 항상 20종으로 정규화
-  state.universe = normalizeUniverse(state.universe);
-
+const MIN_CANDLES_FOR_SIGNAL = 50; // safety guard

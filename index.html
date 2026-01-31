@@ -15,6 +15,15 @@
 
   <!-- ✅ 분리된 CSS -->
   <link rel="stylesheet" href="./styles.css">
+  <!-- auth overlay failsafe (head) -->
+  <script>
+    (function(){
+      window.tryAuth = window.tryAuth || function(){
+        const el = document.getElementById('auth-overlay');
+        if(el) el.style.display = 'none';
+      };
+    })();
+  </script>
 </head>
 
 <body>
@@ -219,12 +228,12 @@
   </div>
 
   <!-- TradingView (전역 위젯) -->
-  <script src="https://s3.tradingview.com/tv.js"></script>
+  <script defer src="https://s3.tradingview.com/tv.js"></script>
 
   <!-- ✅ JS (순서 절대 고정: core → api → features) -->
-  <script src="./app.core.js"></script>
-  <script src="./app.api.js"></script>
-  <script src="./app.features.js"></script>
+  <script defer src="./app.core.js"></script>
+  <script defer src="./app.api.js"></script>
+  <script defer src="./app.features.js"></script>
 
     
     <!-- ✅ 백테스트 결과 모달 (TOP20 × 6전략) -->
@@ -271,14 +280,5 @@
         </div>
       </div>
     </div>
-<script>
-/* auth overlay failsafe */
-(function(){
-  window.tryAuth = window.tryAuth || function(){
-    const el = document.getElementById('auth-overlay');
-    if(el) el.style.display = 'none';
-  };
-})();
-</script>
 </body>
 </html>
