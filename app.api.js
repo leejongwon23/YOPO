@@ -78,8 +78,13 @@ window.marketTick = window.marketTick || (async function marketTick(symbol){
 
 window.refreshUniverseAndGlobals = window.refreshUniverseAndGlobals || (async function refreshUniverseAndGlobals(){
   try{
-    // 서버에 해당 엔드포인트가 있으면 사용, 없으면 null 반환
-    return await _yopoGet("/api/universe/top20");
+    const out = await _yopoGet("/api/universe/top20");
+    // Backward compatible: keep out.symbols, but also provide out.universe for UI renderers.
+    if(out && out.ok && Array.isArray(out.symbols)){
+      const now = Date.now();
+      out.universe = out.symbols.map(s=>({ s:String(s).toUpperCase(), p:null, chg:null, ts:now }));
+    }
+    return out;
   }catch(e){
     return null;
   }
