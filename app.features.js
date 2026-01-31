@@ -17,11 +17,22 @@
   const er = (m)=>{ try{ if(typeof toast==='function') toast(m,'error'); }catch(e){} };
   const wr = (m)=>{ try{ if(typeof toast==='function') toast(m,'warn'); }catch(e){} };
 
+  // ---------- state (shared reference) ----------
+  // window.state is a property; this local 'state' variable prevents ReferenceError.
+  let state = (typeof window.state === 'object' && window.state) ? window.state : null;
+  if(!state){
+    window.state = {};
+    state = window.state;
+  }
+
   // ---------- state ----------
   function ensureState(){
     if(typeof window.state!=='object' || !window.state){
       window.state = {};
     }
+    // resync local reference (in case window.state was replaced)
+    state = window.state;
+
     if(!Array.isArray(state.universe)) state.universe = [];
     if(!state.symbol) state.symbol = "BTCUSDT";
     if(!Array.isArray(state.tracks)) state.tracks = []; // {id,symbol,tf,side,entry,tpPct,slPct,openedAt,closedAt,status,lastPrice}
