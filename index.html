@@ -27,6 +27,47 @@
 </head>
 
 <body>
+  <!-- 🔍 MOBILE DEBUG OVERLAY (UI ONLY) -->
+  <div id="yopo-debug" style="position:fixed;left:8px;bottom:8px;z-index:99999;max-width:92vw;
+    font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    background:rgba(0,0,0,.75);color:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.25);">
+    <div style="font-weight:700;margin-bottom:6px;">YOPO DEBUG</div>
+    <div id="yopo-debug-lines"></div>
+  </div>
+  <script>
+    (function(){
+      const box = document.getElementById('yopo-debug-lines');
+      const log = (m)=>{ try{ const d=document.createElement('div'); d.textContent=m; box.appendChild(d);}catch(e){} };
+      const ok = (k,v)=> log('✅ '+k+': '+v);
+      const no = (k,v)=> log('❌ '+k+': '+v);
+
+      window.addEventListener('error', (e)=>{
+        no('JS error', (e && (e.message||e.error||e))+' @'+(e.filename||'')+':'+(e.lineno||''));
+      });
+      window.addEventListener('unhandledrejection', (e)=>{
+        no('Promise', (e && e.reason ? (e.reason.message||String(e.reason)) : 'rejection'));
+      });
+
+      log('serverBase=' + (window.YOPO_SERVER_BASE||'(empty)'));
+
+      document.addEventListener('DOMContentLoaded', ()=>{
+        // script readiness checks (UI only)
+        const s = window.state;
+        if(s && typeof s==='object') ok('window.state', 'OK'); else no('window.state', 'MISSING');
+        ok('serverPredict6tf', typeof window.serverPredict6tf);
+        ok('serverBacktest', typeof window.serverBacktest);
+        ok('marketTick', typeof window.marketTick);
+        ok('refreshUniverseAndGlobals', typeof window.refreshUniverseAndGlobals);
+        // DOM anchors
+        const ids = ['market-list-container','tv_chart_container','chart-wrap','tracks'];
+        ids.forEach(id=>{
+          const el = document.getElementById(id);
+          if(el) ok('DOM#'+id, 'OK'); else no('DOM#'+id, 'MISSING');
+        });
+      });
+    })();
+  </script>
+
   <!-- AUTH OVERLAY -->
   <div class="auth-overlay" id="auth-overlay">
     <div class="auth-card">
@@ -231,9 +272,9 @@
   <script defer src="https://s3.tradingview.com/tv.js"></script>
 
   <!-- ✅ JS (순서 절대 고정: core → api → features) -->
-  <script defer src="./app.core.js"></script>
-  <script defer src="./app.api.js"></script>
-  <script defer src="./app.features.js"></script>
+  <script defer src="./app.core.js?v=20260201_1"></script>
+  <script defer src="./app.api.js?v=20260201_1"></script>
+  <script defer src="./app.features.js?v=20260201_1"></script>
 
     
     <!-- ✅ 백테스트 결과 모달 (TOP20 × 6전략) -->
