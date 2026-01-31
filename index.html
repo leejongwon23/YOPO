@@ -106,25 +106,8 @@
             </span>
           </div>
 
-          <!-- 추천 TOP -->
-          <div class="recommend-box">
-            <div class="recommend-title">
-              <span>추천 TOP (자동 스캔 결과)</span>
-              <span class="right">
-                <button class="mini-link" onclick="openScanListModal()">전체 스캔목록</button>
-                <span id="scan-status" style="font-weight:950;">대기</span>
-              </span>
-            </div>
-            <div id="rec-container">
-              <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
-                “통합 자동 스캔”을 누르면 단기/중기/장기를 한 번에 분석해서 결과를 보여줍니다.<br/>
-                추천을 <b>클릭하면 즉시 분석</b> 후, 결과창에서 <b>전략을 선택</b>하여 <b>추적 등록</b>할 수 있습니다.
-              </div>
-            </div>
-          </div>
-
           <div id="market-list-container"></div>
-        </div>
+</div>
 
       
   </div>
@@ -145,32 +128,21 @@
             <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(6전략) 실행
           </button>
 
-          <!-- ✅ 진행 취소(분석/스캔/백테스트 공통) -->
+          <!-- ✅ 진행 취소(분석/백테스트 공통) -->
           <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
-            <i class="fa-solid fa-hand"></i> 진행 취소(분석/스캔/백테스트)
+            <i class="fa-solid fa-hand"></i> 진행 취소(분석/백테스트)
           </button>
 
           <div class="tiny-note" style="margin-top:8px;">
             - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
           </div>
 <div class="btn-row">
-            <!-- ✅ 통합 자동스캔(단/중/장 모두) -->
-            <button class="action-btn secondary" id="scan-all-btn" onclick="autoScanUniverseAll?.()">
-              <i class="fa-solid fa-binoculars"></i> 통합 자동 스캔(6전략)
-            </button>
-<button class="action-btn secondary" id="bt-btn" onclick="runBacktest()">
+<button class="action-btn secondary" id="backtest-btn" onclick="runBacktest()">
               <i class="fa-solid fa-flask"></i> 백테스트
             </button>
             <span id="bt-progress" class="mini-progress"></span>
           </div>
-
-          <!-- 백테스트 결과 -->
-          <div class="bt-box" id="bt-box">
-            <div class="bt-title">
-              <span>백테스트 결과(필터 강화형)</span>
-              <span id="bt-range" style="font-weight:950;">--</span>
-            </div>
-            <div class="bt-metrics">
+<div class="bt-metrics">
               <div class="mini-box"><small>표본</small><div id="bt-n">--</div></div>
               <div class="mini-box"><small>승률</small><div id="bt-win">--</div></div>
               <div class="mini-box"><small>평균수익(%)</small><div id="bt-avg">--</div></div>
@@ -183,7 +155,7 @@
           </div>
 
           <div class="tiny-note">
-            - Render 서버 엔진이 데이터 수집/예측/스캔/백테스트를 계산합니다.<br/>
+            - Render 서버 엔진이 데이터 수집/예측/백테스트를 계산합니다.<br/>
             - 애매하면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
             - “중복 신호/과한 빈도”를 막기 위해 <b>중복/쿨다운</b> 보호를 넣었습니다.
           </div>
@@ -299,51 +271,6 @@
         </div>
       </div>
     </div>
-
-<!-- ✅ 통합 스캔 목록 모달 (TOP20 + BEST 6전략) -->
-    <div class="modal-overlay" id="scan-list-modal">
-      <div class="wide-modal">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
-          <div>
-            <div style="font-size:16px; font-weight:950; color:var(--primary);">통합 스캔 목록 (TOP20)</div>
-            <div id="scanlist-sub" style="margin-top:4px; font-size:12px; font-weight:900; color:var(--text-sub);">-</div>
-          </div>
-          <button class="modal-btn secondary" style="width:auto; padding:10px 12px;" onclick="closeScanListModal()">닫기</button>
-        </div>
-
-        <div class="modal-actions">
-          <button class="action-btn" style="max-width:280px;" onclick="autoScanUniverseAll({ openModal:true })">
-            <i class="fa-solid fa-binoculars"></i> 다시 스캔(6전략)
-          </button>
-          <button class="action-btn secondary" style="max-width:280px;" onclick="renderScanListModal()">
-            <i class="fa-solid fa-rotate"></i> 표 새로고침
-          </button>
-        </div>
-
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>심볼</th>
-                <th>BEST</th>
-                <th>성공확률</th>
-                <th>엣지</th>
-                <th>MTF 합의</th>
-                <th>CONF</th>
-                <th>RISK</th>
-              </tr>
-            </thead>
-            <tbody id="scanlist-body"></tbody>
-          </table>
-        </div>
-
-        <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
-          행을 클릭하면 해당 코인의 <b>통합 예측(6전략)</b> 선택창이 바로 뜹니다.
-        </div>
-      </div>
-    </div>
-
-
 <script>
 /* auth overlay failsafe */
 (function(){

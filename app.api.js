@@ -19,17 +19,8 @@ async function _post(path, body){
 async function serverPredict6tf(payload){
   return _post("/api/engine/predict6tf", payload);
 }
-async function serverScanAll(payload){
-  return _post("/api/engine/scan_all", payload);
-}
-async function serverBacktest(payload){
-  return _post("/api/engine/backtest", payload);
-}
-
 // window 바인딩 (중요)
 window.serverPredict6tf = serverPredict6tf;
-window.serverScanAll = serverScanAll;
-window.serverBacktest = serverBacktest;
 
 /* =========================
    YOPO API PATCH (AUTO)
@@ -70,7 +61,6 @@ async function _yopoGet(path, timeoutMs=15000){
   } finally { clearTimeout(t); }
 }
 window.serverPredict6tf = window.serverPredict6tf || ((payload)=>_yopoPost("/api/engine/predict6tf", payload));
-window.serverScanAll   = window.serverScanAll   || ((payload)=>_yopoPost("/api/engine/scan_all", payload));
 window.serverBacktest  = window.serverBacktest  || ((payload)=>_yopoPost("/api/engine/backtest", payload));
 window.serverEvolveFeedback = window.serverEvolveFeedback || ((payload)=>_yopoPost("/api/evolve/feedback", payload));
 window.serverEvolveStats    = window.serverEvolveStats    || (()=>_yopoGet("/api/evolve/stats"));

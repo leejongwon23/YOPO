@@ -57,11 +57,8 @@ function loadState(){
 
 /* =========================
    API constants (URL만)
+   - 본 프로젝트는 Binance Futures 기준으로 통일 (Bybit 제거)
 ========================= */
-const BYBIT_TICKERS = "https://api.bybit.com/v5/market/tickers?category=linear";
-const BYBIT_KLINE = (symbol, interval, limit) =>
-  `https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
-
 const CG_MARKETS = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false&price_change_percentage=24h";
 const CG_GLOBAL  = "https://api.coingecko.com/api/v3/global";
 
@@ -81,7 +78,7 @@ const HOLD_MIN_TP_PCT = 0.8;
 
 // ✅ MTF 합의 기준
 const MTF_WEIGHTS_3TF = { "60": 0.50, "240": 0.30, "D": 0.20 }; // 분석(정밀): 3TF
-const MTF_WEIGHTS_2TF = { "base": 0.65, "other": 0.35 };       // 스캔/백테스트(속도): 2TF
+const MTF_WEIGHTS_2TF = { "base": 0.65, "other": 0.35 };       // 백테스트(속도): 2TF
 const MTF_MIN_AGREE = 2;           // 3TF 중 최소 2개는 같은 방향이어야 안정
 const MTF_DISAGREE_PENALTY = 0.06; // 합의 부족이면 edge를 살짝 깎아 더 보수적(HOLD 증가)
 
@@ -104,9 +101,6 @@ const TIME_MFE_TP_RATIO = 0.55;
 
 // cooldown
 const COOLDOWN_MS = { "60": 10 * 60 * 1000, "240": 30 * 60 * 1000, "D": 2 * 60 * 60 * 1000 };
-
-// scan delay
-const SCAN_DELAY_MS = 650;
 
 // backtest
 const BACKTEST_TRADES = 80;
@@ -612,7 +606,7 @@ function cancelAllTrackingData(){
 }
 
 function resetAllData(){
-  // 누적 + 추적 + 스캔/작업 상태까지 초기화 (요구 1 강화)
+  // 누적 + 추적 + 작업 상태까지 초기화 (요구 1 강화)
   ensureCoreStateShape();
   requestCancelOperation();
   state.history = { total: 0, win: 0 };

@@ -1,2103 +1,540 @@
-/* === YOPO SAFETY PATCH (AUTO) === */
-(function(){ try{ if(typeof window!=="undefined"){ window.__YOPO_FEATURES_LOADED__=true; } }catch(e){} })();
-/* === END SAFETY PATCH === */
 
 /*************************************************************
- * YOPO AI PRO — app.features.js (분할 v1)
- * 역할: 화면/동작 전부(부트, 차트, 렌더, 분석/스캔/백테스트, 추적/만료, 모달)
- * 의존:
- * - app.core.js: state, tempPos, 유틸/신호코어/토스트/저장/마이그레이션 등
- * - app.api.js : refreshUniverseAndGlobals, marketTick, fetchCandles 등
+ * YOPO AI PRO — app.features.js (PREDICT-ONLY · FINAL)
+ * 역할:
+ * - UI 부트스트랩
+ * - 버튼 이벤트(통합예측/백테스트 팝업/리셋/취소)
+ * - 코인목록 렌더 + Binance Futures 시세 폴링
+ * - TradingView 차트(Binance Perp) 표시
+ * - 정밀추적 LIVE 루프 + TP/SL/만료 처리 + evolve 피드백
  *
- * ✅ 중요:
- * - index.html onclick과 호환되도록 마지막에 window.xxx 바인딩을 한다.
- * - setTF는 btn이 없어도 안전하게 동작하도록 보강했다. (호환용)
+ * 원칙:
+ * - 브라우저는 계산하지 않는다(서버 결과를 표시/추적만)
  *************************************************************/
+(function(){
+  // ---------- safe toast ----------
+  const ok = (m)=>{ try{ if(typeof toast==='function') toast(m,'success'); }catch(e){} };
+  const er = (m)=>{ try{ if(typeof toast==='function') toast(m,'error'); }catch(e){} };
+  const wr = (m)=>{ try{ if(typeof toast==='function') toast(m,'warn'); }catch(e){} };
 
-/* ==========================================================
-   ✅ OPERATION CANCEL ENGINE (NEW)
-   - 분석/스캔/백테스트 "진행중 취소"를 위한 공통 엔진
-   - index.html 에서 버튼으로 window.cancelOperation() 호출하면 됨
-   ========================================================== */
-const __op = {
-  running: false,
-  kind: null,          // "ANALYSIS" | "SCAN" | "BACKTEST" | ...
-  token: 0,
-  canceled: false
-};
-
-function beginOperation(kind){
-  __op.token++;
-  __op.running = true;
-  __op.kind = kind || "OP";
-  __op.canceled = false;
-  return __op.token;
-}
-
-/* ✅ FIX: 취소 버튼 누를 때 UX + 안전(작업 없어도 안내) */
-function cancelOperation(){
-  // 작업이 없어도 UX상 안내는 해주는게 좋음
-  if(!__op.running){
-    try{ toast("진행중인 작업이 없습니다.", "warn"); }catch(e){}
-    return;
-  }
-  __op.canceled = true;
-  try{ toast("진행 취소 요청 완료(다음 단계부터 중단).", "warn"); }catch(e){}
-}
-
-function endOperation(token){
-  // 토큰이 다르면(새 작업 시작됨) 종료시키지 않음
-  if(token !== __op.token) return;
-  __op.running = false;
-  __op.kind = null;
-  __op.canceled = false;
-}
-
-function checkCanceled(token){
-  if(token !== __op.token) throw new Error("CANCELLED");
-  if(__op.canceled) throw new Error("CANCELLED");
-}
-
-function sleepCancelable(ms, token){
-  return new Promise((resolve, reject)=>{
-    const t = setTimeout(()=>resolve(), ms);
-    const tick = () => {
-      try{
-        checkCanceled(token);
-        setTimeout(tick, 80);
-      }catch(e){
-        clearTimeout(t);
-        reject(e);
-      }
-    };
-    setTimeout(tick, 0);
-  });
-}
-
-/* ==========================================================
-   ✅ SAFETY: formatMoney 폴백 (부트 중 renderUniverseList가 터지면
-   setInterval이 아예 안 걸려서 "정산/통계/추적 갱신 멈춤" 현상이 생김)
-   ========================================================== */
-function formatMoney(n){
-  const v = Number(n);
-  if(!Number.isFinite(v)) return "-";
-  const abs = Math.abs(v);
-  if(abs >= 1e12) return (v/1e12).toFixed(2) + "T";
-  if(abs >= 1e9)  return (v/1e9).toFixed(2)  + "B";
-  if(abs >= 1e6)  return (v/1e6).toFixed(2)  + "M";
-  if(abs >= 1e3)  return (v/1e3).toFixed(2)  + "K";
-  return v.toFixed(0);
-}
-
-/* ==========================================================
-   ✅ RUNTIME SAFETY (핵심)
-   ========================================================== */
-function ensureRuntimeState(){
-  if(typeof state !== "object" || !state) return;
-
-  if(!Array.isArray(state.activePositions)) state.activePositions = [];
-  if(!Array.isArray(state.closedTrades)) state.closedTrades = [];
-
-  if(typeof state.history !== "object" || !state.history){
-    state.history = { total: 0, win: 0 };
-  }
-
-  if(!Number.isFinite(state.history.total)) state.history.total = 0;
-  if(!Number.isFinite(state.history.win)) state.history.win = 0;
-
-  if(!Array.isArray(state.universe)) state.universe = [];
-  if(typeof state.lastPrices !== "object" || !state.lastPrices) state.lastPrices = {};
-}
-
-/* ==========================================================
-   ✅ NEW: 운영 버튼 기능 (누적 리셋 / 추적 전체취소 / 전체 초기화)
-   ========================================================== */
-function resetStatsUIAndData(){
-  ensureRuntimeState();
-
-  state.history = { total: 0, win: 0 };
-  state.closedTrades = [];
-
-  // 스캔 결과는 유지하고 싶으면 아래 2줄 지워도 됨
-  // state.lastScanResults = [];
-  // state.lastScanAt = 0;
-
-  saveState();
-
-  try{ renderClosedTrades(); }catch(e){}
-  try{ updateStatsUI(); }catch(e){}
-
-  toast("누적(분석/성공률)과 종료 기록을 리셋했습니다.", "success");
-}
-
-function cancelAllTracking(){
-  ensureRuntimeState();
-
-  const n = (state.activePositions || []).length;
-  state.activePositions = [];
-
-  saveState();
-
-  try{ renderTrackingList(); }catch(e){}
-  try{ updateStatsUI(); }catch(e){}
-  try{ updateStrategyCountUI(); }catch(e){}
-  try{ updateCountdownTexts(); }catch(e){}
-
-  toast(`추적 포지션 ${n}개를 전체 취소했습니다.`, "warn");
-}
-
-function resetAll(){
-  ensureRuntimeState();
-
-  // 진행중 작업 취소
-  try{ cancelOperation(); }catch(e){}
-
-  // 모달 닫기 + 멀티 상태 초기화
-  try{ closeModal(); }catch(e){}
-
-  // 누적/추적/스캔/쿨다운까지 싹 초기화
-  state.history = { total: 0, win: 0 };
-  state.closedTrades = [];
-  state.activePositions = [];
-
-  state.lastSignalAt = {};
-  state.lastScanResults = [];
-  state.lastScanAt = 0;
-
-  saveState();
-
-  try{ renderTrackingList(); }catch(e){}
-  try{ renderClosedTrades(); }catch(e){}
-  try{ renderScanResults(); }catch(e){}
-  try{ updateStatsUI(); }catch(e){}
-
-  toast("전체 초기화 완료 (누적 + 추적 + 진행취소 + 추천 초기화)", "success");
-}
-
-/* ==========================================================
-   ✅ BUGFIX HELPERS
-   ========================================================== */
-function genPosId(){
-  return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-function ensurePosId(pos){
-  if(!pos) return pos;
-  if(!pos.id || typeof pos.id !== "string" || !pos.id.trim()){
-    pos.id = genPosId();
-  }
-  return pos;
-}
-
-function ensureIdsOnAllPositions(){
-  if(!state) return;
-  if(Array.isArray(state.activePositions)){
-    for(const p of state.activePositions) ensurePosId(p);
-  }
-  if(Array.isArray(state.closedTrades)){
-    for(const r of state.closedTrades){
-      if(!r.id) r.id = Date.now() + Math.floor(Math.random() * 1000);
+  // ---------- state ----------
+  function ensureState(){
+    if(typeof window.state!=='object' || !window.state){
+      window.state = {};
     }
-  }
-}
-
-/* ==========================================================
-   ✅ NEW (예측 줄이지 않기용)
-   ========================================================== */
-function isPatternBlockedHold(pos){
-  if(!pos || pos.type !== "HOLD") return false;
-  const reasons = pos?.explain?.holdReasons || [];
-  const text = reasons.map(x=>String(x)).join(" | ");
-  return (
-    text.includes("실패패턴") ||
-    text.includes("패턴 감점 적용") ||
-    text.includes("강제 HOLD")
-  );
-}
-
-function buildForcedTrackFromHold(pos){
-  if(!pos || pos.type !== "HOLD") return null;
-
-  const ex = pos.explain || {};
-  const symbol = pos.symbol;
-  const tfRaw = pos.tfRaw;
-
-  const longP = Number(ex.longP ?? 0.5);
-  const shortP = Number(ex.shortP ?? 0.5);
-  const inferredType = (longP >= shortP) ? "LONG" : "SHORT";
-
-  const entry = Number.isFinite(pos.entry) ? pos.entry : null;
-  if(!Number.isFinite(entry) || entry <= 0) return null;
-
-  const TF_MULT_SAFE = (typeof TF_MULT === "object" && TF_MULT) ? TF_MULT : { "60":1.0, "240":1.15, "D":1.3 };
-  const RR_SAFE = (typeof RR === "number" && Number.isFinite(RR)) ? RR : 1.6;
-  const TP_MAX_PCT_SAFE = (typeof TP_MAX_PCT === "number" && Number.isFinite(TP_MAX_PCT)) ? TP_MAX_PCT : 6.0;
-
-  const atrUsed = Number(ex.atr ?? 0);
-  const tfMult = TF_MULT_SAFE[tfRaw] || 1.2;
-
-  const tpScale = Number(ex?.conf?.tpScale ?? 1.0);
-  const rrUsed = Number(ex?.conf?.rrUsed ?? RR_SAFE);
-
-  let tpDist = atrUsed * tfMult * tpScale;
-  if(!Number.isFinite(tpDist) || tpDist <= 0){
-    return null;
+    if(!Array.isArray(state.universe)) state.universe = [];
+    if(!state.symbol) state.symbol = "BTCUSDT";
+    if(!Array.isArray(state.tracks)) state.tracks = []; // {id,symbol,tf,side,entry,tpPct,slPct,openedAt,closedAt,status,lastPrice}
   }
 
-  let tp = (inferredType === "LONG") ? (entry + tpDist) : (entry - tpDist);
-  let tpPct = Math.abs((tp - entry) / entry) * 100;
+  // ---------- dom helpers ----------
+  const $ = (id)=>document.getElementById(id);
+  function setText(id, txt){ const el=$(id); if(el) el.textContent = txt; }
+  function setHTML(id, html){ const el=$(id); if(el) el.innerHTML = html; }
 
-  if(tpPct > TP_MAX_PCT_SAFE){
-    tpPct = TP_MAX_PCT_SAFE;
-    const newTpDist = entry * (tpPct / 100);
-    tpDist = newTpDist;
-    tp = (inferredType === "LONG") ? (entry + newTpDist) : (entry - newTpDist);
+  // ---------- modal ----------
+  function openResultModal(title, subtitle, bodyHtml){
+    const modal = $("result-modal");
+    if(!modal) return;
+    setText("modal-title", title||"결과");
+    setText("modal-subtitle", subtitle||"");
+    setHTML("modal-content", bodyHtml||"");
+    modal.classList.add("show");
+  }
+  function closeResultModal(){
+    const modal = $("result-modal");
+    if(modal) modal.classList.remove("show");
   }
 
-  const slDist = tpDist / Math.max(rrUsed, 1.01);
-  let sl = (inferredType === "LONG") ? (entry - slDist) : (entry + slDist);
-  let slPct = Math.abs((sl - entry) / entry) * 100;
-
-  let sig = null;
-  try{
-    if(typeof buildPatternSignature === "function"){
-      sig = buildPatternSignature(symbol, tfRaw, inferredType, ex);
-    }
-  }catch(e){}
-
-  ensurePosId(pos);
-
-  return {
-    ...pos,
-    type: inferredType,
-    tp,
-    sl,
-    tpPct,
-    slPct,
-    sig,
-    _forceTrack: true,
-    _forceReason: "PATTERN_BLOCK_OVERRIDE"
-  };
-}
-
-function computeScanScore(item){
-  const w = Number(item.winProb ?? 0);
-  const e = Number(item.edge ?? 0);
-  const penalty = item.isRisk ? 0.06 : 0.0;
-  return (w * 1.0) + (e * 0.7) - penalty;
-}
-
-/* ==========================================================
-   ✅ MULTI (단/중/장 통합 예측) 상태
-   ========================================================== */
-let tempMulti = null;          // { "60":pos, "240":pos, "D":pos }
-let selectedMultiPos = null;   // 선택된 pos(또는 forcedPos)
-
-/* ==========================================================
-   PATCH HELPERS (전략별 카운트 UI)
-   ========================================================== */
-function ensureStrategyCountUI(){
-  const header = document.querySelector(".tracking-header");
-  if(!header) return;
-  if(document.getElementById("tf-counts")) return;
-
-  const box = document.createElement("div");
-  box.id = "tf-counts";
-  box.style.display = "flex";
-  box.style.gap = "8px";
-  box.style.alignItems = "center";
-  box.style.fontWeight = "950";
-  box.style.fontSize = "11px";
-  box.style.color = "var(--text-sub)";
-  header.appendChild(box);
-}
-
-function updateStrategyCountUI(){
-  const el = document.getElementById("tf-counts");
-  if(!el) return;
-
-  let c60 = 0, c240 = 0, cD = 0;
-  for(const p of (state.activePositions || [])){
-    if(p.tfRaw === "60") c60++;
-    else if(p.tfRaw === "240") c240++;
-    else cD++;
+  // ---------- chart (TradingView Futures Perp) ----------
+  let _tvWidget = null;
+  function tvSymbol(sym){
+    const s = String(sym||"BTCUSDT").toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return `BINANCE:${s}.P`;
   }
-
-  el.innerHTML = `
-    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1H ${c60}</span>
-    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">4H ${c240}</span>
-    <span style="background:var(--secondary); border:1px solid var(--border); padding:4px 8px; border-radius:999px;">1D ${cD}</span>
-  `;
-}
-
-/* ==========================================================
-   COUNTDOWN 부분 업데이트 + 만료 정산
-   ========================================================== */
-function updateCountdownTexts(){
-  ensureRuntimeState();
-
-  const list = state.activePositions || [];
-  if(!list.length) return;
-
-  for(const pos of list){
-    ensurePosId(pos);
-
-    const el = document.getElementById(`remain-${pos.id}`);
-    if(!el) continue;
-
-    const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
-    const remainMs = expiryAt - Date.now();
-    el.textContent = formatRemain(remainMs);
-  }
-}
-
-/* ==========================================================
-   TIME 만료 정산 (MFE 반영) + 비용 반영
-   ========================================================== */
-function settleExpiredPositions(){
-  ensureRuntimeState();
-
-  const list = state.activePositions || [];
-  if(!list.length) return false;
-
-  const now = Date.now();
-  let changed = false;
-
-  const DRIFT_MS = 500;
-
-  const FEE_SAFE = (typeof FEE_PCT === "number" && Number.isFinite(FEE_PCT)) ? FEE_PCT : 0;
-  const TIME_MFE_MIN_SAFE = (typeof TIME_MFE_MIN_PCT === "number" && Number.isFinite(TIME_MFE_MIN_PCT)) ? TIME_MFE_MIN_PCT : 0;
-  const TIME_MFE_RATIO_SAFE = (typeof TIME_MFE_TP_RATIO === "number" && Number.isFinite(TIME_MFE_TP_RATIO)) ? TIME_MFE_TP_RATIO : 0;
-
-  for(let i = list.length - 1; i >= 0; i--){
-    const pos = list[i];
-    ensurePosId(pos);
-
-    const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
-
-    if(Number.isFinite(expiryAt)){
-      if(now < (expiryAt - DRIFT_MS)) continue;
-    }
-
-    const lastPrice = Number.isFinite(pos.lastPrice) ? pos.lastPrice : pos.entry;
-
-    let pnlGross = 0;
-    if(pos.type === "LONG"){
-      pnlGross = ((lastPrice - pos.entry) / pos.entry) * 100;
-    }else{
-      pnlGross = ((pos.entry - lastPrice) / pos.entry) * 100;
-    }
-    const pnl = pnlGross - FEE_SAFE;
-    pos.pnl = pnl;
-
-    const mfe = (typeof pos.mfePct === "number") ? pos.mfePct : 0;
-    const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
-
-    let win = false;
-    let reason = "TIME";
-
-    if(pnl > 0){
-      win = true;
-      reason = "TIME";
-    }else{
-      const needByTp = (tpPct !== null) ? (tpPct * TIME_MFE_RATIO_SAFE) : TIME_MFE_MIN_SAFE;
-      const need = Math.max(TIME_MFE_MIN_SAFE, needByTp);
-      if(mfe >= need){
-        win = true;
-        reason = "TIME_MFE";
-      }else{
-        win = false;
-        reason = "TIME";
-      }
-    }
-
-    try{ recordTradeToPatternDB(pos, win); }catch(e){}
-    try{ metaRecordFromPosition(pos, win, reason); }catch(e){}
-
-    // ✅ EVOLVE FEEDBACK (Upstash) — 서버로 성공/실패 기록 전송
+  function initChart(sym){
+    const wrap = $("chart-wrap");
+    if(!wrap) return;
+    // clear container
+    wrap.innerHTML = "";
+    const symbol = tvSymbol(sym);
     try{
-      const tfMap = { "15":"15m", "30":"30m", "60":"1h", "240":"4h", "D":"1d", "W":"1w" };
-      const tfSrv = tfMap[String(pos.tfRaw || pos.tf || "")] || String(pos.tf || "");
-      const send = window.serverEvolveFeedback;
-      if(typeof send === "function"){
-        // pnl은 서버에서 참고용(%)로 저장
-        send({
-          symbol: pos.symbol,
-          tf: tfSrv,
-          action: pos.type,
-          win,
-          pnl: pnl/100,
-          regime: pos.regime || "",
-          meta: { patternKey: pos.patternKey || null }
-        }).catch?.(()=>{});
+      if(window.TradingView && typeof window.TradingView.widget === "function"){
+        _tvWidget = new window.TradingView.widget({
+          autosize: true,
+          symbol,
+          interval: "15",
+          timezone: "Etc/UTC",
+          theme: "dark",
+          style: "1",
+          locale: "kr",
+          container_id: "chart-wrap",
+          hide_top_toolbar: false,
+          hide_legend: false,
+          allow_symbol_change: false,
+          withdateranges: true
+        });
+      }else{
+        wrap.innerHTML = `<div style="padding:14px;color:#9fb0c7;">차트 로딩 중… (TradingView)</div>`;
       }
-    }catch(e){}
-
-
-    state.history.total++;
-    if(win) state.history.win++;
-
-    const record = {
-      id: Date.now(),
-      symbol: pos.symbol,
-      tf: pos.tf,
-      tfRaw: pos.tfRaw,
-      type: pos.type,
-      entry: pos.entry,
-      exit: lastPrice,
-      pnlPct: pnl,
-      mfePct: mfe,
-      win,
-      reason,
-      closedAt: Date.now()
-    };
-
-    state.closedTrades.unshift(record);
-    state.closedTrades = state.closedTrades.slice(0, 30);
-
-    list.splice(i, 1);
-    changed = true;
-
-    const extra = (reason === "TIME_MFE")
-      ? ` / MFE ${mfe.toFixed(2)}% (보정승)`
-      : ` / MFE ${mfe.toFixed(2)}%`;
-
-    toast(
-      `[${pos.symbol} ${pos.tf}] 시간 종료: ${win ? "성공" : "실패"} (${reason}) / 수익률 ${pnl.toFixed(2)}%${extra} (비용 -${FEE_SAFE.toFixed(2)}%)`,
-      win ? "success" : "danger"
-    );
-  }
-
-  if(changed){
-    saveState();
-    renderTrackingList();
-    renderClosedTrades();
-    updateStatsUI();
-    updateStrategyCountUI();
-    updateCountdownTexts();
-  }
-
-  return changed;
-}
-
-/* ==========================================================
-   Boot
-   ========================================================== */
-document.addEventListener("DOMContentLoaded", async () => {
-  ensureRuntimeState();
-
-  if(!state.lastSignalAt || typeof state.lastSignalAt !== "object"){
-    state.lastSignalAt = {};
-  }
-
-  try{
-    if(!isAuthed()) showAuth();
-    else hideAuth();
-    document.getElementById("auth-input")?.addEventListener("keydown", (e)=>{
-      if(e.key === "Enter") tryAuth();
-    });
-  }catch(e){}
-
-  try{ ensureToastUI(); }catch(e){}
-
-  try{ ensureExpiryOnAllPositions(); }catch(e){}
-  try{ ensureIdsOnAllPositions(); saveState(); }catch(e){}
-
-  try{ initChart(); }catch(e){}
-  try{ renderUniverseList(); }catch(e){ console.error("renderUniverseList boot error:", e); }
-  try{ renderTrackingList(); }catch(e){}
-  try{ renderClosedTrades(); }catch(e){}
-  try{ updateStatsUI(); }catch(e){}
-  try{ renderScanResults(); }catch(e){}
-
-  try{
-    ensureStrategyCountUI();
-    updateStrategyCountUI();
-  }catch(e){}
-
-  try{ await refreshUniverseAndGlobals(); }catch(e){}
-  try{ await marketTick(); }catch(e){}
-
-  /* ✅ FIX: app.api.js 로드 실패/순서 꼬임으로 marketTick/refresh...가 없으면
-     기존 setInterval(marketTick, ...)에서 ReferenceError로 부트가 중단되어
-     "카운트다운/정산/통계" 루프가 안 걸릴 수 있음 → 반드시 가드 */
-  if(typeof marketTick === "function"){
-    setInterval(() => {
-      try{ marketTick(); }catch(e){ console.error("marketTick interval error:", e); }
-    }, 2000);
-  }else{
-    console.warn("marketTick() not found. (app.api.js 로드/순서 문제 가능) — 가격추적은 꺼지지만, 카운트다운/정산은 유지됩니다.");
-  }
-
-  if(typeof refreshUniverseAndGlobals === "function"){
-    setInterval(() => {
-      try{ refreshUniverseAndGlobals(); }catch(e){ console.error("refreshUniverseAndGlobals interval error:", e); }
-    }, 60000);
-  }else{
-    console.warn("refreshUniverseAndGlobals() not found. (app.api.js 로드/순서 문제 가능)");
-  }
-
-  // ✅ 이 루프는 어떤 상황에서도 반드시 살아 있어야 함
-  setInterval(() => {
-    try{ ensureRuntimeState(); }catch(e){}
-    try{ updateCountdownTexts(); }catch(e){}
-    try{ settleExpiredPositions(); }catch(e){}
-  }, 1000);
-});
-
-/* ==========================================================
-   UI 기본 (TF/코인)
-   ========================================================== */
-function setTF(tf, btn){
-  ensureRuntimeState();
-
-  state.tf = tf;
-
-  const btns = Array.from(document.querySelectorAll(".tf-btn"));
-  btns.forEach(b => b.classList.remove("active"));
-
-  if(btn && btn.classList){
-    btn.classList.add("active");
-  }else{
-    const mapIdx = (tf === "60") ? 0 : (tf === "240") ? 1 : 2;
-    if(btns[mapIdx]) btns[mapIdx].classList.add("active");
-  }
-
-  saveState();
-  initChart();
-}
-
-function switchCoin(symbol){
-  ensureRuntimeState();
-
-  state.symbol = symbol;
-  document.querySelectorAll(".coin-row").forEach(r => r.classList.remove("active"));
-  const row = document.getElementById(`row-${symbol}`);
-  if(row) row.classList.add("active");
-  saveState();
-  initChart();
-}
-
-/* ==========================================================
-   Chart
-   ========================================================== */
-function initChart(){
-  const wrap = document.getElementById("chart-wrap");
-  if(!wrap) return;
-
-  wrap.innerHTML = "";
-  new TradingView.widget({
-    autosize:true,
-    symbol:"BYBIT:" + state.symbol,
-    interval:state.tf,
-    timezone:"Asia/Seoul",
-    theme:"light",
-    style:"1",
-    locale:"ko",
-    toolbar_bg:"#f1f3f6",
-    enable_publishing:false,
-    hide_top_toolbar:false,
-    container_id:"chart-wrap"
-  });
-}
-
-/* ==========================================================
-   Universe list + price row
-   ========================================================== */
-function renderUniverseList(){
-  ensureRuntimeState();
-
-  const container = document.getElementById("market-list-container");
-  if(!container) return;
-
-  container.innerHTML = "";
-  state.universe.forEach(coin => {
-    const div = document.createElement("div");
-    div.className = `coin-row ${coin.s === state.symbol ? "active" : ""}`;
-    div.id = `row-${coin.s}`;
-    div.onclick = () => switchCoin(coin.s);
-
-    div.innerHTML = `
-      <div class="coin-info">
-        <h4>${coin.s.replace("USDT","")}</h4>
-        <span>${coin.n || "-"}</span>
-      </div>
-      <div class="coin-price" id="price-${coin.s}">
-        <div class="p" id="p-${coin.s}">---</div>
-        <div class="chg" id="c-${coin.s}">---</div>
-        <div class="small-metrics" id="meta-${coin.s}"></div>
-      </div>
-    `;
-    container.appendChild(div);
-
-    const meta = document.getElementById(`meta-${coin.s}`);
-    if(meta){
-      const mcTxt = coin.mc ? `시총 ${formatMoney(coin.mc)}` : "";
-      const volTxt = coin.vol ? `거래량 ${formatMoney(coin.vol)}` : "";
-      const turnTxt = coin.turn ? `유동성 ${formatMoney(coin.turn)}` : "";
-      const chgTxt = (typeof coin.chg === "number") ? `24h ${coin.chg.toFixed(1)}%` : "";
-      meta.innerText = [mcTxt, volTxt, turnTxt, chgTxt].filter(Boolean).join(" · ");
+    }catch(e){
+      wrap.innerHTML = `<div style="padding:14px;color:#ffb4b4;">차트 초기화 오류: ${String(e.message||e)}</div>`;
     }
-
-    const cached = state.lastPrices?.[coin.s];
-    if(cached?.price){
-      updateCoinRow(coin.s, cached.price, cached.chg ?? 0, true);
-    }
-  });
-}
-
-function updateCoinRow(symbol, price, changePct, silent=false){
-  const pEl = document.getElementById(`p-${symbol}`);
-  const cEl = document.getElementById(`c-${symbol}`);
-  if(!pEl || !cEl) return;
-
-  const color = changePct >= 0 ? "var(--success)" : "var(--danger)";
-  const sign = changePct >= 0 ? "+" : "";
-
-  pEl.style.color = "var(--primary)";
-  pEl.textContent = `$${price.toLocaleString(undefined,{maximumFractionDigits:6})}`;
-
-  cEl.style.color = color;
-  cEl.textContent = `${sign}${changePct.toFixed(2)}%`;
-
-  if(!silent){
-    // UI 갱신은 위만으로 충분
-  }
-}
-
-/* ==========================================================
-   ✅ MULTI MODAL helpers
-   ========================================================== */
-function _hideMultiArea(){
-  const multiWrap = document.getElementById("multi-results");
-  const chooseBtn = document.getElementById("multi-choose");
-  const selectedEl = document.getElementById("multi-selected");
-  const cards = document.getElementById("multi-cards");
-  const confirmBtn = document.getElementById("modal-confirm");
-
-  if(multiWrap) multiWrap.style.display = "none";
-  if(cards) cards.innerHTML = "";
-  if(selectedEl) selectedEl.textContent = "선택: 없음";
-  if(chooseBtn){
-    chooseBtn.disabled = true;
-    chooseBtn.style.opacity = "0.65";
-    chooseBtn.textContent = "선택한 전략으로 추적 등록";
-  }
-  if(confirmBtn) confirmBtn.style.display = "";
-}
-
-function _showMultiArea(){
-  const multiWrap = document.getElementById("multi-results");
-  const chooseBtn = document.getElementById("multi-choose");
-  if(multiWrap) multiWrap.style.display = "block";
-  if(chooseBtn){
-    chooseBtn.disabled = true;
-    chooseBtn.style.opacity = "0.65";
-  }
-  const confirmBtn = document.getElementById("modal-confirm");
-  if(confirmBtn) confirmBtn.style.display = "none";
-}
-
-/* ==========================================================
-   ✅ 통합 예측 (단/중/장 한번에) + 선택/등록
-   ========================================================== */
-async function executeAnalysisAll(){
-  ensureRuntimeState();
-
-  const opToken = beginOperation("ANALYSIS_ALL");
-  const btn = document.getElementById("predict-all-btn");
-  if(btn){
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 서버 예측 중...';
   }
 
-  try{
-    checkCanceled(opToken);
+  // ---------- universe render ----------
+  function renderMarketList(){
+    const box = $("market-list-container");
+    if(!box) return;
 
-    const symbol = (state.symbol || "BTCUSDT").toUpperCase();
-    const api = window.serverPredict6tf;
-    if(typeof api !== "function") throw new Error("SERVER_API_NOT_BOUND");
-
-    const json = await api({ symbol });
-    checkCanceled(opToken);
-
-    const list = json?.results || [];
-    const map = {};
-    const toTfRaw = (tf)=>({
-      "15m":"15",
-      "30m":"30",
-      "1h":"60",
-      "4h":"240",
-      "1d":"D",
-      "1w":"W"
-    }[String(tf||"").toLowerCase()] || String(tf||""));
-
-    for(const r of list){
-      const tfRaw = toTfRaw(r.tf);
-      const action = (r.action || "HOLD");
-      const type = action;
-
-      const lastClose = Number(r.lastClose);
-      const entry = Number.isFinite(lastClose) ? lastClose : null;
-
-      // explain(카드 렌더용): 기존 UI가 기대하는 형태로 맞춤
-      const pLong = Number(r.pLong ?? 0.5);
-      const pShort = Number(r.pShort ?? 0.5);
-      const winProb = Math.max(pLong, pShort);
-      const ev = (action==="LONG") ? Number(r.evLong ?? -999) : (action==="SHORT") ? Number(r.evShort ?? -999) : -999;
-
-      const confTier = (winProb>=0.62 && ev>0) ? "HIGH" : (winProb>=0.55 && ev>0) ? "MID" : "LOW";
-
-      map[tfRaw] = {
-        symbol,
-        tf: tfRaw,
-        tfRaw,
-        type,
-        entry: entry ?? 0,
-        tpPct: (Number.isFinite(Number(r.tpPct)) ? Number(r.tpPct) : null),
-        slPct: (Number.isFinite(Number(r.slPct)) ? Number(r.slPct) : null),
-        tp: (Number.isFinite(Number(r.tp)) ? Number(r.tp) : (entry && Number.isFinite(Number(r.tpPct)) ? (type==="LONG" ? entry*(1+Number(r.tpPct)/100) : entry*(1-Number(r.tpPct)/100)) : null)),
-        sl: (Number.isFinite(Number(r.sl)) ? Number(r.sl) : (entry && Number.isFinite(Number(r.slPct)) ? (type==="LONG" ? entry*(1-Number(r.slPct)/100) : entry*(1+Number(r.slPct)/100)) : null)),
-        regime: r.regime || "-",
-        evLong: r.evLong,
-        evShort: r.evShort,
-        patternKey: r.patternKey || null,
-        explain:{
-          winProb,
-          edge: (Number.isFinite(Number(r.edge)) ? Number(r.edge) : Math.abs(pLong-pShort)),
-          ev,
-          simAvg: null,
-          mtf: null,
-          conf:{ tier: confTier },
-          longP: pLong,
-          shortP: pShort
-        },
-        reason: r.reason || ""
-      };
-    }
-
-    showResultModalAll(symbol, map);
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("통합 예측이 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("서버 예측 오류(통합 예측)", "danger");
-  }finally{
-    if(btn){
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-brain"></i> 통합 예측';
-    }
-    endOperation(opToken);
-  }
-}
-
-/* ✅ 추천 클릭 → 통합 예측 모달 */
-async function quickAnalyzeAllAndShow(symbol){
-  ensureRuntimeState();
-
-  const opToken = beginOperation("ANALYSIS_ALL");
-  try{
-    switchCoin(symbol);
-    saveState();
-    initChart();
-
-    checkCanceled(opToken);
-
-    const api = window.serverPredict6tf;
-    if(typeof api !== "function") throw new Error("SERVER_API_NOT_BOUND");
-    const json = await api({ symbol: String(symbol||"").toUpperCase() });
-    checkCanceled(opToken);
-
-    const list = json?.results || [];
-    const map = {};
-    const toTfRaw = (tf)=>({
-      "15m":"15","30m":"30","1h":"60","4h":"240","1d":"D","1w":"W"
-    }[String(tf||"").toLowerCase()] || String(tf||""));
-
-    for(const r of list){
-      const tfRaw = toTfRaw(r.tf);
-      const action = (r.action || "HOLD");
-      const lastClose = Number(r.lastClose);
-      const entry = Number.isFinite(lastClose) ? lastClose : null;
-
-      const pLong = Number(r.pLong ?? 0.5);
-      const pShort = Number(r.pShort ?? 0.5);
-      const winProb = Math.max(pLong, pShort);
-      const ev = (action==="LONG") ? Number(r.evLong ?? -999) : (action==="SHORT") ? Number(r.evShort ?? -999) : -999;
-      const confTier = (winProb>=0.62 && ev>0) ? "HIGH" : (winProb>=0.55 && ev>0) ? "MID" : "LOW";
-
-      map[tfRaw] = {
-        symbol: String(symbol||"").toUpperCase(),
-        tf: tfRaw, tfRaw,
-        type: action,
-        entry: entry ?? 0,
-        tpPct: (Number.isFinite(Number(r.tpPct)) ? Number(r.tpPct) : null),
-        slPct: (Number.isFinite(Number(r.slPct)) ? Number(r.slPct) : null),
-        tp: (Number.isFinite(Number(r.tp)) ? Number(r.tp) : (entry && Number.isFinite(Number(r.tpPct)) ? (action==="LONG" ? entry*(1+Number(r.tpPct)/100) : entry*(1-Number(r.tpPct)/100)) : null)),
-        sl: (Number.isFinite(Number(r.sl)) ? Number(r.sl) : (entry && Number.isFinite(Number(r.slPct)) ? (action==="LONG" ? entry*(1-Number(r.slPct)/100) : entry*(1+Number(r.slPct)/100)) : null)),
-        regime: r.regime || "-",
-        evLong: r.evLong,
-        evShort: r.evShort,
-        patternKey: r.patternKey || null,
-        explain:{
-          winProb,
-          edge: (Number.isFinite(Number(r.edge)) ? Number(r.edge) : Math.abs(pLong-pShort)),
-          ev,
-          simAvg:null,
-          mtf:null,
-          conf:{ tier: confTier },
-          longP:pLong,
-          shortP:pShort
-        },
-        reason: r.reason || ""
-      };
-    }
-
-    showResultModalAll(String(symbol||"").toUpperCase(), map);
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("진행 중 작업이 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("서버 예측 오류(추천→통합예측)", "danger");
-  }finally{
-    endOperation(opToken);
-  }
-}
-
-/* ==========================================================
-   Modal (단일)
-   ========================================================== */
-function showResultModal(pos){
-  ensureRuntimeState();
-
-  // 단일 모드 진입 시 멀티 영역 숨김(잔상 방지)
-  _hideMultiArea();
-  tempMulti = null;
-  selectedMultiPos = null;
-
-  let forcePos = null;
-  const blockedByPattern = isPatternBlockedHold(pos);
-  if(blockedByPattern){
-    forcePos = buildForcedTrackFromHold(pos);
-  }
-
-  tempPos = pos;
-
-  const modal = document.getElementById("result-modal");
-  const icon = document.getElementById("modal-icon");
-  const title = document.getElementById("modal-title");
-  const subtitle = document.getElementById("modal-subtitle");
-  const grid = document.getElementById("modal-grid");
-  const content = document.getElementById("modal-content");
-  const confirmBtn = document.getElementById("modal-confirm");
-
-  if(!modal || !icon || !title || !subtitle || !grid || !content || !confirmBtn) return;
-
-  const isLong = pos.type === "LONG";
-  const isHold = pos.type === "HOLD";
-
-  icon.textContent = isHold ? "⏸️" : (isLong ? "📈" : "📉");
-  title.textContent = isHold ? "HOLD (보류)" : `${pos.type} SIGNAL`;
-  title.style.color = isHold ? "var(--text-sub)" : (isLong ? "var(--success)" : "var(--danger)");
-  subtitle.textContent = `${pos.symbol} | ${pos.tf}`;
-
-  const ex = pos.explain;
-
-  const mtf = ex.mtf;
-  const mtfLine = mtf
-    ? `MTF 합의: ${mtf.agree}/${(mtf.votes||[]).length} (${(mtf.votes||[]).join("/")})`
-    : `MTF 합의: -`;
-
-  const confLine = ex.conf
-    ? `확신도: ${ex.conf.tier} (RR ${ex.conf.rrUsed.toFixed(2)}, TP×${(ex.conf.tpScale||1).toFixed(2)})`
-    : `확신도: -`;
-
-  const calibLine = `최근승률 ${(ex.recentWinRate*100).toFixed(0)}% → winProb ${(ex.winProb*100).toFixed(1)}% (α ${RECENT_CALIB_ALPHA})`;
-  const regimeLine = `추세강도 ${Number(ex.trendStrength||0).toFixed(2)} / ATR ${Number(ex.atrPct||0).toFixed(2)}%`;
-
-  if(isHold){
-    const reasons = (ex.holdReasons || []).map(r => `- ${r}`).join("<br/>");
-
-    if(blockedByPattern && forcePos){
-      const inferredType = forcePos.type;
-      const tpLine = `$${forcePos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${forcePos.tpPct.toFixed(2)}%)`;
-      const slLine = `$${forcePos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${forcePos.slPct.toFixed(2)}%)`;
-
-      icon.textContent = "⚠️";
-      title.textContent = "RISK (패턴경고 감지)";
-      title.style.color = "var(--danger)";
-
-      grid.innerHTML = `
-        <div class="mini-box"><small>판정</small><div>리스크 경고 (그래도 가능)</div></div>
-        <div class="mini-box"><small>예상 방향</small><div>${inferredType}</div></div>
-        <div class="mini-box"><small>성공확률(추정)</small><div>${(ex.winProb*100).toFixed(1)}%</div></div>
-        <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
-      `;
-
-      content.innerHTML = `
-        <b>현재는 “자주 실패한 패턴” 경고가 있어서 기본은 HOLD입니다.</b><br/>
-        하지만 너 요청대로 <b>예측을 줄이지 않기 위해</b> 아래 버튼으로 “위험 감안 추적”을 허용합니다.<br/><br/>
-        <b>복원된 TP/SL(강제추적 기준):</b><br/>
-        - TP ${tpLine}<br/>
-        - SL ${slLine}<br/><br/>
-        <b>HOLD 사유:</b><br/>
-        ${reasons}<br/><br/>
-        <b>추가 정보:</b><br/>
-        - ${calibLine}<br/>
-        - ${regimeLine}<br/><br/>
-        <b>정리:</b> “완전 차단” 대신 “경고 + 감점”으로 운영합니다.
-      `;
-
-      confirmBtn.disabled = false;
-      confirmBtn.textContent = "위험 감안하고 추적 등록";
-      confirmBtn.onclick = () => confirmTrack(forcePos);
-    }else{
-      grid.innerHTML = `
-        <div class="mini-box"><small>판정</small><div>이번에는 예측 안 함</div></div>
-        <div class="mini-box"><small>MTF</small><div>${mtfLine}</div></div>
-        <div class="mini-box"><small>유사도 평균</small><div>${ex.simAvg.toFixed(1)}%</div></div>
-        <div class="mini-box"><small>표본 수</small><div>${ex.simCount}개</div></div>
-      `;
-      content.innerHTML = `
-        <b>이번에는 “보류”가 더 안전해요.</b><br/>
-        ${reasons}<br/><br/>
-        <b>추가 정보:</b><br/>
-        - ${calibLine}<br/>
-        - ${regimeLine}<br/><br/>
-        <b>정리:</b> 애매할 때 억지로 진입하면 장기 승률이 내려가서, 이번은 패스합니다.
-      `;
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = "보류는 등록하지 않음";
-      confirmBtn.onclick = () => {};
-    }
-  }else{
-    grid.innerHTML = `
-      <div class="mini-box"><small>진입가</small><div>$${pos.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
-      <div class="mini-box"><small>성공확률(추정)</small><div>${(ex.winProb*100).toFixed(1)}%</div></div>
-      <div class="mini-box"><small>목표가(TP)</small><div style="color:var(--success)">$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${pos.tpPct.toFixed(2)}%)</div></div>
-      <div class="mini-box"><small>손절가(SL)</small><div style="color:var(--danger)">$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${pos.slPct.toFixed(2)}%)</div></div>
-    `;
-
-    const domMsg = (typeof ex.btcDom === "number")
-      ? `BTC 도미넌스 ${ex.btcDom.toFixed(1)}% (최근 ${ex.btcDomUp>=0?"+":""}${ex.btcDomUp.toFixed(2)}p)`
-      : `BTC 도미넌스: 데이터 없음`;
-
-    content.innerHTML = `
-      <b>근거 요약:</b><br/>
-      - ${mtfLine}<br/>
-      - ${confLine}<br/>
-      - ${calibLine}<br/>
-      - ${regimeLine}<br/>
-      - 유사패턴 ${ex.simCount}개 · 평균 유사도 ${ex.simAvg.toFixed(1)}%<br/>
-      - RSI ${ex.rsi.toFixed(1)} · MACD ${ex.macdHist.toFixed(4)}<br/>
-      - 추세(EMA20/EMA50) ${ex.ema20 >= ex.ema50 ? "상승 우위" : "하락 우위"}<br/>
-      - 거래량 흐름 ${ex.volTrend >= 0 ? "증가" : "감소"} · 엣지 ${(ex.edge*100).toFixed(1)}%<br/>
-      - ${domMsg}<br/><br/>
-      <b>정리:</b> 여러 기간(1H/4H/1D)이 같은 방향이면 더 믿을만해서, ${pos.type}로 제안합니다.
-    `;
-
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = "추적 시스템에 등록";
-    confirmBtn.onclick = () => confirmTrack();
-  }
-
-  modal.style.display = "flex";
-}
-
-/* ==========================================================
-   ✅ 통합 모달: 전략 카드 3개 보여주고 선택 → 등록
-   ========================================================== */
-function showResultModalAll(symbol, posMap){
-  ensureRuntimeState();
-
-  tempMulti = posMap || null;
-  selectedMultiPos = null;
-
-  const modal = document.getElementById("result-modal");
-  const icon = document.getElementById("modal-icon");
-  const title = document.getElementById("modal-title");
-  const subtitle = document.getElementById("modal-subtitle");
-  const grid = document.getElementById("modal-grid");
-  const content = document.getElementById("modal-content");
-  const cards = document.getElementById("multi-cards");
-  const selectedEl = document.getElementById("multi-selected");
-  const chooseBtn = document.getElementById("multi-choose");
-
-  if(!modal || !icon || !title || !subtitle || !grid || !content || !cards || !selectedEl || !chooseBtn) return;
-
-  _showMultiArea();
-
-  icon.textContent = "🧠";
-  title.textContent = "통합 예측 결과 (6전략)";
-  title.style.color = "var(--primary)";
-  subtitle.textContent = `${symbol} | 15M / 30M / 1H / 4H / 1D / 1W`;
-
-  // 초기 안내
-  grid.innerHTML = `
-    <div class="mini-box"><small>안내</small><div>위 전략 카드에서 하나를 선택하세요</div></div>
-    <div class="mini-box"><small>등록</small><div>선택 후 “추적 등록” 버튼을 누르세요</div></div>
-    <div class="mini-box"><small>주의</small><div>HOLD는 원칙상 등록 불가</div></div>
-    <div class="mini-box"><small>예외</small><div>패턴 경고 HOLD는 RISK로 허용</div></div>
-  `;
-  content.innerHTML = `
-    <b>설명:</b> 단기/중기/장기 결과를 한 번에 보여주고, 너가 원하는 전략을 <b>선택해서</b> 추적 등록하는 방식입니다.
-  `;
-
-  selectedEl.textContent = "선택: 없음";
-  chooseBtn.disabled = true;
-  chooseBtn.style.opacity = "0.65";
-  chooseBtn.textContent = "선택한 전략으로 추적 등록";
-
-  const tfOrder = (typeof getMTFSet6==="function") ? getMTFSet6() : ["15","30","60","240","D","W"];
-  const tfLabel = {
-    "15":"초단기 15M",
-    "30":"단기 30M",
-    "60":"단기 1H",
-    "240":"중기 4H",
-    "D":"장기 1D",
-    "W":"초장기 1W"
-  };
-
-  cards.innerHTML = tfOrder.map(tfRaw => {
-    const p = posMap?.[tfRaw] || null;
-    const label = tfLabel[tfRaw] || tfRaw;
-
-    if(!p){
+    const rows = (state.universe||[]).map(u=>{
+      const sym = u.s;
+      const price = (u.p!=null && Number.isFinite(u.p)) ? u.p : null;
+      const chg = (u.chg!=null && Number.isFinite(u.chg)) ? u.chg : null;
+      const active = (sym === state.symbol) ? ' active' : '';
+      const priceTxt = (price==null) ? "--" : (price>=100 ? price.toFixed(2) : price>=1 ? price.toFixed(4) : price.toFixed(8));
+      const chgTxt = (chg==null) ? "" : `${chg>0?'+':''}${chg.toFixed(2)}%`;
+      const chgCls = (chg==null) ? '' : (chg>0?'pos':(chg<0?'neg':''));
       return `
-        <div class="mini-box" data-tf="${tfRaw}" style="opacity:.6;">
-          <small>${label}</small>
-          <div>데이터 부족</div>
-          <div style="margin-top:6px; font-size:11px; color:var(--text-sub); font-weight:900;">
-            캔들 부족/제한
+        <div class="mrow${active}" data-sym="${sym}">
+          <div class="msym">${sym}</div>
+          <div class="mprice">${priceTxt}</div>
+          <div class="mchg ${chgCls}">${chgTxt}</div>
+        </div>`;
+    }).join("");
+
+    box.innerHTML = `<div class="market-list">${rows||'<div class="empty">유니버스 로딩중…</div>'}</div>`;
+
+    // bind clicks
+    box.querySelectorAll(".mrow").forEach(el=>{
+      el.addEventListener("click", ()=>{
+        const sym = el.getAttribute("data-sym");
+        if(!sym) return;
+        state.symbol = sym;
+        renderMarketList();
+        initChart(sym);
+      });
+    });
+  }
+
+  // ---------- operations ----------
+  let _busy = false;
+  function setBusy(v){
+    _busy = !!v;
+    // UI dots/buttons could be toggled here if needed
+  }
+  function isBusy(){ return _busy; }
+
+  // ---------- server calls ----------
+  async function predict6tf(){
+    if(typeof window.serverPredict6tf !== "function") throw new Error("serverPredict6tf_NOT_READY");
+    const sym = String(state.symbol||"BTCUSDT").toUpperCase();
+    return await window.serverPredict6tf({ symbol: sym });
+  }
+  async function backtest6tf(symbol, limit){
+    if(typeof window.serverBacktest !== "function") throw new Error("serverBacktest_NOT_READY");
+    return await window.serverBacktest({ symbol, limit });
+  }
+
+  // ---------- backtest popup ----------
+  function runBacktestPopup(){
+    try{
+      ensureState();
+      const base = (window.YOPO_SERVER_BASE||"").replace(/\/$/,"");
+      if(!base) return er("서버 주소(YOPO_SERVER_BASE)가 비어있습니다.");
+
+      const popup = window.open("", "yopoBacktest", "width=980,height=720,noopener,noreferrer");
+      if(!popup) return er("팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.");
+
+      const symbols = (state.universe||[]).map(x=>x.s).filter(Boolean);
+      const defaultSym = state.symbol || symbols[0] || "BTCUSDT";
+
+      const html = `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>YOPO 백테스트</title>
+<style>
+body{font-family:Pretendard,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#0b1220;color:#e9eef7;}
+header{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+main{padding:16px;}
+select,input,button{background:#111a2e;color:#e9eef7;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;font-size:14px}
+button{cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.card{background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px}
+.small{color:#9fb0c7;font-size:12px}
+table{width:100%;border-collapse:collapse}
+td,th{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;font-size:13px}
+.badge{padding:3px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.16);font-size:12px}
+.pos{color:#7CFFB2} .neg{color:#FF7C7C}
+</style></head>
+<body>
+<header>
+  <b>백테스트(심볼별 · 6전략)</b>
+  <span class="small">서버 계산 · Binance Futures 기준</span>
+  <span style="flex:1"></span>
+  <label class="small">심볼</label>
+  <select id="sym"></select>
+  <label class="small">캔들수</label>
+  <input id="limit" type="number" min="240" max="1500" value="900" style="width:120px"/>
+  <button id="go">실행</button>
+  <span id="status" class="small"></span>
+</header>
+<main>
+  <div id="out" class="grid"></div>
+</main>
+<script>
+const BASE = ${JSON.stringify(base)};
+const SYMBOLS = ${JSON.stringify(symbols)};
+const DEFAULT = ${JSON.stringify(defaultSym)};
+const tfLabel = (tf)=>tf;
+const qs = (id)=>document.getElementById(id);
+function card(tf, data){
+  const win = Number(data.win||0), n = Number(data.n||0);
+  const wr = n>0 ? (win/n*100) : 0;
+  const avg = Number(data.avgPnl||0);
+  const cls = avg>=0 ? 'pos':'neg';
+  return \`
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <b>\${tfLabel(tf)}</b>
+      <span class="badge">\${n} trades</span>
+      <span class="badge">\${wr.toFixed(1)}%</span>
+      <span class="badge \${cls}">avg \${(avg*100).toFixed(2)}%</span>
+    </div>
+    <div class="small" style="margin-top:8px;">win=\${win} / lose=\${Math.max(0,n-win)}</div>
+  </div>\`;
+}
+async function post(path, body){
+  const res = await fetch(BASE+path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const js = await res.json().catch(()=>null);
+  if(!res.ok || !js) throw new Error('SERVER_'+res.status);
+  return js;
+}
+function render(out){
+  const box = qs('out');
+  if(!out || !out.ok){ box.innerHTML='<div class="card">실패: '+(out?.message||'UNKNOWN')+'</div>'; return; }
+  const per = out.perTf || {};
+  const order = ['15m','30m','1h','4h','1d','1w'];
+  box.innerHTML = order.map(tf=>card(tf, per[tf]||{})).join('');
+}
+function fillSymbols(){
+  const sel = qs('sym');
+  sel.innerHTML = SYMBOLS.map(s=>\`<option value="\${s}">\${s}</option>\`).join('');
+  sel.value = DEFAULT;
+}
+fillSymbols();
+qs('go').addEventListener('click', async ()=>{
+  qs('status').textContent='실행중…';
+  qs('out').innerHTML='';
+  try{
+    const sym = qs('sym').value;
+    const limit = Number(qs('limit').value||900);
+    const out = await post('/api/engine/backtest', {symbol:sym, limit});
+    render(out);
+    qs('status').textContent='완료';
+  }catch(e){
+    qs('status').textContent='실패';
+    qs('out').innerHTML='<div class="card">오류: '+String(e.message||e)+'</div>';
+  }
+});
+</script>
+</body></html>`;
+
+      popup.document.open();
+      popup.document.write(html);
+      popup.document.close();
+      ok("백테스트 팝업을 열었습니다.");
+    }catch(e){
+      er(String(e.message||e));
+    }
+  }
+
+  // ---------- live prices ----------
+  async function refreshUniverse(){
+    if(typeof window.refreshUniverseAndGlobals !== "function") return;
+    const out = await window.refreshUniverseAndGlobals();
+    // expected: {ok:true, symbols:[...], ts}
+    if(out && out.ok && Array.isArray(out.symbols)){
+      const now = Date.now();
+      state.universe = out.symbols.map(s=>({ s:String(s).toUpperCase(), p:null, chg:null, ts:now }));
+      setText("universe-ts", "업데이트: " + new Date(out.ts || now).toLocaleTimeString());
+      // keep current symbol valid
+      if(!state.universe.find(x=>x.s===state.symbol)){
+        state.symbol = state.universe[0]?.s || state.symbol;
+      }
+      renderMarketList();
+      initChart(state.symbol);
+    }
+  }
+
+  async function pollPricesOnce(){
+    const syms = new Set();
+    (state.universe||[]).forEach(u=>u?.s && syms.add(u.s));
+    (state.tracks||[]).forEach(t=>t?.symbol && syms.add(t.symbol));
+    if(state.symbol) syms.add(state.symbol);
+
+    for(const sym of syms){
+      try{
+        const out = await window.marketTick(sym);
+        if(out && out.ok && Number.isFinite(out.price)){
+          const price = Number(out.price);
+          // update universe price
+          const u = (state.universe||[]).find(x=>x.s===sym);
+          if(u){
+            u.p = price;
+            u.chg = Number.isFinite(out.chg) ? Number(out.chg) : (Number.isFinite(out.changePct) ? Number(out.changePct) : u.chg);
+            u.ts = Date.now();
+          }
+          // update tracks
+          updateTracksWithPrice(sym, price);
+        }
+      }catch(e){}
+    }
+    renderMarketList();
+    renderTracks();
+  }
+
+  // ---------- tracking ----------
+  function newTrackId(){
+    return "T"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  }
+  function addTrackFromBest(best, perTf){
+    const side = best.action;
+    if(side!=="LONG" && side!=="SHORT") return wr("HOLD는 추적하지 않습니다.");
+    const tf = best.tf || "15m";
+    const tfObj = (perTf||[]).find(x=>x.tf===tf) || {};
+    const entry = Number(best.lastClose || tfObj.lastClose || NaN);
+    const tpPct = Number(tfObj.tpPct || 0.01);
+    const slPct = Number(tfObj.slPct || 0.01);
+    if(!Number.isFinite(entry)) return er("진입가를 계산할 수 없습니다.");
+    const t = {
+      id: newTrackId(),
+      symbol: String(state.symbol).toUpperCase(),
+      tf,
+      side,
+      entry,
+      tpPct,
+      slPct,
+      openedAt: Date.now(),
+      closedAt: null,
+      status: "OPEN",
+      lastPrice: entry
+    };
+    state.tracks.unshift(t);
+    ok(`추적 시작: ${t.symbol} ${t.side} (${t.tf})`);
+    renderTracks();
+  }
+
+  function updateTracksWithPrice(symbol, price){
+    const now = Date.now();
+    for(const t of (state.tracks||[])){
+      if(t.status!=="OPEN") continue;
+      if(t.symbol !== symbol) continue;
+      t.lastPrice = price;
+
+      const tp = (t.side==="LONG") ? t.entry*(1+t.tpPct) : t.entry*(1-t.tpPct);
+      const sl = (t.side==="LONG") ? t.entry*(1-t.slPct) : t.entry*(1+t.slPct);
+
+      let hit = null;
+      if(t.side==="LONG"){
+        if(price >= tp) hit = "TP";
+        else if(price <= sl) hit = "SL";
+      }else{
+        if(price <= tp) hit = "TP";
+        else if(price >= sl) hit = "SL";
+      }
+
+      if(hit){
+        t.status = hit;
+        t.closedAt = now;
+        // evolve feedback (best effort)
+        try{
+          if(typeof window.serverEvolveFeedback === "function"){
+            window.serverEvolveFeedback({
+              symbol: t.symbol,
+              tf: t.tf,
+              side: t.side,
+              result: hit,
+              entry: t.entry,
+              exit: price,
+              tpPct: t.tpPct,
+              slPct: t.slPct,
+              openedAt: t.openedAt,
+              closedAt: t.closedAt
+            }).catch(()=>{});
+          }
+        }catch(e){}
+      }
+    }
+  }
+
+  function renderTracks(){
+    const box = $("tracking-container");
+    if(!box) return;
+    const list = (state.tracks||[]);
+    if(!list.length){
+      box.innerHTML = `<div class="empty">추적 중인 포지션이 없습니다.</div>`;
+      setText("active-stat", "0");
+      return;
+    }
+    setText("active-stat", String(list.filter(x=>x.status==="OPEN").length));
+
+    box.innerHTML = list.map(t=>{
+      const nowPrice = Number(t.lastPrice||t.entry);
+      const pnl = (t.side==="LONG") ? (nowPrice/t.entry - 1) : (t.entry/nowPrice - 1);
+      const pnlTxt = Number.isFinite(pnl) ? (pnl*100).toFixed(2)+"%" : "--";
+      const pnlCls = pnl>=0 ? "pos" : "neg";
+      const tp = (t.side==="LONG") ? t.entry*(1+t.tpPct) : t.entry*(1-t.tpPct);
+      const sl = (t.side==="LONG") ? t.entry*(1-t.slPct) : t.entry*(1+t.slPct);
+      const status = t.status;
+      return `
+      <div class="tcard ${status!=="OPEN"?'closed':''}">
+        <div class="trow">
+          <b>${t.symbol}</b>
+          <span class="pill">${t.tf}</span>
+          <span class="pill">${t.side}</span>
+          <span class="pill ${status==='TP'?'pos':status==='SL'?'neg':''}">${status}</span>
+          <span style="flex:1"></span>
+          <span class="pnl ${pnlCls}">${pnlTxt}</span>
+        </div>
+        <div class="tsub">
+          entry ${t.entry.toFixed(4)} · now ${nowPrice.toFixed(4)} · tp ${tp.toFixed(4)} · sl ${sl.toFixed(4)}
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  // ---------- predict action ----------
+  async function onPredict(){
+    if(isBusy()) return wr("작업 진행 중입니다. 잠시 후 다시 시도하세요.");
+    setBusy(true);
+    try{
+      ensureState();
+      const out = await predict6tf();
+      if(!out || !out.ok) throw new Error(out?.message || "PREDICT_FAIL");
+
+      const best = out.best || {};
+      const results = out.results || [];
+
+      const bestTf = best.tf || "-";
+      const bestSide = best.action || "HOLD";
+      const bestEv = (best.ev!=null && Number.isFinite(best.ev)) ? best.ev.toFixed(4) : "-";
+      const lastClose = (best.lastClose!=null && Number.isFinite(best.lastClose)) ? Number(best.lastClose) : null;
+
+      // build table
+      const rows = results.map(r=>{
+        const ev = (r.action==="LONG") ? r.evLong : (r.action==="SHORT" ? r.evShort : null);
+        const evTxt = (ev!=null && Number.isFinite(ev)) ? ev.toFixed(4) : "-";
+        const lc = (r.lastClose!=null && Number.isFinite(r.lastClose)) ? Number(r.lastClose).toFixed(4) : "--";
+        const tp = (r.tpPct!=null && Number.isFinite(r.tpPct)) ? (r.tpPct*100).toFixed(2)+"%" : "--";
+        const sl = (r.slPct!=null && Number.isFinite(r.slPct)) ? (r.slPct*100).toFixed(2)+"%" : "--";
+        return `<tr>
+          <td>${r.tf}</td><td>${r.action||'HOLD'}</td><td>${r.regime||'-'}</td>
+          <td>${evTxt}</td><td>${tp}</td><td>${sl}</td><td>${lc}</td>
+        </tr>`;
+      }).join("");
+
+      const btnTrack = (bestSide==="LONG" || bestSide==="SHORT")
+        ? `<button id="btn-track" class="btn primary" style="margin-top:10px;width:100%;">정밀추적 시작</button>`
+        : `<div class="small" style="margin-top:10px;color:#9fb0c7;">HOLD는 추적하지 않습니다.</div>`;
+
+      const body = `
+        <div class="cardbox">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <b>${out.symbol}</b>
+            <span class="pill">${bestTf}</span>
+            <span class="pill">${bestSide}</span>
+            <span class="pill">EV ${bestEv}</span>
+            ${lastClose!=null?`<span class="pill">last ${lastClose.toFixed(4)}</span>`:""}
           </div>
+          <div class="small" style="margin-top:8px;">best reason: ${best.reason||'-'}</div>
+          <div style="overflow:auto;margin-top:10px;">
+            <table style="width:100%;border-collapse:collapse;">
+              <thead><tr>
+                <th>TF</th><th>Action</th><th>Regime</th><th>EV</th><th>TP</th><th>SL</th><th>Last</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          ${btnTrack}
         </div>
       `;
-    }
-
-    const ex = p.explain || {};
-    const wp = Number.isFinite(ex.winProb) ? (ex.winProb*100).toFixed(1) : "-";
-    const edge = Number.isFinite(ex.edge) ? (ex.edge*100).toFixed(1) : "-";
-    const sim = Number.isFinite(ex.simAvg) ? ex.simAvg.toFixed(1) : "-";
-    const mtf = ex?.mtf ? `${ex.mtf.agree}/${(ex.mtf.votes||[]).length}(${(ex.mtf.votes||[]).join("/")})` : "-";
-    const conf = ex?.conf?.tier ?? "-";
-
-    const isHold = (p.type === "HOLD");
-    const riskHold = isPatternBlockedHold(p);
-
-    // HOLD인데 “패턴경고”가 있으면 RISK로 선택 허용(기존 지침 유지)
-    const selectable = (!isHold) || (!!riskHold);
-
-    const inferredType = (Number(ex.longP ?? 0.5) >= Number(ex.shortP ?? 0.5)) ? "LONG" : "SHORT";
-    const showType = isHold ? (riskHold ? inferredType : "HOLD") : p.type;
-
-    const riskTag = riskHold ? `<span style="margin-left:6px; color:var(--danger); font-weight:950;">RISK</span>` : "";
-    const style = selectable ? "" : "opacity:.6; cursor:not-allowed;";
-    const onClickAttr = selectable ? `onclick="selectMultiTf('${tfRaw}')"` : "";
-
-    return `
-      <div class="mini-box" data-tf="${tfRaw}" style="${style}" ${onClickAttr}>
-        <small>${label}</small>
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-          <div style="font-size:14px; font-weight:950;">${showType}${riskTag}</div>
-          <div style="font-size:12px; font-weight:950; color:var(--text-sub);">${p.tf || tfRaw}</div>
-        </div>
-        <div style="margin-top:6px; font-size:12px; color:var(--text-sub); font-weight:900; line-height:1.4;">
-          성공확률 ${wp}% · 엣지 ${edge}%<br/>
-          유사도 ${sim}% · ${mtf} · ${conf}
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  modal.style.display = "flex";
-}
-
-
-// ✅ 호환: 과거 onclick="selectMulti(...)" 대응
-function selectMulti(tfRaw){ return selectMultiTf(tfRaw); }
-
-/* 카드 선택 */
-function selectMultiTf(tfRaw){
-  ensureRuntimeState();
-
-  if(!tempMulti) return;
-  const p = tempMulti[tfRaw];
-  if(!p){
-    toast("이 전략은 데이터가 부족합니다.", "warn");
-    return;
-  }
-
-  // 중복 추적이면 선택 불가
-  if(hasActivePosition(p.symbol, p.tfRaw)){
-    toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다.", "warn");
-    return;
-  }
-
-  // HOLD 처리 (패턴 리스크 HOLD만 예외적으로 허용)
-  let chosen = p;
-  if(p.type === "HOLD"){
-    const riskHold = isPatternBlockedHold(p);
-    if(riskHold){
-      const forced = buildForcedTrackFromHold(p);
-      if(forced){
-        chosen = forced;
-      }else{
-        toast("RISK HOLD인데 TP/SL 복원이 실패했습니다.", "warn");
-        return;
-      }
-    }else{
-      toast("이 전략은 HOLD라서 등록할 수 없습니다.", "warn");
-      // 그래도 상세는 보여주기 위해 단일 모달 렌더를 호출하지는 않음
-      return;
-    }
-  }
-
-  selectedMultiPos = chosen;
-
-  // 카드 하이라이트
-  const cards = document.getElementById("multi-cards");
-  if(cards){
-    const kids = Array.from(cards.querySelectorAll("[data-tf]"));
-    for(const el of kids){
-      el.style.border = "2px solid transparent";
-    }
-    const sel = cards.querySelector(`[data-tf="${tfRaw}"]`);
-    if(sel) sel.style.border = "2px solid var(--primary)";
-  }
-
-  // 선택 표시
-  const selectedEl = document.getElementById("multi-selected");
-  if(selectedEl){
-    selectedEl.textContent = `선택: ${p.tf} → ${chosen.type}${chosen._forceTrack ? " (RISK)" : ""}`;
-  }
-
-  // 버튼 활성화
-  const chooseBtn = document.getElementById("multi-choose");
-  if(chooseBtn){
-    chooseBtn.disabled = false;
-    chooseBtn.style.opacity = "1";
-    chooseBtn.textContent = chosen._forceTrack ? "위험 감안하고 추적 등록" : "선택한 전략으로 추적 등록";
-  }
-
-  // 아래 단일 영역에 상세 표시(간단)
-  const grid = document.getElementById("modal-grid");
-  const content = document.getElementById("modal-content");
-  if(grid && content){
-    const ex = chosen.explain || {};
-    const wp = Number.isFinite(ex.winProb) ? (ex.winProb*100).toFixed(1) : "-";
-    const edge = Number.isFinite(ex.edge) ? (ex.edge*100).toFixed(1) : "-";
-    const sim = Number.isFinite(ex.simAvg) ? ex.simAvg.toFixed(1) : "-";
-    const mtfLine = ex?.mtf ? `MTF 합의: ${ex.mtf.agree}/${(ex.mtf.votes||[]).length} (${(ex.mtf.votes||[]).join("/")})` : "MTF: -";
-    const confLine = ex?.conf ? `확신도: ${ex.conf.tier} (RR ${Number(ex.conf.rrUsed||RR).toFixed(2)})` : "확신도: -";
-
-    grid.innerHTML = `
-      <div class="mini-box"><small>진입가</small><div>$${chosen.entry.toLocaleString(undefined,{maximumFractionDigits:6})}</div></div>
-      <div class="mini-box"><small>성공확률</small><div>${wp}%</div></div>
-      <div class="mini-box"><small>TP</small><div style="color:var(--success)">$${chosen.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${chosen.tpPct.toFixed(2)}%)</div></div>
-      <div class="mini-box"><small>SL</small><div style="color:var(--danger)">$${chosen.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${chosen.slPct.toFixed(2)}%)</div></div>
-    `;
-
-    content.innerHTML = `
-      <b>선택한 전략 상세:</b><br/>
-      - ${mtfLine}<br/>
-      - ${confLine}<br/>
-      - 유사도 ${sim}% · 엣지 ${edge}%<br/>
-      ${chosen._forceTrack ? `<br/><b style="color:var(--danger);">RISK:</b> 패턴 경고 HOLD를 “감안 추적”으로 허용했습니다.` : ""}
-    `;
-  }
-}
-
-function confirmTrackSelected(){
-  ensureRuntimeState();
-
-  if(!selectedMultiPos){
-    toast("먼저 전략을 선택하세요.", "warn");
-    return;
-  }
-  confirmTrack(selectedMultiPos);
-}
-
-/* ==========================================================
-   closeModal / confirmTrack
-   ========================================================== */
-function closeModal(){
-  const modal = document.getElementById("result-modal");
-  if(modal) modal.style.display = "none";
-
-  tempPos = null;
-  tempMulti = null;
-  selectedMultiPos = null;
-
-  // 멀티 잔상 제거
-  try{ _hideMultiArea(); }catch(e){}
-}
-
-function confirmTrack(forcedPos=null){
-  ensureRuntimeState();
-
-  const posToUse = forcedPos || tempPos;
-  if(!posToUse) return;
-
-  ensurePosId(posToUse);
-
-  if(posToUse.type === "HOLD" && !posToUse._forceTrack){
-    return;
-  }
-
-  if(hasActivePosition(posToUse.symbol, posToUse.tfRaw)){
-    toast("이미 같은 코인/같은 기간의 추적 포지션이 있습니다.", "warn");
-    return;
-  }
-
-  const createdAt = Date.now();
-  const expiryAt = createdAt + tfToMs(posToUse.tfRaw);
-
-  state.activePositions.unshift({
-    ...posToUse,
-    id: posToUse.id,
-    status: "ACTIVE",
-    lastPrice: posToUse.entry,
-    pnl: 0,
-    mfePct: 0,
-    createdAt,
-    expiryAt
-  });
-
-  saveState();
-  closeModal();
-  renderTrackingList();
-  updateStatsUI();
-  updateCountdownTexts();
-
-  if(posToUse._forceTrack){
-    toast(`[${posToUse.symbol} ${posToUse.tf}] RISK 추적 등록 완료 (패턴경고 override)`, "warn");
-  }
-}
-
-/* ==========================================================
-   Tracking
-   ========================================================== */
-function trackPositions(symbol, currentPrice){
-  ensureRuntimeState();
-
-  let changed = false;
-  const FEE_SAFE = (typeof FEE_PCT === "number" && Number.isFinite(FEE_PCT)) ? FEE_PCT : 0;
-
-  for(let i = state.activePositions.length - 1; i >= 0; i--){
-    const pos = state.activePositions[i];
-    ensurePosId(pos);
-
-    if(pos.symbol !== symbol) continue;
-
-    pos.lastPrice = currentPrice;
-
-    let pnlGross = 0;
-    if(pos.type === "LONG"){
-      pnlGross = ((currentPrice - pos.entry) / pos.entry) * 100;
-    }else{
-      pnlGross = ((pos.entry - currentPrice) / pos.entry) * 100;
-    }
-    const pnl = pnlGross - FEE_SAFE;
-    pos.pnl = pnl;
-
-    const favorable = (pos.type === "LONG")
-      ? ((currentPrice - pos.entry) / pos.entry) * 100
-      : ((pos.entry - currentPrice) / pos.entry) * 100;
-
-    if(Number.isFinite(favorable)){
-      if(typeof pos.mfePct !== "number") pos.mfePct = 0;
-      if(favorable > pos.mfePct) pos.mfePct = favorable;
-    }
-
-    if(Number.isFinite(pos.mfePct) && pos.status === "ACTIVE"){
-      if(pos.mfePct >= BE_TRIGGER_PCT){
-        if(pos.type === "LONG"){
-          const beSL = pos.entry * (1 + (BE_OFFSET_PCT/100));
-          if(typeof pos.sl !== "number" || !Number.isFinite(pos.sl)) pos.sl = pos.entry;
-          if(pos.sl < beSL) pos.sl = beSL;
-        }else{
-          const beSL = pos.entry * (1 - (BE_OFFSET_PCT/100));
-          if(typeof pos.sl !== "number" || !Number.isFinite(pos.sl)) pos.sl = pos.entry;
-          if(pos.sl > beSL) pos.sl = beSL;
-        }
-      }
-
-      if(pos.mfePct >= TRAIL_START_PCT){
-        if(pos.type === "LONG"){
-          const trailSL = pos.entry * (1 + ((pos.mfePct - TRAIL_GAP_PCT)/100));
-          if(pos.sl < trailSL) pos.sl = trailSL;
-        }else{
-          const trailSL = pos.entry * (1 - ((pos.mfePct - TRAIL_GAP_PCT)/100));
-          if(pos.sl > trailSL) pos.sl = trailSL;
-        }
-      }
-    }
-
-    let close = false;
-    let win = false;
-    let exitPrice = null;
-    let exitReason = "";
-
-    if(pos.type === "LONG"){
-      if(currentPrice >= pos.tp){ close = true; win = true; exitPrice = pos.tp; exitReason="TP"; }
-      else if(currentPrice <= pos.sl){ close = true; win = false; exitPrice = pos.sl; exitReason="SL"; }
-    }else{
-      if(currentPrice <= pos.tp){ close = true; win = true; exitPrice = pos.tp; exitReason="TP"; }
-      else if(currentPrice >= pos.sl){ close = true; win = false; exitPrice = pos.sl; exitReason="SL"; }
-    }
-
-    if(close){
-      try{ recordTradeToPatternDB(pos, win); }catch(e){}
-      try{ metaRecordFromPosition(pos, win, exitReason); }catch(e){}
-
-      state.history.total++;
-      if(win) state.history.win++;
-
-      let pnlExitGross = 0;
-      const px = (exitPrice ?? currentPrice);
-      if(pos.type === "LONG"){
-        pnlExitGross = ((px - pos.entry) / pos.entry) * 100;
-      }else{
-        pnlExitGross = ((pos.entry - px) / pos.entry) * 100;
-      }
-      const pnlExit = pnlExitGross - FEE_SAFE;
-
-      const record = {
-        id: Date.now(),
-        symbol: pos.symbol,
-        tf: pos.tf,
-        tfRaw: pos.tfRaw,
-        type: pos.type,
-        entry: pos.entry,
-        exit: px,
-        pnlPct: pnlExit,
-        mfePct: (typeof pos.mfePct === "number") ? pos.mfePct : 0,
-        win,
-        reason: exitReason,
-        closedAt: Date.now()
-      };
-      state.closedTrades.unshift(record);
-      state.closedTrades = state.closedTrades.slice(0, 30);
-
-      state.activePositions.splice(i, 1);
-      saveState();
-      changed = true;
-
-      toast(
-        `[${pos.symbol} ${pos.tf}] 종료: ${win ? "성공" : "실패"} (${exitReason}) / 수익률 ${pnlExit.toFixed(2)}% / MFE ${record.mfePct.toFixed(2)}% (비용 -${FEE_SAFE.toFixed(2)}%)`,
-        win ? "success" : "danger"
-      );
-    }else{
-      changed = true;
-    }
-  }
-
-  if(changed){
-    saveState();
-    renderTrackingList();
-    renderClosedTrades();
-    updateStatsUI();
-  }
-}
-
-function renderTrackingList(){
-  ensureRuntimeState();
-
-  const container = document.getElementById("tracking-container");
-  if(!container) return;
-
-  ensureStrategyCountUI();
-  updateStrategyCountUI();
-
-  if(!state.activePositions.length){
-    container.innerHTML = `
-      <div style="text-align:center; padding:50px; color:var(--text-sub); font-weight:950;">
-        <i class="fa-solid fa-radar" style="font-size:44px; opacity:.18;"></i><br><br>
-        현재 추적 중인 포지션이 없습니다.<br/>
-        왼쪽에서 코인을 고르고 “통합 예측(단·중·장)”을 눌러보세요.
-      </div>
-    `;
-    return;
-  }
-
-  ensureExpiryOnAllPositions();
-  ensureIdsOnAllPositions();
-
-  container.innerHTML = state.activePositions.map(pos => {
-    ensurePosId(pos);
-
-    const isUp = pos.pnl >= 0;
-    const color = isUp ? "var(--success)" : "var(--danger)";
-
-    const denom = Math.max(Math.abs(pos.tp - pos.entry), 1e-9);
-    const numer = (pos.type === "LONG")
-      ? (pos.lastPrice - pos.entry)
-      : (pos.entry - pos.lastPrice);
-
-    let progress = (numer / denom) * 100;
-    progress = clamp(progress, 0, 100);
-
-    const ex = pos.explain || {};
-    const tpPct = Number.isFinite(pos.tpPct) ? pos.tpPct : null;
-    const slPct = Number.isFinite(pos.slPct) ? pos.slPct : null;
-
-    const expiryAt = pos.expiryAt || getPosExpiryAt(pos);
-    const remainMs = expiryAt - Date.now();
-    const remainText = formatRemain(remainMs);
-
-    const mtf = ex.mtf;
-    const mtfMini = mtf
-      ? `MTF ${mtf.agree}/${(mtf.votes||[]).length}(${(mtf.votes||[]).join("/")})`
-      : `MTF -`;
-
-    const confMini = ex.conf
-      ? `CONF ${ex.conf.tier}(RR ${Number(ex.conf.rrUsed||RR).toFixed(2)})`
-      : `CONF -`;
-
-    const mfeMini = `MFE ${(typeof pos.mfePct === "number" ? pos.mfePct : 0).toFixed(2)}%`;
-
-    const regimeMini = (typeof ex.trendStrength === "number")
-      ? `TS ${ex.trendStrength.toFixed(2)}`
-      : `TS -`;
-    const volMini = (typeof ex.atrPct === "number")
-      ? `ATR ${ex.atrPct.toFixed(2)}%`
-      : `ATR -`;
-
-    const explainLine =
-      `남은시간 <b id="remain-${pos.id}">${remainText}</b> · ${mtfMini} · ${confMini} · ${mfeMini} · ${regimeMini} · ${volMini} · 유사패턴 ${ex.simCount ?? "-"}개 · 유사도 ${(ex.simAvg ?? 0).toFixed ? ex.simAvg.toFixed(1) : "-"}% · RSI ${(ex.rsi ?? 0).toFixed ? ex.rsi.toFixed(1) : "-"} · 엣지 ${((ex.edge ?? 0)*100).toFixed ? ((ex.edge ?? 0)*100).toFixed(1) : "-"}%`;
-
-    const tpLine = tpPct !== null
-      ? `$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})} (+${tpPct.toFixed(2)}%)`
-      : `$${pos.tp.toLocaleString(undefined,{maximumFractionDigits:6})}`;
-
-    const slLine = slPct !== null
-      ? `$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})} (-${slPct.toFixed(2)}%)`
-      : `$${pos.sl.toLocaleString(undefined,{maximumFractionDigits:6})}`;
-
-    const riskTag = pos._forceTrack ? ` <span style="font-size:11px; font-weight:950; color:var(--danger);">(RISK)</span>` : "";
-
-    return `
-      <div class="position-card">
-        <div class="card-header">
-          <div class="card-symbol">
-            ${pos.symbol} <span style="font-size:12px; color:var(--text-sub); font-weight:950;">${pos.tf}</span>${riskTag}
-          </div>
-          <div class="card-type ${pos.type === "LONG" ? "type-LONG" : "type-SHORT"}">${pos.type}</div>
-        </div>
-
-        <div class="card-grid">
-          <div class="price-info">
-            <span class="price-label">현재가</span>
-            <span class="price-val">$${(pos.lastPrice||pos.entry).toLocaleString(undefined,{maximumFractionDigits:6})}</span>
-          </div>
-
-          <div>
-            <div class="progress-text">
-              <span style="color:${color}">수익률 ${pos.pnl.toFixed(2)}% <span style="color:var(--text-sub); font-weight:900;">(비용 반영)</span></span>
-              <span>목표까지 ${progress.toFixed(1)}%</span>
-            </div>
-            <div class="progress-track">
-              <div class="progress-fill" style="width:${progress}%; background:${color};"></div>
-            </div>
-          </div>
-
-          <div class="price-info">
-            <span class="price-label">TP / SL</span>
-            <span class="price-val" style="color:var(--success);">${tpLine}</span>
-            <div style="height:4px;"></div>
-            <span class="price-val" style="color:var(--danger);">${slLine}</span>
-          </div>
-        </div>
-
-        <div class="card-foot">${explainLine}</div>
-      </div>
-    `;
-  }).join("");
-
-  updateCountdownTexts();
-}
-
-/* ==========================================================
-   Closed trades + stats
-   ========================================================== */
-function renderClosedTrades(){
-  ensureRuntimeState();
-
-  const container = document.getElementById("history-container");
-  const countEl = document.getElementById("history-count");
-  if(!container || !countEl) return;
-
-  const list = state.closedTrades || [];
-  countEl.textContent = String(list.length);
-
-  if(!list.length){
-    container.innerHTML = `
-      <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:4px 2px;">
-        아직 종료된 기록이 없습니다.
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = list.slice(0, 8).map(x => {
-    const badge = x.win ? `<span class="badge-win">성공</span>` : `<span class="badge-lose">실패</span>`;
-    const pnlColor = x.pnlPct >= 0 ? "var(--success)" : "var(--danger)";
-    const mfeTxt = (typeof x.mfePct === "number") ? ` · MFE ${x.mfePct.toFixed(2)}%` : "";
-    return `
-      <div class="history-item">
-        <div class="left">
-          ${badge}
-          <span>${x.symbol.replace("USDT","")} ${x.tf}</span>
-          <span style="color:var(--text-sub); font-weight:950;">(${x.reason}${mfeTxt})</span>
-        </div>
-        <div style="text-align:right;">
-          <div style="color:${pnlColor}; font-weight:950;">${x.pnlPct.toFixed(2)}%</div>
-          <div style="color:var(--text-sub); font-size:10px; font-weight:900;">
-            ${new Date(x.closedAt).toLocaleTimeString()}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-function updateStatsUI(){
-  ensureRuntimeState();
-
-  const totalEl = document.getElementById("total-stat");
-  const winEl = document.getElementById("win-stat");
-  const activeEl = document.getElementById("active-stat");
-  if(!totalEl || !winEl || !activeEl) return;
-
-  totalEl.innerText = state.history.total;
-  const rate = state.history.total > 0 ? (state.history.win / state.history.total) * 100 : 0;
-  winEl.innerText = `${rate.toFixed(1)}%`;
-  activeEl.innerText = state.activePositions.length;
-
-  ensureStrategyCountUI();
-  updateStrategyCountUI();
-}
-
-/* ==========================================================
-   ✅ 통합 자동 스캔 (단/중/장 한 번에)
-   - 결과 클릭 시: 통합 예측 모달(선택형)으로 연결
-   ========================================================== */
-async function autoScanUniverseAll(opts={}){
-  ensureRuntimeState();
-
-  const opToken = beginOperation("SCAN_ALL");
-  const btn = document.getElementById("scan-all-btn");
-  const status = document.getElementById("scan-status");
-  if(btn){
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 서버 스캔 중...';
-  }
-  if(status) status.textContent = "스캔중";
-
-  try{
-    checkCanceled(opToken);
-
-    const api = window.serverScanAll;
-    if(typeof api !== "function") throw new Error("SERVER_API_NOT_BOUND");
-
-    const json = await api({});
-    checkCanceled(opToken);
-
-    // 서버가 반환한 flat results를 그대로 저장 (top list용)
-    const flat = json?.results || [];
-    // ✅ 서버 details를 모달 캐시로 적재 (추천 클릭 시 즉시 표시 가능)
-    try{
-      if(!window.__SCAN_DETAIL_CACHE) window.__SCAN_DETAIL_CACHE = new Map();
-      const det = json?.details || null;
-      if(det && typeof det === "object"){
-        const toTfRaw = (tf)=>({
-          "15m":"15","30m":"30","1h":"60","4h":"240","1d":"D","1w":"W"
-        }[String(tf||"").toLowerCase()] || String(tf||""));
-        for(const sym of Object.keys(det)){
-          const per = det[sym] || {};
-          const outMap = {};
-          for(const tf of Object.keys(per)){
-            const r = per[tf] || {};
-            const tfRaw = toTfRaw(tf);
-            const action = (r.action || r.type || "HOLD");
-            const pLong = Number(r.pLong ?? 0.5);
-            const pShort = Number(r.pShort ?? 0.5);
-            const winProb = Number.isFinite(Number(r.winProb)) ? Number(r.winProb) : Math.max(pLong, pShort);
-            const edge = Number.isFinite(Number(r.edge)) ? Number(r.edge) : Math.abs(pLong-pShort);
-            const ev = (action==="LONG") ? Number(r.evLong ?? -999) : (action==="SHORT") ? Number(r.evShort ?? -999) : -999;
-            const confTier = (winProb>=0.62 && ev>0) ? "HIGH" : (winProb>=0.55 && ev>0) ? "MID" : "LOW";
-            const lastClose = Number(r.lastClose);
-            const entry = Number.isFinite(lastClose) ? lastClose : (Number.isFinite(Number(r.entry)) ? Number(r.entry) : 0);
-
-            outMap[tfRaw] = {
-              symbol: sym,
-              tf: tfRaw, tfRaw,
-              type: action,
-              entry: entry ?? 0,
-              tpPct: (Number.isFinite(Number(r.tpPct)) ? Number(r.tpPct) : null),
-              slPct: (Number.isFinite(Number(r.slPct)) ? Number(r.slPct) : null),
-              tp: (Number.isFinite(Number(r.tp)) ? Number(r.tp) : null),
-              sl: (Number.isFinite(Number(r.sl)) ? Number(r.sl) : null),
-              regime: r.regime || "-",
-              evLong: r.evLong,
-              evShort: r.evShort,
-              patternKey: r.patternKey || null,
-              explain:{ winProb, edge, ev, simAvg:null, mtf:null, conf:{ tier: confTier }, longP:pLong, shortP:pShort },
-              reason: r.reason || ""
-            };
-          }
-          window.__SCAN_DETAIL_CACHE.set(sym, { out: outMap, ts: Date.now() });
-        }
-      }
-    }catch(_e){}
-
-    state.lastScanResults = flat.slice(0, 60); // UI가 60까지 표시 가능
-    state.lastScanAt = Date.now();
-    saveState();
-
-    // 추천/모달 갱신
-    try{ renderScanResults?.(); }catch(e){}
-    try{ renderScanListModal?.(); }catch(e){}
-    if(opts && opts.openModal){
-      try{ openScanListModal(); }catch(e){}
-    }
-
-    toast("통합 자동 스캔 완료 ✅", "success");
-    if(status) status.textContent = state.lastScanResults.length ? "완료" : "추천 없음";
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("통합 자동 스캔이 취소되었습니다.", "warn");
-      if(status) status.textContent = "취소됨";
-      return;
-    }
-    console.error(e);
-    toast("서버 스캔 오류(자동 스캔)", "danger");
-    if(status) status.textContent = "오류";
-  }finally{
-    if(btn){
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i> 자동 스캔';
-    }
-    endOperation(opToken);
-  }
-}
-
-function renderScanResults(){
-  ensureRuntimeState();
-
-  const container = document.getElementById("rec-container");
-  if(!container) return;
-
-  const list = state.lastScanResults || [];
-  if(!list.length){
-    container.innerHTML = `
-      <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:6px 2px;">
-        아직 추천 결과가 없습니다. “통합 자동 스캔”을 눌러주세요.
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = list.map(item => {
-    const pillClass = item.type === "LONG" ? "long" : "short";
-    const prob = (Number.isFinite(Number(item.winProb)) ? (Number(item.winProb)*100) : 50).toFixed(1);
-    const edge = (Number.isFinite(Number(item.edge)) ? (Number(item.edge)*100) : 0).toFixed(1);
-    const mtf = item.mtfVotes ? ` · MTF ${item.mtfAgree}/${item.mtfVotes.split("/").length}(${item.mtfVotes})` : "";
-    const conf = item.confTier ? ` · ${item.confTier}` : "";
-    const risk = item.isRisk ? ` · <span style="color:var(--danger); font-weight:950;">RISK</span>` : "";
-    const tfTag = item.tf ? ` · ${item.tf}` : "";
-
-    const click = `openFromScanListOrSidebar('${item.symbol}')`;
-
-    return `
-      <div class="rec-item" onclick="${click}">
-        <div class="rec-left">
-          ${item.symbol.replace("USDT","")}
-          <span class="pill ${pillClass}">${item.type}</span>
-        </div>
-        <div class="rec-right">
-          성공확률 ${prob}%<br/>
-          엣지 ${edge}%${tfTag}${mtf}${conf}${risk}
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-/* ==========================================================
-   Backtest (원본 유지)
-   ========================================================== */
-function sliceCandlesUpToTime(candles, t){
-  if(!Array.isArray(candles) || !candles.length) return [];
-  if(candles[candles.length-1].t <= t) return candles.slice();
-  let j = candles.length - 1;
-  while(j >= 0 && candles[j].t > t) j--;
-  return candles.slice(0, Math.max(0, j+1));
-}
-
-function shiftPosEntryTo(pos, newEntry){
-  if(!pos || !Number.isFinite(newEntry)) return pos;
-  const oldEntry = pos.entry;
-  if(!Number.isFinite(oldEntry) || oldEntry <= 0) return pos;
-
-  const d = newEntry - oldEntry;
-  pos.entry = newEntry;
-
-  if(pos.type !== "HOLD"){
-    if(Number.isFinite(pos.tp)) pos.tp += d;
-    if(Number.isFinite(pos.sl)) pos.sl += d;
-
-    if(Number.isFinite(pos.tp)){
-      pos.tpPct = Math.abs((pos.tp - pos.entry) / pos.entry) * 100;
-    }
-    if(Number.isFinite(pos.sl)){
-      pos.slPct = Math.abs((pos.sl - pos.entry) / pos.entry) * 100;
-    }
-  }
-  return pos;
-}
-
-
-function simulateOutcome(pos, futureCandles){
-  for(const c of futureCandles){
-    const hi = c.h, lo = c.l;
-
-    if(pos.type === "LONG"){
-      const hitTP = (hi >= pos.tp);
-      const hitSL = (lo <= pos.sl);
-
-      if(hitTP && hitSL){
-        const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"BOTH_SL" };
-      }
-      if(hitTP){
-        const pnl = ((pos.tp - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:true, pnlPct:pnl, reason:"TP" };
-      }
-      if(hitSL){
-        const pnl = ((pos.sl - pos.entry)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"SL" };
-      }
-    }else{
-      const hitTP = (lo <= pos.tp);
-      const hitSL = (hi >= pos.sl);
-
-      if(hitTP && hitSL){
-        const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"BOTH_SL" };
-      }
-      if(hitTP){
-        const pnl = ((pos.entry - pos.tp)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:true, pnlPct:pnl, reason:"TP" };
-      }
-      if(hitSL){
-        const pnl = ((pos.entry - pos.sl)/pos.entry)*100 - FEE_PCT;
-        return { resolved:true, win:false, pnlPct:pnl, reason:"SL" };
-      }
-    }
-  }
-  return { resolved:false, win:false, pnlPct:0, reason:"NO_HIT" };
-}
-
-/* ==========================================================
-   window 바인딩 (index.html onclick 호환)
-   ========================================================== */
-window.tryAuth = tryAuth;
-window.setTF = setTF;
-
-
-// 통합(단/중/장)
-window.executeAnalysisAll = executeAnalysisAll;
-window.quickAnalyzeAllAndShow = quickAnalyzeAllAndShow;
-window.selectMultiTf = selectMultiTf;
-window.selectMulti = selectMultiTf;
-window.confirmTrackSelected = confirmTrackSelected;
-
-// 스캔
-window.autoScanUniverseAll = autoScanUniverseAll;
-window.openScanListModal = openScanListModal;
-window.renderScanListModal = renderScanListModal;
-window.closeScanListModal = closeScanListModal;
-window.openFromScanListOrSidebar = openFromScanListOrSidebar;
-
-// 백테스트/모달
-// window.runBacktest 바인딩은 파일 하단 FINAL BINDINGS에서 강제합니다.
-window.openBacktestModal = openBacktestModal;
-window.closeBacktestModal = closeBacktestModal;
-window.confirmTrack = confirmTrack;
-window.closeModal = closeModal;
-
-// 진행취소
-window.cancelOperation = cancelOperation;
-
-// 운영 버튼
-window.resetStatsUIAndData = resetStatsUIAndData;
-window.cancelAllTracking = cancelAllTracking;
-window.resetAll = resetAll;
-
-/* ==========================================================
-   ✅ Scan List Modal (전체 목록)
-   ========================================================== */
-function openScanListModal(){
-  const m = document.getElementById("scan-list-modal");
-  if(m) m.style.display = "flex";
-  renderScanListModal();
-}
-function closeScanListModal(){
-  const m = document.getElementById("scan-list-modal");
-  if(m) m.style.display = "none";
-}
-function renderScanListModal(){
-  ensureRuntimeState();
-  const body = document.getElementById("scanlist-body");
-  const sub = document.getElementById("scanlist-sub");
-  if(!body) return;
-
-  let list = state.lastScanFullList || [];
-  if((!list || !list.length) && Array.isArray(state.lastScanResults) && state.lastScanResults.length){
-    // 폴백: TOP 결과만이라도 표에 노출
-    list = state.lastScanResults.map(x=>({
-      symbol:x.symbol,
-      bestTf:x.tf,
-      bestTfRaw:x.tfRaw,
-      bestType:x.type,
-      winProb:x.winProb,
-      edge:x.edge,
-      mtfAgree:x.mtfAgree,
-      mtfVotes:x.mtfVotes,
-      confTier:x.confTier,
-      isRisk:x.isRisk
-    }));
-  }
-  const ts = state.lastScanAt ? new Date(state.lastScanAt) : null;
-  if(sub){
-    sub.textContent = ts ? `업데이트: ${ts.toLocaleString()} · 총 ${list.length}개` : `총 ${list.length}개`;
-  }
-
-  if(!list.length){
-    body.innerHTML = `<tr><td colspan="7" style="padding:14px; color:var(--text-sub); font-weight:900;">아직 스캔 결과가 없습니다.</td></tr>`;
-    return;
-  }
-
-  body.innerHTML = list.map(row=>{
-    const pill = row.bestType === "LONG" ? "long" : "short";
-    const prob = (Number(row.winProb||0.5)*100).toFixed(1) + "%";
-    const edge = (Number(row.edge||0)*100).toFixed(1) + "%";
-    const votes = row.mtfVotes ? `${row.mtfAgree}/${(row.mtfVotes.split('/').length)} (${row.mtfVotes})` : "-";
-    const risk = row.isRisk ? "RISK" : "-";
-    return `
-      <tr onclick="openFromScanListOrSidebar('${row.symbol}')">
-        <td style="font-weight:950;">${row.symbol}</td>
-        <td><span class="badge-pill ${pill}">${row.bestTf} ${row.bestType}</span></td>
-        <td>${prob}</td>
-        <td>${edge}</td>
-        <td>${votes}</td>
-        <td>${row.confTier || "-"}</td>
-        <td style="color:${row.isRisk ? 'var(--danger)' : 'var(--text-sub)'}; font-weight:950;">${risk}</td>
-      </tr>
-    `;
-  }).join("");
-}
-
-// ✅ 사이드바 추천/스캔목록에서 클릭하면: “스캔 때 계산한 결과”를 우선 보여준다.
-async function openFromScanListOrSidebar(symbol){
-  ensureRuntimeState();
-
-  // ✅ v3 원칙: 브라우저 계산 금지 → 서버 통합예측으로만 처리
-  try{
-    await quickAnalyzeAllAndShow(String(symbol||"").toUpperCase());
-  }catch(e){
-    console.error(e);
-    toast("서버 예측 오류(추천 클릭)", "danger");
-  }
-}
-
-/* ==========================================================
-   ✅ Backtest Modal (TOP20 × 6전략)
-   - v3 원칙: 계산은 서버, 웹은 표시만
-   - index.html 요소:
-     - bt-box: bt-range, bt-n, bt-win, bt-avg
-     - bt-modal: bt-summary, bt-body
-   ========================================================== */
-function openBacktestModal(){
-  const m = document.getElementById("bt-modal");
-  if(m) m.style.display = "flex";
-}
-function closeBacktestModal(){
-  const m = document.getElementById("bt-modal");
-  if(m) m.style.display = "none";
-}
-
-// UI 요약 박스 업데이트(bt-box)
-function renderBacktestBox(json){
-  try{
-    const overall = json?.overall || {};
-    const totalTrades = Number(overall.totalTrades || 0);
-    const overallWinRate = Number(overall.overallWinRate || 0);
-    const overallAvgPnl = Number(overall.overallAvgPnl || 0);
-
-    const rangeEl = document.getElementById("bt-range");
-    const nEl = document.getElementById("bt-n");
-    const winEl = document.getElementById("bt-win");
-    const avgEl = document.getElementById("bt-avg");
-
-    if(rangeEl) rangeEl.textContent = "TOP20 × 6전략";
-    if(nEl) nEl.textContent = totalTrades ? String(totalTrades) : "--";
-    if(winEl) winEl.textContent = totalTrades ? (overallWinRate*100).toFixed(1) + "%" : "--";
-    if(avgEl) avgEl.textContent = totalTrades ? (overallAvgPnl*100).toFixed(2) : "--";
-  }catch(e){}
-}
-
-// 모달 테이블 업데이트(bt-modal)
-function renderBacktestModal(){
-  try{
-    const json = state.lastBacktest || null;
-    const body = document.getElementById("bt-body");
-    const sum = document.getElementById("bt-summary");
-    if(!json || !json.ok){
-      if(sum) sum.textContent = "결과 없음";
-      if(body) body.innerHTML = '<tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">아직 결과가 없습니다.</td></tr>';
-      return;
-    }
-
-    const overall = json.overall || {};
-    const totalTrades = Number(overall.totalTrades || 0);
-    const overallWinRate = Number(overall.overallWinRate || 0);
-    const overallAvgPnl = Number(overall.overallAvgPnl || 0);
-
-    if(sum){
-      sum.textContent =
-        `전체 표본 ${totalTrades} · 전체 승률 ${(overallWinRate*100).toFixed(1)}% · 평균 ${(overallAvgPnl*100).toFixed(2)}%`;
-    }
-
-    // 서버가 제공하는 top 리스트 우선 사용
-    const rows = Array.isArray(json.top) ? json.top.slice() : [];
-
-    // top이 비었으면 perSymbol을 평탄화
-    if(rows.length === 0 && json.perSymbol && typeof json.perSymbol === "object"){
-      for(const sym of Object.keys(json.perSymbol)){
-        const m = json.perSymbol[sym] || {};
-        for(const tf of Object.keys(m)){
-          const r = m[tf];
-          if(!r || !r.ok) continue;
-          rows.push({
-            symbol: sym,
-            tf,
-            trades: Number(r.trades||0),
-            winRate: Number(r.winRate||0),
-            avgPnl: Number(r.avgPnl||0),
-            regime: r.regime || ""
+      openResultModal("통합예측 결과", "서버 계산 · Binance Futures", body);
+
+      // bind track
+      setTimeout(()=>{
+        const b = document.getElementById("btn-track");
+        if(b){
+          b.addEventListener("click", ()=>{
+            try{
+              addTrackFromBest(best, results);
+              closeResultModal();
+            }catch(e){ er(String(e.message||e)); }
           });
         }
-      }
-      rows.sort((a,b)=>{
-        const td = Number(b.trades||0) - Number(a.trades||0);
-        if(td!==0) return td;
-        return Number(b.winRate||0) - Number(a.winRate||0);
+      }, 0);
+
+    }catch(e){
+      er(String(e.message||e));
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  // ---------- reset ----------
+  function resetAll(){
+    ensureState();
+    state.tracks = [];
+    ok("초기화 완료");
+    renderTracks();
+  }
+
+  
+  // ---------- legacy window bindings (index.html onclick compatibility) ----------
+  // index.html may call these via onclick. Keep them defined to prevent ReferenceError.
+  window.executeAnalysisAll = window.executeAnalysisAll || (async function(){ return onPredict(); });
+  // backtest is opened in a popup; accept optional params but ignore them safely.
+  window.runBacktest = window.runBacktest || (function(_opts){ return runBacktestPopup(); });
+
+// ---------- boot ----------
+  async function boot(){
+    ensureState();
+
+    // bind modal close
+    const modal = $("result-modal");
+    if(modal){
+      modal.addEventListener("click", (e)=>{
+        if(e.target === modal) closeResultModal();
       });
     }
-
-    if(!body) return;
-
-    if(rows.length === 0){
-      body.innerHTML = '<tr><td colspan="6" style="padding:14px; color:var(--text-sub); font-weight:900;">결과가 없습니다(표본 부족).</td></tr>';
-      return;
+    const closeBtn = $("op-cancel-btn");
+    if(closeBtn){
+      closeBtn.addEventListener("click", closeResultModal);
     }
 
-    body.innerHTML = rows.map(r=>{
-      const sym = escapeHtml(String(r.symbol||""));
-      const tf  = escapeHtml(String(r.tf||""));
-      const trades = Number(r.trades||0);
-      const wr = Number(r.winRate||0);
-      const avg = Number(r.avgPnl||0);
-      const memo = escapeHtml(String(r.regime||""));
-      return `
-        <tr>
-          <td style="font-weight:950;">${sym}</td>
-          <td>${tf}</td>
-          <td style="font-weight:950;">${trades}</td>
-          <td style="font-weight:950;">${(wr*100).toFixed(1)}%</td>
-          <td style="font-weight:950;">${(avg*100).toFixed(2)}</td>
-          <td style="color:var(--text-sub); font-weight:900;">${memo}</td>
-        </tr>
-      `;
-    }).join("");
-  }catch(e){
-    console.error("renderBacktestModal fail", e);
+    // bind buttons
+    const predictBtn = $("predict-all-btn");
+    if(predictBtn) predictBtn.addEventListener("click", onPredict);
+    const btBtn = $("backtest-btn");
+    if(btBtn) btBtn.addEventListener("click", runBacktestPopup);
+    const resetBtn = $("reset-all-btn");
+    if(resetBtn) resetBtn.addEventListener("click", resetAll);
+
+    // first universe
+    await refreshUniverse().catch(()=>{});
+    renderMarketList();
+    initChart(state.symbol);
+    renderTracks();
+
+    // loops
+    setInterval(()=>{ pollPricesOnce().catch(()=>{}); }, 2000);
+    setInterval(()=>{ refreshUniverse().catch(()=>{}); }, 60000);
   }
-}
 
-async function runBacktest(opts={}){
-  ensureRuntimeState();
-  const openModal = !!opts?.openModal;
-
-  const opToken = beginOperation("BACKTEST");
-  const btn = document.getElementById("bt-btn") || document.getElementById("backtest-btn");
-  const prog = document.getElementById("bt-progress");
-
-  if(btn){
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 서버 백테스트...';
+  // start after DOM ready
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", boot);
+  }else{
+    boot();
   }
-  if(prog) prog.textContent = "계산중...";
-
-  try{
-    checkCanceled(opToken);
-
-    const api = window.serverBacktest;
-    if(typeof api !== "function") throw new Error("SERVER_API_NOT_BOUND");
-
-    const json = await api({ limit: 600 });
-    checkCanceled(opToken);
-
-    // 저장 + 렌더
-    state.lastBacktest = json;
-    saveState();
-
-    renderBacktestBox(json);
-    renderBacktestModal();
-
-    if(openModal) openBacktestModal();
-
-    toast(`백테스트 완료: overall ${(Number(json?.overall?.overallWinRate||0)*100).toFixed(1)}%`, "success");
-  }catch(e){
-    if(String(e?.message || "").includes("CANCELLED")){
-      toast("백테스트가 취소되었습니다.", "warn");
-      return;
-    }
-    console.error(e);
-    toast("서버 백테스트 오류", "danger");
-  }finally{
-    if(btn){
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-flask"></i> 백테스트';
-    }
-    if(prog) prog.textContent = "";
-    endOperation(opToken);
-  }
-}
-
-
-/* =========================
-   ✅ FINAL WINDOW BINDINGS (ensure latest functions are wired)
-   - 중간에 함수가 재정의되면, 기존 window 바인딩이 '옛 함수'를 가리킬 수 있음
-   - 그래서 파일 맨 끝에서 한번 더 바인딩을 강제한다.
-========================= */
-;(function(){
-  try{
-    // 예측/스캔 쪽은 window.executeAnalysisAll / window.autoScanUniverseAll 가 이미 wrapper로 덮였을 수 있으니 건드리지 않음
-    window.runBacktest = runBacktest;
-    window.openBacktestModal = openBacktestModal;
-    window.closeBacktestModal = closeBacktestModal;
-
-    window.openScanListModal = openScanListModal;
-    window.closeScanListModal = closeScanListModal;
-    window.openFromScanListOrSidebar = openFromScanListOrSidebar;
-
-    window.cancelOperation = cancelOperation;
-  }catch(e){ console.warn("FINAL BINDINGS fail", e); }
 })();

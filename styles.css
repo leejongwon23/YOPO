@@ -347,7 +347,6 @@ body{
   font-weight:800;
 }
 
-/* 추천 TOP */
 .recommend-box{
   margin:10px 6px 14px;
   background:#fff;
@@ -857,7 +856,7 @@ body{
    ✅ LAYOUT UPGRADE: sidebar fixed(상단/하단) + 목록 크게 + 스크롤 1개
    - 상단: 통계/버튼 고정
    - 중간: (최근 종료/유망코인/추천) 스크롤
-   - 하단: 분석/스캔/백테스트 고정
+   - 하단: 분석/백테스트 고정
    ========================================================== */
 .sidebar{
   height:100vh;
@@ -1020,3 +1019,23 @@ body{
 /* === SAFETY FIX: ensure overlay never blocks clicks when hidden === */
 .auth-overlay{ pointer-events:auto; }
 .auth-overlay[style*="display: none"]{ pointer-events:none; }
+
+/* ===== YOPO v4->v5 UI (Predict Only) ===== */
+.market-list{display:flex;flex-direction:column;gap:8px}
+.mrow{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(15,23,42,.55);cursor:pointer}
+.mrow:hover{border-color:rgba(255,255,255,.18)}
+.mrow.active{outline:2px solid rgba(124,255,178,.35)}
+.msym{font-weight:700;min-width:92px}
+.mprice{margin-left:auto;font-variant-numeric:tabular-nums}
+.mchg{min-width:72px;text-align:right;font-variant-numeric:tabular-nums;color:#9fb0c7}
+.mchg.pos{color:#7CFFB2}
+.mchg.neg{color:#FF7C7C}
+.empty{padding:14px;color:#9fb0c7}
+.tcard{border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(15,23,42,.55);padding:12px;margin-bottom:10px}
+.tcard.closed{opacity:.8}
+.trow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tsub{margin-top:8px;color:#9fb0c7;font-size:12px}
+.pnl{font-weight:700}
+.pnl.pos{color:#7CFFB2}
+.pnl.neg{color:#FF7C7C}
+.btn.primary{background:#1f6fff;border:1px solid rgba(255,255,255,.16);color:white;border-radius:12px;padding:10px 12px;cursor:pointer}
