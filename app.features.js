@@ -17,22 +17,11 @@
   const er = (m)=>{ try{ if(typeof toast==='function') toast(m,'error'); }catch(e){} };
   const wr = (m)=>{ try{ if(typeof toast==='function') toast(m,'warn'); }catch(e){} };
 
-  // ---------- state (shared reference) ----------
-  // window.state is a property; this local 'state' variable prevents ReferenceError.
-  let state = (typeof window.state === 'object' && window.state) ? window.state : null;
-  if(!state){
-    window.state = {};
-    state = window.state;
-  }
-
   // ---------- state ----------
   function ensureState(){
     if(typeof window.state!=='object' || !window.state){
       window.state = {};
     }
-    // resync local reference (in case window.state was replaced)
-    state = window.state;
-
     if(!Array.isArray(state.universe)) state.universe = [];
     if(!state.symbol) state.symbol = "BTCUSDT";
     if(!Array.isArray(state.tracks)) state.tracks = []; // {id,symbol,tf,side,entry,tpPct,slPct,openedAt,closedAt,status,lastPrice}
@@ -206,17 +195,19 @@ function card(tf, data){
   const avg = Number(data.avgPnl||0);
   const cls = avg>=0 ? 'pos':'neg';
   const hold = Number.isFinite(data.holdRate) ? (Number(data.holdRate)*100) : 0;
-  return `
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <b>${tfLabel(tf)}</b>
-      <span class="badge">${n} trades</span>
-      <span class="badge">${wr.toFixed(1)}%</span>
-      <span class="badge ${cls}">avg ${(avg*100).toFixed(2)}%</span>
-      <span class="badge">hold ${hold.toFixed(0)}%</span>
-    </div>
-    <div class="small" style="margin-top:8px;">note=${data.note||''}</div>
-  </div>`;
+
+  return (
+    '<div class="card">' +
+      '<div style="display:flex;align-items:center;gap:8px;">' +
+        '<b>' + tfLabel(tf) + '</b>' +
+        '<span class="badge">' + n + ' trades</span>' +
+        '<span class="badge">' + wr.toFixed(1) + '%</span>' +
+        '<span class="badge ' + cls + '">avg ' + ((avg*100).toFixed(2)) + '%</span>' +
+        '<span class="badge">hold ' + (hold.toFixed(0)) + '%</span>' +
+      '</div>' +
+      '<div class="small" style="margin-top:8px;">note=' + (data.note||'') + '</div>' +
+    '</div>'
+  );
 }
 async function post(path, body){
   const res = await fetch(BASE+path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
