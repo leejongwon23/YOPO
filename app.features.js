@@ -24,7 +24,6 @@
     }
     if(!Array.isArray(state.universe)) state.universe = [];
     if(!state.symbol) state.symbol = "BTCUSDT";
-    if(!state.chartInterval) state.chartInterval = "15";
     if(!Array.isArray(state.tracks)) state.tracks = []; // {id,symbol,tf,side,entry,tpPct,slPct,openedAt,closedAt,status,lastPrice}
   }
 
@@ -40,11 +39,11 @@
     setText("modal-title", title||"결과");
     setText("modal-subtitle", subtitle||"");
     setHTML("modal-content", bodyHtml||"");
-    modal.classList.add("show"); modal.style.display='flex';
+    modal.classList.add("show");
   }
   function closeResultModal(){
     const modal = $("result-modal");
-    if(modal) modal.classList.remove("show"); modal.style.display='none';
+    if(modal) modal.classList.remove("show");
   }
 
   // ---------- chart (TradingView Futures Perp) ----------
@@ -64,7 +63,7 @@
         _tvWidget = new window.TradingView.widget({
           autosize: true,
           symbol,
-          interval: (window.state && window.state.chartInterval) ? String(window.state.chartInterval) : "15",
+          interval: "15",
           timezone: "Etc/UTC",
           theme: "dark",
           style: "1",
@@ -213,24 +212,7 @@ async function post(path, body){
 }
 function render(out){
   const box = qs('out');
-  if(!out || !out.ok){
-    box.innerHTML='<div class="card">실패: '+(out?.message||out?.error||'UNKNOWN')+'</div>';
-    return;
-  }
-  // ✅ server.js v4 format: { ok:true, results:[{tf,trades,winRate,avgPnl,holdRate,note}] }
-  if(Array.isArray(out.results)){
-    const per = {};
-    for(const r of out.results){
-      const tf = r.tf;
-      const n = Number(r.trades||0);
-      const win = Math.round((Number(r.winRate||0) * n));
-      per[tf] = { n, win, avgPnl: Number(r.avgPnl||0) };
-    }
-    const order = ['15m','30m','1h','4h','1d','1w'];
-    box.innerHTML = order.map(tf=>card(tf, per[tf]||{})).join('');
-    return;
-  }
-  // legacy format fallback: { perTf:{...} }
+  if(!out || !out.ok){ box.innerHTML='<div class="card">실패: '+(out?.message||'UNKNOWN')+'</div>'; return; }
   const per = out.perTf || {};
   const order = ['15m','30m','1h','4h','1d','1w'];
   box.innerHTML = order.map(tf=>card(tf, per[tf]||{})).join('');
@@ -434,9 +416,6 @@ qs('go').addEventListener('click', async ()=>{
       const best = out.best || {};
       const results = out.results || [];
 
-      // legacy confirmTrack() support
-      window.__lastPredictOut = { symbol: out.symbol, best, results };
-
       const bestTf = best.tf || "-";
       const bestSide = best.action || "HOLD";
       const bestEv = (best.ev!=null && Number.isFinite(best.ev)) ? best.ev.toFixed(4) : "-";
@@ -516,43 +495,6 @@ qs('go').addEventListener('click', async ()=>{
   window.executeAnalysisAll = window.executeAnalysisAll || (async function(){ return onPredict(); });
   // backtest is opened in a popup; accept optional params but ignore them safely.
   window.runBacktest = window.runBacktest || (function(_opts){ return runBacktestPopup(); });
-
-  // ✅ 추가 레거시 바인딩: index.html onclick 잔재로 인한 ReferenceError 방지
-  window.closeModal = window.closeModal || (function(){ return closeResultModal(); });
-  window.cancelOperation = window.cancelOperation || (function(){
-    try{ closeResultModal(); }catch(e){}
-    try{ setBusy(false); }catch(e){}
-    return true;
-  });
-  window.openBacktestModal = window.openBacktestModal || (function(){
-    const m = document.getElementById('bt-modal'); if(m) m.style.display='flex';
-  });
-  window.closeBacktestModal = window.closeBacktestModal || (function(){
-    const m = document.getElementById('bt-modal'); if(m) m.style.display='none';
-  });
-  window.confirmTrack = window.confirmTrack || (function(){
-    try{
-      const last = window.__lastPredictOut;
-      if(!last || !last.best) return wr('최근 예측 결과가 없습니다.');
-      addTrackFromBest(last.best, last.results||[]);
-      closeResultModal();
-    }catch(e){ er(String(e.message||e)); }
-  });
-  window.setTF = window.setTF || (function(tf, btnEl){
-    try{
-      ensureState();
-      // TradingView interval mapping
-      const map = { '15':'15','30':'30','60':'60','240':'240','D':'D','W':'W' };
-      state.chartInterval = map[String(tf)] || String(tf||'15');
-      // toggle active class on buttons
-      try{ document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); }catch(e){}
-      try{ if(btnEl && btnEl.classList) btnEl.classList.add('active'); }catch(e){}
-      // re-init chart with new interval
-      initChart(state.symbol);
-    }catch(e){ /* ignore */ }
-  });
-  // expose resetAll (index.html uses resetAll?.())
-  window.resetAll = window.resetAll || (function(){ return resetAll(); });
 
 // ---------- boot ----------
   async function boot(){
