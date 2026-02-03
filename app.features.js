@@ -52,8 +52,21 @@
     const s = String(sym||"BTCUSDT").toUpperCase().replace(/[^A-Z0-9]/g,'');
     return `BINANCE:${s}.P`;
   }
-  function initChart(sym){
-    const wrap = $("tv_chart_container");
+  
+function ensureTradingViewReady(timeoutMs=15000){
+  return new Promise((resolve)=>{
+    const started = Date.now();
+    (function tick(){
+      const ok = !!(window.TradingView && typeof window.TradingView.widget === "function");
+      if(ok) return resolve(true);
+      if(Date.now()-started > timeoutMs) return resolve(false);
+      setTimeout(tick, 120);
+    })();
+  });
+}
+
+function initChart(sym){
+    const wrap = $("chart-wrap");
     if(!wrap) return;
     // clear container
     wrap.innerHTML = "";
@@ -68,7 +81,7 @@
           theme: "dark",
           style: "1",
           locale: "kr",
-          container_id: "tv_chart_container",
+          container_id: "chart-wrap",
           hide_top_toolbar: false,
           hide_legend: false,
           allow_symbol_change: false,
@@ -111,7 +124,6 @@
         const sym = el.getAttribute("data-sym");
         if(!sym) return;
         state.symbol = sym;
-        try{ const p=document.getElementById("active-symbol-pill"); if(p) p.textContent = sym; }catch(e){}
         renderMarketList();
         initChart(sym);
       });
@@ -309,7 +321,7 @@ qs('go').addEventListener('click', async ()=>{
         state.symbol = state.universe[0]?.s || state.symbol;
       }
       renderMarketList();
-      initChart(state.symbol);
+      await initChart(state.symbol);
     }
   }
 
@@ -570,8 +582,7 @@ qs('go').addEventListener('click', async ()=>{
     // first universe
     await refreshUniverse().catch(()=>{});
     renderMarketList();
-    try{ const p=document.getElementById("active-symbol-pill"); if(p) p.textContent = state.symbol; }catch(e){}
-    initChart(state.symbol);
+    await initChart(state.symbol);
     renderTracks();
 
     // loops
