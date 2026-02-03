@@ -137,3 +137,137 @@ window.refreshUniverseAndGlobals = window.refreshUniverseAndGlobals || (async fu
   };
 })();
 
+
+
+
+/* =========================================================
+   ✅ BROWSER DATA MODE (NO PROXY · NO SERVER EXCHANGE FETCH)
+   - If Render egress is blocked by exchanges (e.g., 451),
+     the browser fetches public Binance Futures data directly
+     and sends candles to the server for calculation.
+   - Server stays "calculation-only".
+========================================================= */
+
+(function(){
+  const FUTURES_BASES = [
+    "https://fapi.binance.com",
+    "https://fapi.binance.vision",
+  ];
+
+  function _sym(s){ return String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
+
+  async function _fetchJson(url, timeoutMs=12000){
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+    try{
+      const res = await fetch(url, { signal: ctrl.signal, headers:{ "accept":"application/json" } });
+      if(!res.ok) return null;
+      return await res.json().catch(()=>null);
+    }catch(_e){
+      return null;
+    }finally{ clearTimeout(t); }
+  }
+
+  // Simple in-memory cache for browser fetches
+  const _cache = new Map(); // key -> {ts,data}
+  function _cget(key, ttl){
+    const x = _cache.get(key);
+    if(!x) return null;
+    if(Date.now()-x.ts > ttl) return null;
+    return x.data;
+  }
+  function _cset(key, data){
+    _cache.set(key, { ts: Date.now(), data });
+  }
+
+  async function browserFetchTicker24h(symbol){
+    const sym = _sym(symbol);
+    const key = "t24:"+sym;
+    const cached = _cget(key, 3000);
+    if(cached) return cached;
+
+    for(const base of FUTURES_BASES){
+      const url = `${base}/fapi/v1/ticker/24hr?symbol=${encodeURIComponent(sym)}`;
+      const j = await _fetchJson(url, 10000);
+      const price = Number(j?.lastPrice);
+      const chg = Number(j?.priceChangePercent);
+      if(Number.isFinite(price)){
+        const out = { ok:true, symbol:sym, price, chg: Number.isFinite(chg)?chg:0 };
+        _cset(key, out);
+        return out;
+      }
+    }
+    return null;
+  }
+
+  async function browserFetchKlines(symbol, interval="15m", limit=300){
+    const sym = _sym(symbol);
+    const key = `kl:${sym}:${interval}:${limit}`;
+    const cached = _cget(key, 15000);
+    if(cached) return cached;
+
+    for(const base of FUTURES_BASES){
+      const url = `${base}/fapi/v1/klines?symbol=${encodeURIComponent(sym)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`;
+      const j = await _fetchJson(url, 12000);
+      if(Array.isArray(j) && j.length){
+        const candles = j.map(k=>({
+          ts: k[0],
+          open: +k[1],
+          high: +k[2],
+          low:  +k[3],
+          close:+k[4],
+          volume:+k[5]
+        }));
+        if(candles.length){
+          _cset(key, candles);
+          return candles;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Override marketTick: prefer browser direct (no server dependence)
+  window.marketTick = async function marketTick(symbol){
+    const t = await browserFetchTicker24h(symbol);
+    if(t && t.ok) return { ok:true, symbol:t.symbol, price:t.price, chg:t.chg };
+    return null;
+  };
+
+  // Wrap serverPredict6tf: attach candlesByTf so server can calculate without exchange access
+  const _origPredict = window.serverPredict6tf;
+  window.serverPredict6tf = async function serverPredict6tf(payload){
+    const sym = _sym(payload?.symbol || "BTCUSDT");
+    const tfs = ["15m","30m","1h","4h","1d","1w"];
+    const candlesByTf = {};
+    for(const tf of tfs){
+      const c = await browserFetchKlines(sym, tf, 300);
+      if(c) candlesByTf[tf] = c;
+    }
+    const body = Object.assign({}, payload||{}, { symbol:sym, candlesByTf });
+    if(typeof _origPredict === "function") return _origPredict(body);
+    return _yopoPost("/api/engine/predict6tf", body);
+  };
+
+  // Wrap serverBacktest: attach candlesByTf for all TFs
+  const _origBacktest = window.serverBacktest;
+  window.serverBacktest = async function serverBacktest(payload){
+    const sym = _sym(payload?.symbol || "BTCUSDT");
+    const limit = Math.max(240, Math.min(1500, Number(payload?.limit || 900)));
+    const tfs = ["15m","30m","1h","4h","1d","1w"];
+    const candlesByTf = {};
+    for(const tf of tfs){
+      const c = await browserFetchKlines(sym, tf, limit);
+      if(c) candlesByTf[tf] = c;
+    }
+    const body = Object.assign({}, payload||{}, { symbol:sym, limit, candlesByTf });
+    if(typeof _origBacktest === "function") return _origBacktest(body);
+    return _yopoPost("/api/engine/backtest", body);
+  };
+
+  // Expose helpers (optional)
+  window.__yopoBrowserData = {
+    browserFetchTicker24h,
+    browserFetchKlines
+  };
+})();

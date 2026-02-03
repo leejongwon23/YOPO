@@ -209,8 +209,46 @@ function card(tf, data){
     '</div>'
   );
 }
+async function _fetchJson(url, timeoutMs=12000){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+  try{
+    const res = await fetch(url, { signal: ctrl.signal, headers:{'accept':'application/json'} });
+    if(!res.ok) return null;
+    return await res.json().catch(()=>null);
+  }catch(_e){
+    return null;
+  }finally{ clearTimeout(t); }
+}
+const FUTURES_BASES = ["https://fapi.binance.com","https://fapi.binance.vision"];
+
+async function fetchKlines(sym, interval, limit){
+  for(const base of FUTURES_BASES){
+    const url = base + "/fapi/v1/klines?symbol=" + encodeURIComponent(sym) + "&interval=" + encodeURIComponent(interval) + "&limit=" + encodeURIComponent(limit);
+    const j = await _fetchJson(url, 12000);
+    if(Array.isArray(j) && j.length){
+      return j.map(k=>({ts:k[0],open:+k[1],high:+k[2],low:+k[3],close:+k[4],volume:+k[5]}));
+    }
+  }
+  return null;
+}
+
 async function post(path, body){
-  const res = await fetch(BASE+path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  // ✅ NO PROXY: browser fetches candles directly, server calculates only
+  const sym = String((body&&body.symbol)||"BTCUSDT").toUpperCase();
+  const limit = Number((body&&body.limit)||900);
+  const tfs = ['15m','30m','1h','4h','1d','1w'];
+  const candlesByTf = {};
+  for(const tf of tfs){
+    const c = await fetchKlines(sym, tf, limit);
+    if(c) candlesByTf[tf] = c;
+  }
+
+  const res = await fetch(BASE+path, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ ...(body||{}), symbol:sym, limit, candlesByTf })
+  });
   const js = await res.json().catch(()=>null);
   if(!res.ok || !js) throw new Error('SERVER_'+res.status);
   return js;
