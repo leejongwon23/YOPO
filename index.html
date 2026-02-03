@@ -27,48 +27,7 @@
 </head>
 
 <body>
-  <!-- 🔍 MOBILE DEBUG OVERLAY (UI ONLY) -->
-  <div id="yopo-debug" style="position:fixed;left:8px;bottom:8px;z-index:99999;max-width:92vw;
-    font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
-    background:rgba(0,0,0,.75);color:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.25);">
-    <div style="font-weight:700;margin-bottom:6px;">YOPO DEBUG</div>
-    <div id="yopo-debug-lines"></div>
-  </div>
-  <script>
-    (function(){
-      const box = document.getElementById('yopo-debug-lines');
-      const log = (m)=>{ try{ const d=document.createElement('div'); d.textContent=m; box.appendChild(d);}catch(e){} };
-      const ok = (k,v)=> log('✅ '+k+': '+v);
-      const no = (k,v)=> log('❌ '+k+': '+v);
-
-      window.addEventListener('error', (e)=>{
-        no('JS error', (e && (e.message||e.error||e))+' @'+(e.filename||'')+':'+(e.lineno||''));
-      });
-      window.addEventListener('unhandledrejection', (e)=>{
-        no('Promise', (e && e.reason ? (e.reason.message||String(e.reason)) : 'rejection'));
-      });
-
-      log('serverBase=' + (window.YOPO_SERVER_BASE||'(empty)'));
-
-      document.addEventListener('DOMContentLoaded', ()=>{
-        // script readiness checks (UI only)
-        const s = window.state;
-        if(s && typeof s==='object') ok('window.state', 'OK'); else no('window.state', 'MISSING');
-        ok('serverPredict6tf', typeof window.serverPredict6tf);
-        ok('serverBacktest', typeof window.serverBacktest);
-        ok('marketTick', typeof window.marketTick);
-        ok('refreshUniverseAndGlobals', typeof window.refreshUniverseAndGlobals);
-        // DOM anchors
-        const ids = ['market-list-container','tv_chart_container','chart-wrap','tracks'];
-        ids.forEach(id=>{
-          const el = document.getElementById(id);
-          if(el) ok('DOM#'+id, 'OK'); else no('DOM#'+id, 'MISSING');
-        });
-      });
-    })();
-  </script>
-
-  <!-- AUTH OVERLAY -->
+<!-- AUTH OVERLAY -->
   <div class="auth-overlay" id="auth-overlay">
     <div class="auth-card">
       <h2 class="auth-title"><i class="fa-solid fa-lock"></i> YOPO AI PRO 잠금</h2>
@@ -88,17 +47,20 @@
   </div>
 
   <!-- APP WRAP -->
-  <div id="app" style="display:flex; width:100%; height:100%;">
-    <div class="sidebar">
-  <div class="sidebar-top">
-        <div class="brand-header">
-          <h1><i class="fa-solid fa-layer-group"></i> YOPO AI PRO <span class="brand-badge">PREMIUM</span></h1>
-          <div class="brand-sub">
-            <span>KMASTER REAL-TIME CRYPTO ANALYTICS</span>
-            <span class="mini-pill" id="btc-dom-pill">BTC DOM: --</span>
-          </div>
+<!-- APP -->
+<div id="app" class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+      <div class="brand-header">
+        <h1><i class="fa-solid fa-layer-group"></i> YOPO AI PRO <span class="brand-badge">PREMIUM</span></h1>
+        <div class="brand-sub">
+          <span>KMASTER REAL-TIME CRYPTO ANALYTICS</span>
+          <span class="mini-pill" id="btc-dom-pill">BTC DOM: --</span>
         </div>
+      </div>
 
+      <section class="panel panel-stats">
         <div class="stats-dashboard">
           <div class="stat-card">
             <span class="stat-label">누적 분석</span>
@@ -114,119 +76,106 @@
           </div>
         </div>
 
-        <!-- ✅ 운영 버튼(리셋/전체취소/전체초기화) -->
-        <div class="btn-row" style="margin-top:10px;">
-          <button class="action-btn secondary" id="reset-stats-btn" onclick="resetStatsUIAndData?.()">
-            <i class="fa-solid fa-rotate-left"></i> 누적 리셋
-          </button>
-          <button class="action-btn secondary" id="cancel-all-btn" onclick="cancelAllTracking?.()">
-            <i class="fa-solid fa-ban"></i> 추적 전체취소
-          </button>
+        <div class="btn-grid">
+          <button class="ghost-btn" id="reset-stats-btn"><i class="fa-solid fa-rotate-left"></i> 누적 리셋</button>
+          <button class="ghost-btn" id="cancel-all-btn"><i class="fa-solid fa-ban"></i> 추적 전체취소</button>
+          <button class="ghost-btn span-2" id="reset-all-btn"><i class="fa-solid fa-broom"></i> 전체 초기화(누적+추적+진행)</button>
         </div>
+      </section>
 
-        <!-- ✅ NEW: 전체 초기화(누적+추적+진행취소 한번에) -->
-        <div class="btn-row" style="margin-top:8px;">
-          <button class="action-btn secondary" id="reset-all-btn" onclick="resetAll?.()">
-            <i class="fa-solid fa-broom"></i> 전체 초기화(누적+추적+진행)
-          </button>
-        </div>
-
-        <!-- 최근 종료 기록 -->
-      
-  </div>
-  <div class="sidebar-scroll">
-  <div class="history-box" id="history-box">
-          <div class="history-title">
-            <span>최근 종료 기록</span>
-            <span style="font-weight:950; color:var(--text-sub);" id="history-count">0</span>
-          </div>
-          <div id="history-container">
-            <div style="font-size:11px; color:var(--text-sub); font-weight:900; padding:4px 2px;">
-              아직 종료된 기록이 없습니다.
-            </div>
+      <section class="panel panel-market">
+        <div class="panel-head">
+          <div class="panel-title">유망코인 20 (Binance Futures TOP20)</div>
+          <div class="panel-meta">
+            <span class="dot" id="api-dot"></span>
+            <span class="muted" id="universe-ts">업데이트: --</span>
           </div>
         </div>
+        <div class="market-list" id="market-list-container"></div>
+      </section>
 
-        <div class="market-list">
-          <div class="section-title">
-            <span>유망 코인 20 (Binance Futures TOP20)</span>
-            <span class="right">
-              <span class="status-dot" id="api-dot"></span>
-              <span id="universe-ts">업데이트: --</span>
-            </span>
-          </div>
+      <section class="panel panel-actions">
+        <div class="tf-selector">
+          <button class="tf-btn" onclick="setTF('15', this)">15M</button>
+          <button class="tf-btn" onclick="setTF('30', this)">30M</button>
+          <button class="tf-btn active" onclick="setTF('60', this)">1H</button>
+          <button class="tf-btn" onclick="setTF('240', this)">4H</button>
+          <button class="tf-btn" onclick="setTF('D', this)">1D</button>
+          <button class="tf-btn" onclick="setTF('W', this)">1W</button>
+        </div>
 
-          <div id="market-list-container"></div>
-</div>
+        <button class="primary-btn" id="predict-all-btn" onclick="executeAnalysisAll?.()">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(6전략) 실행
+        </button>
 
-      
-  </div>
-  <div class="sidebar-bottom">
-  <div class="analysis-controls">
-          <!-- ✅ 차트용 TF 선택은 유지 (차트 표시/수동 분석 기준 TF로도 사용 가능) -->
-          <div class="tf-selector">
-            <button class="tf-btn" onclick="setTF('15', this)">15M</button>
-            <button class="tf-btn" onclick="setTF('30', this)">30M</button>
-            <button class="tf-btn active" onclick="setTF('60', this)">1H</button>
-            <button class="tf-btn" onclick="setTF('240', this)">4H</button>
-            <button class="tf-btn" onclick="setTF('D', this)">1D</button>
-            <button class="tf-btn" onclick="setTF('W', this)">1W</button>
-          </div>
+        <button class="secondary-btn" id="op-cancel-btn" onclick="cancelOperation?.()">
+          <i class="fa-solid fa-hand"></i> 진행 취소(분석/백테스트)
+        </button>
 
-          <!-- ✅ 통합 예측(단/중/장 한번에) -->
-          <button class="action-btn" id="predict-all-btn" onclick="executeAnalysisAll?.()">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> 통합 예측(6전략) 실행
+        <div class="btn-row">
+          <button class="secondary-btn" id="backtest-btn" onclick="runBacktest()">
+            <i class="fa-solid fa-flask"></i> 백테스트
           </button>
+          <span id="bt-progress" class="mini-progress"></span>
+        </div>
 
-          <!-- ✅ 진행 취소(분석/백테스트 공통) -->
-          <button class="action-btn secondary" id="op-cancel-btn" onclick="cancelOperation?.()">
-            <i class="fa-solid fa-hand"></i> 진행 취소(분석/백테스트)
-          </button>
+        <div class="bt-stats">
+          <div class="bt-stat"><span class="k">N</span><span class="v" id="bt-n">0</span></div>
+          <div class="bt-stat"><span class="k">WIN%</span><span class="v" id="bt-win">0%</span></div>
+          <div class="bt-stat"><span class="k">AVG%</span><span class="v" id="bt-avg">0%</span></div>
+        </div>
 
-          <div class="tiny-note" style="margin-top:8px;">
-            - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
-          </div>
-<div class="btn-row">
-<button class="action-btn secondary" id="backtest-btn" onclick="runBacktest()">
-              <i class="fa-solid fa-flask"></i> 백테스트
-            </button>
-            <span id="bt-progress" class="mini-progress"></span>
-          </div>
-<div class="bt-metrics">
-              <div class="mini-box"><small>표본</small><div id="bt-n">--</div></div>
-              <div class="mini-box"><small>승률</small><div id="bt-win">--</div></div>
-              <div class="mini-box"><small>평균수익(%)</small><div id="bt-avg">--</div></div>
-            </div>
-            <div style="margin-top:10px; font-size:11px; color:var(--text-sub); font-weight:850; line-height:1.45;">
-              - 백테스트는 “과거로 시험해보는 점수표”입니다.<br/>
-              - 이번 버전은 잡신호를 빼려고 <b>필터(확률/엣지/유사도)</b> 통과한 신호만 테스트합니다.<br/>
-              - 표본이 적으면 승률이 높아 보여도 믿기 어려우니, 표본도 같이 보세요.
-            </div>
-          </div>
+        <div class="tiny-note">
+          - “진행 취소”는 현재 작업의 <b>다음 단계부터 즉시 멈추게</b> 합니다.
+        </div>
+      </section>
 
-          <div class="tiny-note">
-            - Render 서버 엔진이 데이터 수집/예측/백테스트를 계산합니다.<br/>
-            - 애매하면 <b>보류(HOLD)</b>로 예측을 안 합니다(승률 보호).<br/>
-            - “중복 신호/과한 빈도”를 막기 위해 <b>중복/쿨다운</b> 보호를 넣었습니다.
+      <section class="panel panel-history">
+        <div class="panel-head">
+          <div class="panel-title">누적 기록</div>
+          <div class="panel-meta">
+            <span class="muted">총</span>
+            <span class="pill" id="history-count">0</span>
           </div>
         </div>
-    
-  </div>
-</div>
-
-    <div class="main-panel">
-      <div class="chart-container" id="chart-wrap">
-      <div id="tv_chart_container" style="width:100%;height:100%;"></div></div>
-
-      <div class="tracking-dashboard">
-        <div class="tracking-header">
-          <h3><i class="fa-solid fa-radar"></i> 실시간 포지션 정밀 추적</h3>
-          <span class="live-badge">LIVE</span>
-        </div>
-        <div class="tracking-list" id="tracking-container">
-      <div id="tracks"></div></div>
-      </div>
+        <div id="history-container" class="history-container"></div>
+      </section>
     </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="active-symbol">
+          <span class="label">ACTIVE</span>
+          <span class="value" id="active-symbol-pill">BTCUSDT</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="hint">
+          서버=계산 전용 · 웹=데이터 수집/표시
+        </div>
+      </div>
+    </header>
+
+    <section class="chart-panel">
+      <div class="chart-shell">
+        <div id="tv_chart_container"></div>
+      </div>
+    </section>
+
+    <section class="tracking-panel">
+      <div class="tracking-header">
+        <h3><i class="fa-solid fa-radar"></i> 실시간 포지션 정밀 추적</h3>
+        <span class="live-badge">LIVE</span>
+      </div>
+      <div class="tracking-list" id="tracking-container">
+        <div id="tracks"></div>
+      </div>
+    </section>
+  </main>
+</div>
 
     <!-- ✅ 결과 모달 (단일/통합 공용) -->
     <div class="modal-overlay" id="result-modal">

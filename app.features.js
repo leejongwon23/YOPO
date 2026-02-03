@@ -53,7 +53,7 @@
     return `BINANCE:${s}.P`;
   }
   function initChart(sym){
-    const wrap = $("chart-wrap");
+    const wrap = $("tv_chart_container");
     if(!wrap) return;
     // clear container
     wrap.innerHTML = "";
@@ -68,7 +68,7 @@
           theme: "dark",
           style: "1",
           locale: "kr",
-          container_id: "chart-wrap",
+          container_id: "tv_chart_container",
           hide_top_toolbar: false,
           hide_legend: false,
           allow_symbol_change: false,
@@ -111,6 +111,7 @@
         const sym = el.getAttribute("data-sym");
         if(!sym) return;
         state.symbol = sym;
+        try{ const p=document.getElementById("active-symbol-pill"); if(p) p.textContent = sym; }catch(e){}
         renderMarketList();
         initChart(sym);
       });
@@ -569,6 +570,7 @@ qs('go').addEventListener('click', async ()=>{
     // first universe
     await refreshUniverse().catch(()=>{});
     renderMarketList();
+    try{ const p=document.getElementById("active-symbol-pill"); if(p) p.textContent = state.symbol; }catch(e){}
     initChart(state.symbol);
     renderTracks();
 
